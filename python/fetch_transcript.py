@@ -1,0 +1,39 @@
+import json
+import sys
+
+from youtube_transcript_api import YouTubeTranscriptApi
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("Usage: fetch_transcript.py <video-id>", file=sys.stderr)
+        return 1
+
+    video_id = sys.argv[1]
+
+    try:
+        transcript = YouTubeTranscriptApi().fetch(video_id)
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        return 2
+
+    payload = {
+        "language": getattr(transcript, "language_code", None),
+        "segments": [
+            {
+                "duration": snippet.duration,
+                "start": snippet.start,
+                "text": snippet.text,
+            }
+            for snippet in transcript
+        ],
+        "source": "youtube-transcript-api",
+        "videoId": video_id,
+    }
+
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

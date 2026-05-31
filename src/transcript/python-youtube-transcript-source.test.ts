@@ -1,0 +1,77 @@
+import { describe, expect, test } from "bun:test";
+import {
+  PythonYoutubeTranscriptSource,
+  type CommandRunner,
+} from "./python-youtube-transcript-source";
+import { TranscriptSourceError } from "./transcript-source";
+
+const video = {
+  canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+  videoId: "1ZgUcrR0K7I",
+};
+
+describe("PythonYoutubeTranscriptSource", () => {
+  test("returns a normalized transcript from sidecar JSON", async () => {
+    const runner: CommandRunner = async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: JSON.stringify({
+        language: "en",
+        segments: [
+          {
+            duration: 4.2,
+            start: 0.2,
+            text: "Hello world",
+          },
+        ],
+        source: "youtube-transcript-api",
+        videoId: "1ZgUcrR0K7I",
+      }),
+    });
+
+    const source = new PythonYoutubeTranscriptSource({ runner });
+
+    await expect(source.fetch(video)).resolves.toEqual({
+      language: "en",
+      schemaVersion: "transcript.v0",
+      segments: [
+        {
+          duration: 4.2,
+          start: 0.2,
+          text: "Hello world",
+        },
+      ],
+      source: "youtube-transcript-api",
+      videoId: "1ZgUcrR0K7I",
+    });
+  });
+
+  test("maps sidecar failure to a structured error", async () => {
+    const runner: CommandRunner = async () => ({
+      exitCode: 2,
+      stderr: "No transcript found",
+      stdout: "",
+    });
+
+    const source = new PythonYoutubeTranscriptSource({ runner });
+
+    await expect(source.fetch(video)).rejects.toMatchObject({
+      code: "transcript-unavailable",
+      message: "No transcript found",
+    } satisfies Partial<TranscriptSourceError>);
+  });
+
+  test("maps invalid JSON to a structured error", async () => {
+    const runner: CommandRunner = async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "not-json",
+    });
+
+    const source = new PythonYoutubeTranscriptSource({ runner });
+
+    await expect(source.fetch(video)).rejects.toMatchObject({
+      code: "invalid-provider-response",
+    } satisfies Partial<TranscriptSourceError>);
+  });
+});

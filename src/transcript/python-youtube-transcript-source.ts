@@ -1,0 +1,134 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { YouTubeVideo } from "../video/youtube-url";
+import {
+  TranscriptSourceError,
+  type Transcript,
+  type TranscriptSegment,
+  type TranscriptSource,
+} from "./transcript-source";
+
+export type CommandResult = {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+};
+
+export type CommandRunner = (command: string[], options: { cwd: string }) => Promise<CommandResult>;
+
+export type PythonYoutubeTranscriptSourceOptions = {
+  runner?: CommandRunner;
+  uvPath?: string;
+};
+
+type SidecarTranscript = {
+  language?: unknown;
+  segments?: unknown;
+  source?: unknown;
+  videoId?: unknown;
+};
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(currentDir, "../..");
+const pythonDir = resolve(repoRoot, "python");
+const sidecarScript = resolve(pythonDir, "fetch_transcript.py");
+
+export class PythonYoutubeTranscriptSource implements TranscriptSource {
+  private readonly runner: CommandRunner;
+  private readonly uvPath: string;
+
+  constructor(options: PythonYoutubeTranscriptSourceOptions = {}) {
+    this.runner = options.runner ?? runCommand;
+    this.uvPath = options.uvPath ?? defaultUvPath();
+  }
+
+  async fetch(video: YouTubeVideo): Promise<Transcript> {
+    const result = await this.runner(
+      [this.uvPath, "run", "python", sidecarScript, video.videoId],
+      { cwd: pythonDir },
+    );
+
+    if (result.exitCode !== 0) {
+      throw new TranscriptSourceError(
+        result.exitCode === 2 ? "transcript-unavailable" : "provider-failed",
+        result.stderr.trim() || `Transcript provider failed with exit code ${result.exitCode}`,
+      );
+    }
+
+    return parseSidecarTranscript(result.stdout, video.videoId);
+  }
+}
+
+function parseSidecarTranscript(stdout: string, expectedVideoId: string): Transcript {
+  let payload: SidecarTranscript;
+
+  try {
+    payload = JSON.parse(stdout) as SidecarTranscript;
+  } catch {
+    throw new TranscriptSourceError("invalid-provider-response", "Transcript provider returned invalid JSON");
+  }
+
+  if (
+    payload.videoId !== expectedVideoId ||
+    payload.source !== "youtube-transcript-api" ||
+    !Array.isArray(payload.segments)
+  ) {
+    throw new TranscriptSourceError("invalid-provider-response", "Transcript provider returned invalid shape");
+  }
+
+  return {
+    language: typeof payload.language === "string" ? payload.language : null,
+    schemaVersion: "transcript.v0",
+    segments: payload.segments.map(parseSegment),
+    source: "youtube-transcript-api",
+    videoId: expectedVideoId,
+  };
+}
+
+function parseSegment(segment: unknown): TranscriptSegment {
+  if (!isRecord(segment) || typeof segment.start !== "number" || typeof segment.text !== "string") {
+    throw new TranscriptSourceError("invalid-provider-response", "Transcript provider returned invalid segment");
+  }
+
+  return {
+    duration: typeof segment.duration === "number" ? segment.duration : null,
+    start: segment.start,
+    text: segment.text,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+async function runCommand(command: string[], options: { cwd: string }): Promise<CommandResult> {
+  const process = Bun.spawn(command, {
+    cwd: options.cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+
+  return {
+    exitCode,
+    stderr,
+    stdout,
+  };
+}
+
+function defaultUvPath(): string {
+  if (process.env.UV_BIN) {
+    return process.env.UV_BIN;
+  }
+
+  if (process.env.HOME) {
+    return `${process.env.HOME}/.local/bin/uv`;
+  }
+
+  return "uv";
+}
