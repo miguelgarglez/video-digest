@@ -12,7 +12,7 @@ export type OpenCodeSummarizerOptions = {
 };
 
 const DEFAULT_BASE_URL = "https://opencode.ai/zen/v1/responses";
-const DEFAULT_MODEL = "gpt-5-nano";
+const DEFAULT_MODEL = "gpt-5.4-nano";
 
 export class OpenCodeSummarizer implements Summarizer {
   private readonly apiKey: string;
@@ -45,6 +45,9 @@ export class OpenCodeSummarizer implements Summarizer {
           },
         ],
         model: this.model,
+        text: {
+          format: digestJsonSchemaFormat(),
+        },
       }),
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -67,11 +70,70 @@ export class OpenCodeSummarizer implements Summarizer {
 function buildSystemPrompt(): string {
   return [
     "You generate structured personal knowledge digests from YouTube transcripts.",
-    "Return only valid JSON with these keys:",
-    "digestTitle, tldr, keyIdeas, relevantTimestamps, actionableIdeas, conceptsToInvestigate, connections, verdict.",
-    "verdict must be one of: watch_full, watch_fragments, save_reference, discard.",
+    "Return a digest that follows the provided JSON schema exactly.",
     "Use concise Spanish unless the transcript clearly requires another language.",
   ].join("\n");
+}
+
+function digestJsonSchemaFormat() {
+  return {
+    name: "digest_draft",
+    schema: {
+      additionalProperties: false,
+      properties: {
+        actionableIdeas: {
+          items: { type: "string" },
+          type: "array",
+        },
+        conceptsToInvestigate: {
+          items: { type: "string" },
+          type: "array",
+        },
+        connections: {
+          items: { type: "string" },
+          type: "array",
+        },
+        digestTitle: { type: "string" },
+        keyIdeas: {
+          items: { type: "string" },
+          type: "array",
+        },
+        relevantTimestamps: {
+          items: {
+            additionalProperties: false,
+            properties: {
+              note: { type: "string" },
+              timestamp: { type: "string" },
+            },
+            required: ["timestamp", "note"],
+            type: "object",
+          },
+          type: "array",
+        },
+        tldr: {
+          items: { type: "string" },
+          type: "array",
+        },
+        verdict: {
+          enum: ["watch_full", "watch_fragments", "save_reference", "discard"],
+          type: "string",
+        },
+      },
+      required: [
+        "digestTitle",
+        "tldr",
+        "keyIdeas",
+        "relevantTimestamps",
+        "actionableIdeas",
+        "conceptsToInvestigate",
+        "connections",
+        "verdict",
+      ],
+      type: "object",
+    },
+    strict: true,
+    type: "json_schema",
+  };
 }
 
 function buildUserPrompt(input: SummarizerInput): string {

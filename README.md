@@ -53,6 +53,8 @@ cp .env.example .env
 
 Then set `OPENCODE_API_KEY` in `.env`.
 
+The default model in `.env.example` is `gpt-5.4-nano`, which is available through OpenCode Zen.
+
 ## Usage
 
 Run a single-video digest:

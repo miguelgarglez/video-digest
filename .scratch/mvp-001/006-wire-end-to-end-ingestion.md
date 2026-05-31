@@ -1,6 +1,6 @@
 # Wire End-to-End Ingestion
 
-Status: implemented-pending-provider-smoke  
+Status: done  
 Category: enhancement
 
 ## What to build
@@ -14,14 +14,14 @@ Connect CLI parsing, **Transcript Source**, **Transcript Quality**, `Summarizer`
 - [x] `warning` transcripts generate outputs with visible warnings.
 - [x] `unusable` transcripts do not call the `Summarizer`, write structured metadata, and exit with code 2.
 - [x] The command prints concise paths to created outputs.
-- [ ] A smoke run with `1ZgUcrR0K7I` can be executed manually when OpenCode credentials are configured.
+- [x] A smoke run with `1ZgUcrR0K7I` can be executed manually when OpenCode credentials are configured.
 - [x] Tests cover the end-to-end path with fake adapters.
 
 ## Verification notes
 
 - `bun run test` passes.
-- `bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --email-preview` reaches OpenCode configuration and fails clearly with `Missing OPENCODE_API_KEY`.
-- Full provider smoke is pending local `.env` configuration.
+- `bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --email-preview` passes with local OpenCode credentials configured.
+- The smoke run writes transcript, digest, metadata, and email-preview artifacts under `outputs/`.
 
 ## Blocked by
 

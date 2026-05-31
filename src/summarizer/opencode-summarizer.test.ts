@@ -45,6 +45,13 @@ describe("OpenCodeSummarizer", () => {
     expect(requests[0]).toMatchObject({
       body: {
         model: "gpt-test",
+        text: {
+          format: {
+            name: "digest_draft",
+            strict: true,
+            type: "json_schema",
+          },
+        },
       },
       url: "https://opencode.test/responses",
     });

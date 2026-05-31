@@ -319,13 +319,12 @@ Variables de entorno propuestas:
 ```text
 OPENCODE_API_KEY=...
 OPENCODE_BASE_URL=https://opencode.ai/zen/v1/responses
-OPENCODE_MODEL=gpt-5-nano
+OPENCODE_MODEL=gpt-5.4-nano
 ```
 
 Modelos candidatos via OpenCode Zen:
 
-- `gpt-5-nano`: candidato principal por coste para resumen, clasificacion, extraccion de ideas y JSON estructurado.
-- `gpt-5.4-nano`: candidato de comparacion si `gpt-5-nano` se queda corto en calidad.
+- `gpt-5.4-nano`: candidato principal por coste para resumen, clasificacion, extraccion de ideas y JSON estructurado.
 - `gpt-5.4-mini`: fallback manual para videos de alta importancia o cuando `nano` produzca resumenes pobres.
 
 Estrategia de coste:
@@ -360,6 +359,8 @@ OpenCodeSummarizer
 ```
 
 La razon para introducir esta interfaz desde el primer MVP es que el **Summarizer** es un seam real: es probable comparar OpenCode Zen, OpenAI directo, Anthropic, Gemini u otros endpoints. El dominio debe depender de la capacidad de generar un **Digest**, no del proveedor concreto.
+
+El adapter OpenCode debe solicitar salida estructurada con `text.format: json_schema`. Sin schema, `gpt-5.4-nano` puede devolver JSON valido pero con campos incompatibles, por ejemplo `tldr` como string, `relevantTimestamps` como strings o `verdict` como frase libre.
 
 ## Core Service Boundary
 
@@ -422,7 +423,7 @@ MVP 001 usara `.env` local para secrets y `.env.example` versionado para documen
 ```text
 OPENCODE_API_KEY=
 OPENCODE_BASE_URL=https://opencode.ai/zen/v1/responses
-OPENCODE_MODEL=gpt-5-nano
+OPENCODE_MODEL=gpt-5.4-nano
 VIDEO_DIGEST_OUTPUT_DIR=outputs
 ```
 
