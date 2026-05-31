@@ -1,0 +1,23 @@
+.DS_Store
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Local runtime artifacts
+.cache/
+.tmp/
+tmp/
+
+# Dependencies/build outputs; kept broad until the stack is chosen.
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+.pytest_cache/
