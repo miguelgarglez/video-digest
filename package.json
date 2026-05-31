@@ -1,0 +1,12 @@
+{
+  "name": "personal-video-digest",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test --pass-with-no-tests"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^6.0.3"
+  }
+}

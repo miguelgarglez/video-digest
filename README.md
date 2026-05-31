@@ -17,3 +17,38 @@ See:
 - `CONTEXT.md` for domain language.
 - `docs/adr/` for architectural decisions.
 - `docs/agents/` for agent skill configuration.
+
+## Local prerequisites
+
+- Bun 1.3.14
+- Python 3
+- uv 0.11.17
+
+If `uv` is installed but not visible in the current shell, load its environment:
+
+```sh
+source "$HOME/.local/bin/env"
+```
+
+## Local setup
+
+Install Bun dependencies:
+
+```sh
+bun install
+```
+
+Install Python sidecar dependencies:
+
+```sh
+cd python
+uv sync
+```
+
+Create local environment config:
+
+```sh
+cp .env.example .env
+```
+
+Then set `OPENCODE_API_KEY` in `.env`.

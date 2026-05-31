@@ -1,0 +1,7 @@
+[project]
+name = "personal-video-digest-transcript-sidecar"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "youtube-transcript-api>=1.2.4",
+]

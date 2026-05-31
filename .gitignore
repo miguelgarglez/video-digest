@@ -13,6 +13,8 @@ logs/
 .cache/
 .tmp/
 tmp/
+.venv/
+python/.venv/
 
 # Dependencies/build outputs; kept broad until the stack is chosen.
 node_modules/

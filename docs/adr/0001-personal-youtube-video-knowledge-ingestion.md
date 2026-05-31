@@ -308,11 +308,25 @@ Uso recomendado por defecto:
 - Batch API cuando la latencia no importe;
 - cachear resultados por `video_id + transcript_hash + prompt_version`.
 
-Modelos candidatos:
+Proveedor LLM del MVP:
 
-- `gpt-5-nano`: candidato principal para resumen, clasificacion, extraccion de ideas y JSON estructurado de bajo coste.
-- `gpt-5-mini`: fallback cuando `nano` produzca resumenes pobres o el video sea de alta importancia.
-- `gpt-4.1-nano`: alternativa barata, con ventana de contexto grande y buen seguimiento de instrucciones, aunque la recomendacion actual para tareas mas complejas seria empezar por `gpt-5-nano`.
+- OpenCode Zen sera el proveedor inicial de consumo de modelos.
+- Para modelos GPT, se usara el endpoint `https://opencode.ai/zen/v1/responses`.
+- La integracion debe quedar aislada detras de una interfaz de summarization para poder cambiar de proveedor sin tocar el core.
+
+Variables de entorno propuestas:
+
+```text
+OPENCODE_API_KEY=...
+OPENCODE_BASE_URL=https://opencode.ai/zen/v1/responses
+OPENCODE_MODEL=gpt-5-nano
+```
+
+Modelos candidatos via OpenCode Zen:
+
+- `gpt-5-nano`: candidato principal por coste para resumen, clasificacion, extraccion de ideas y JSON estructurado.
+- `gpt-5.4-nano`: candidato de comparacion si `gpt-5-nano` se queda corto en calidad.
+- `gpt-5.4-mini`: fallback manual para videos de alta importancia o cuando `nano` produzca resumenes pobres.
 
 Estrategia de coste:
 
@@ -331,6 +345,21 @@ Riesgos:
 - Transcripts largos pueden requerir chunking o prompts mas compactos.
 - El output largo cuesta mas que el input en modelos baratos; conviene limitar formato.
 - Hay que evaluar calidad con videos reales antes de decidir.
+- OpenCode Zen agrega una dependencia de proveedor; el core debe depender de una interfaz propia, no de llamadas OpenCode repartidas por el codigo.
+
+Interfaz inicial:
+
+```text
+Summarizer.generateDigest(transcript, options) -> DigestDraft
+```
+
+Adapter inicial:
+
+```text
+OpenCodeSummarizer
+```
+
+La razon para introducir esta interfaz desde el primer MVP es que el **Summarizer** es un seam real: es probable comparar OpenCode Zen, OpenAI directo, Anthropic, Gemini u otros endpoints. El dominio debe depender de la capacidad de generar un **Digest**, no del proveedor concreto.
 
 ## Core Service Boundary
 
@@ -360,6 +389,71 @@ Ventajas:
 - Permite empezar local con CLI y luego desplegar API/frontend.
 - Facilita evolucionar hacia una knowledge base personal.
 - Permite benchmarkear proveedores de transcript sin reescribir workflows.
+
+## Runtime and Language
+
+MVP 001 usara TypeScript sobre Bun para el CLI, tests y desarrollo local.
+
+```text
+Language: TypeScript
+Runtime: Bun 1.3.14
+Test runner: bun test
+Initial interface: CLI
+```
+
+La razon es optimizar velocidad de desarrollo local, ejecucion directa de TypeScript y tests rapidos.
+
+El core debe mantenerse razonablemente portable: la logica de dominio no debe depender de APIs exclusivas de Bun. Las dependencias especificas de runtime, como filesystem, subprocesses o detalles HTTP, deben vivir en adapters o en la capa CLI.
+
+Riesgo aceptado: un despliegue futuro en Vercel podria requerir adaptar runtime o separar la API en Node/Next. Ese trade-off se pospone porque MVP 001 es local-first.
+
+CLI de MVP 001:
+
+```text
+bun run video-digest <youtube-url> [--email-preview]
+```
+
+No se optimizara para `npx` en MVP 001. Para soportar `npx` en el futuro habria que publicar un paquete compatible con Node o mantener un entrypoint portable. La decision actual es mantener el core portable y aceptar que la interfaz inicial depende de Bun.
+
+## Configuration and Secrets
+
+MVP 001 usara `.env` local para secrets y `.env.example` versionado para documentar configuracion.
+
+```text
+OPENCODE_API_KEY=
+OPENCODE_BASE_URL=https://opencode.ai/zen/v1/responses
+OPENCODE_MODEL=gpt-5-nano
+VIDEO_DIGEST_OUTPUT_DIR=outputs
+```
+
+Bun carga `.env` automaticamente, asi que no se usara `dotenv`.
+
+Reglas:
+
+- `.env` no se commitea.
+- `.env.example` se commitea con valores seguros.
+- Si falta `OPENCODE_API_KEY`, el CLI debe fallar con error claro antes de llamar al LLM.
+- Secrets no deben guardarse en metadata ni outputs.
+
+## Python Sidecar
+
+`youtube-transcript-api` es una libreria Python. MVP 001 mantendra el producto principal en Bun/TypeScript y usara un sidecar Python solo como adapter de **Transcript Source**.
+
+```text
+TranscriptSource
+  -> PythonYoutubeTranscriptSource
+     -> uv run python/fetch_transcript.py <video-id>
+```
+
+El entorno Python se gestionara con `uv` para evitar dependencias globales y hacer reproducible la instalacion de `youtube-transcript-api`.
+
+Decision actual:
+
+- `uv` instalado localmente en `~/.local/bin/uv`.
+- Version comprobada: `uv 0.11.17`.
+- Si la shell no encuentra `uv`, cargar `~/.local/bin/env` o usar la ruta absoluta.
+
+Riesgo aceptado: el MVP cruza runtime Bun -> Python. Esta complejidad queda aislada en el adapter y no debe filtrarse al core.
 
 ## Trigger Options
 
@@ -582,3 +676,142 @@ Core propio reutilizable
 Mantener Codex/Navegador como modo asistido para pruebas y refinamiento, no como worker automatico principal.
 
 n8n se mantiene como opcion de trigger/orquestacion, no como centro de la arquitectura.
+
+## MVP 001 Scope
+
+El primer MVP debe demostrar la ingestion de un unico video desde una URL, sin automatizar todavia playlists ni despliegues.
+
+```text
+video-digest ingest <youtube-url>
+  -> obtiene Transcript
+  -> evalua Transcript Quality
+  -> genera Digest
+  -> guarda Digest como Markdown local y JSON sidecar
+  -> opcionalmente genera email preview
+```
+
+Incluido:
+
+- CLI local;
+- procesamiento de un unico Video por URL;
+- obtencion de Transcript con `youtube-transcript-api` como unica fuente inicial;
+- evaluacion basica de Transcript Quality;
+- generacion de Digest;
+- guardado Markdown local para consumo humano;
+- guardado JSON sidecar para consumo programatico;
+- email preview como salida opcional.
+
+Fuera de alcance:
+
+- polling de Source Playlist;
+- despliegue en Vercel;
+- n8n;
+- frontend;
+- envio real de email;
+- Knowledge Base avanzada;
+- conexiones entre multiples videos;
+- `yt-dlp` como fallback automatico;
+- proveedores gestionados como Supadata, TranscriptAPI o Apify;
+- fallback ASR/AI.
+
+Razon: primero hay que validar que el core transforma un **Video** en un **Digest** util. Automatizar antes de validar esto solo aceleraria una experiencia incierta.
+
+Si `youtube-transcript-api` no puede obtener el **Transcript**, el MVP debe devolver un error estructurado con la razon y una recomendacion de siguiente fallback, pero no debe intentar otro proveedor automaticamente.
+
+El formato de salida queda versionado desde el primer MVP:
+
+```text
+outputs/transcripts/<video-id>.json
+outputs/digests/<video-id>.md
+outputs/metadata/<video-id>.json
+```
+
+El JSON debe incluir `schemaVersion: "digest.v0"` para permitir cambios futuros sin romper consumidores.
+
+El Markdown es la interfaz humana inicial. El JSON es la interfaz programatica para futuros consumidores como frontend, email, Obsidian, Notion o analisis entre multiples videos.
+
+MVP 001 guardara tambien el **Transcript** completo como **Transcript Artifact** local:
+
+```text
+outputs/transcripts/<video-id>.json
+```
+
+Este archivo existe para debugging, reproducibilidad y comparacion entre transcript y **Digest**. No debe tratarse como **Knowledge Item** ni exponerse como output principal.
+
+La evaluacion de **Transcript Quality** sera determinista y versionada:
+
+```text
+qualitySchemaVersion: "transcript-quality.v0"
+status: usable | warning | unusable
+```
+
+Campos iniciales:
+
+```text
+language
+segmentCount
+totalTextLength
+durationSeconds
+averageCharsPerMinute
+warnings[]
+```
+
+Reglas iniciales:
+
+- `unusable` si no hay segmentos, hay muy poco texto o faltan timestamps validos.
+- `warning` si hay pocos segmentos, densidad de texto anomala, idioma inesperado, muchos segmentos vacios o repeticiones evidentes.
+- `usable` si hay texto suficiente, segmentos y timestamps.
+
+Estas heuristicas son intencionalmente simples. Deben vivir detras de un evaluador versionado para poder refinar reglas o sustituirlas por otra estrategia sin romper consumidores de metadata.
+
+Comportamiento segun calidad:
+
+```text
+usable
+  -> generar Digest normalmente
+  -> exit 0
+
+warning
+  -> generar Digest
+  -> incluir warnings visibles en Markdown y JSON
+  -> exit 0
+
+unusable
+  -> no llamar al LLM
+  -> guardar metadata con error estructurado
+  -> no generar Digest ni email preview
+  -> exit 2
+```
+
+La razon es controlar coste y evitar resumenes falsamente autoritativos cuando el **Transcript** no es suficiente.
+
+MVP 001 no usara YouTube Data API para obtener metadata factual del **Video**.
+
+Metadata inicial:
+
+```text
+videoId: parsed from URL
+url: canonicalized YouTube URL
+videoTitle: null
+channel: null
+durationSeconds: derived from transcript timestamps when possible
+```
+
+El **Summarizer** generara un **Digest Title**. Este titulo describe el **Digest** y no debe confundirse con el titulo factual del **Video**.
+
+Ejemplo:
+
+```text
+videoTitle: null
+digestTitle: "Como Strauss Zelnick construye negocios en la interseccion de tecnologia y entretenimiento"
+```
+
+La razon es evitar mezclar metadata factual con contenido inferido por el modelo.
+
+MVP 001 no enviara email real. Generara un email preview si el usuario lo pide:
+
+```text
+outputs/emails/<video-id>.md
+```
+
+La razon es evitar que Gmail OAuth, SMTP, credenciales, rate limits y errores de entrega distraigan del objetivo central: validar que un **Video** se convierte en un **Digest** util.
