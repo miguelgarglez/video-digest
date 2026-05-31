@@ -3,7 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test --pass-with-no-tests",
+    "video-digest": "bun run src/cli/main.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
