@@ -1,6 +1,6 @@
 # Score Transcript Quality
 
-Status: ready-for-agent  
+Status: done  
 Category: enhancement
 
 ## What to build
@@ -9,12 +9,12 @@ Implement deterministic `transcript-quality.v0` scoring for a **Transcript**, pr
 
 ## Acceptance criteria
 
-- [ ] Quality output includes `qualitySchemaVersion: "transcript-quality.v0"`.
-- [ ] Quality output includes language, segment count, total text length, duration seconds, average characters per minute, and warnings.
-- [ ] Empty or timestamp-less transcripts are `unusable`.
-- [ ] Very short or suspicious transcripts produce `unusable` or `warning` according to documented thresholds.
-- [ ] `warning` quality remains summarizable.
-- [ ] Tests cover `usable`, `warning`, and `unusable` fixtures.
+- [x] Quality output includes `qualitySchemaVersion: "transcript-quality.v0"`.
+- [x] Quality output includes language, segment count, total text length, duration seconds, average characters per minute, and warnings.
+- [x] Empty or timestamp-less transcripts are `unusable`.
+- [x] Very short or suspicious transcripts produce `unusable` or `warning` according to documented thresholds.
+- [x] `warning` quality remains summarizable.
+- [x] Tests cover `usable`, `warning`, and `unusable` fixtures.
 
 ## Blocked by
 

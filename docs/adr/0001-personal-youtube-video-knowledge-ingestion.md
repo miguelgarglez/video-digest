@@ -762,6 +762,15 @@ Reglas iniciales:
 - `warning` si hay pocos segmentos, densidad de texto anomala, idioma inesperado, muchos segmentos vacios o repeticiones evidentes.
 - `usable` si hay texto suficiente, segmentos y timestamps.
 
+Umbrales iniciales de `transcript-quality.v0`:
+
+```text
+MIN_WARNING_TEXT_LENGTH = 250 characters
+MIN_USABLE_TEXT_LENGTH = 1000 characters
+MIN_USABLE_SEGMENT_COUNT = 20
+MIN_AVERAGE_CHARS_PER_MINUTE = 250
+```
+
 Estas heuristicas son intencionalmente simples. Deben vivir detras de un evaluador versionado para poder refinar reglas o sustituirlas por otra estrategia sin romper consumidores de metadata.
 
 Comportamiento segun calidad:
