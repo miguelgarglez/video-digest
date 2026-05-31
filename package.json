@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test": "bun test --pass-with-no-tests",
+    "typecheck": "tsc --noEmit",
     "video-digest": "bun run src/cli/main.ts"
   },
   "devDependencies": {

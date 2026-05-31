@@ -13,6 +13,7 @@ logs/
 .cache/
 .tmp/
 tmp/
+outputs/
 .venv/
 python/.venv/
 

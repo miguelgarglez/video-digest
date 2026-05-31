@@ -21,6 +21,16 @@ export type IngestionOutputPaths = {
   transcriptPath: string;
 };
 
+export type FailedIngestionMetadataInput = {
+  error: {
+    code: string;
+    message: string;
+  };
+  outputDir: string;
+  transcriptQuality: TranscriptQuality;
+  video: YouTubeVideo;
+};
+
 export async function writeIngestionOutputs(
   input: IngestionOutputInput,
 ): Promise<IngestionOutputPaths> {
@@ -42,6 +52,36 @@ export async function writeIngestionOutputs(
   }
 
   return paths;
+}
+
+export async function writeFailedIngestionMetadata(
+  input: FailedIngestionMetadataInput,
+): Promise<string> {
+  const metadataPath = join(input.outputDir, "metadata", `${input.video.videoId}.json`);
+
+  await mkdir(join(input.outputDir, "metadata"), { recursive: true });
+  await writeFile(
+    metadataPath,
+    `${JSON.stringify(
+      {
+        error: input.error,
+        metadataSchemaVersion: "metadata.v0",
+        processedAt: new Date().toISOString(),
+        transcriptQuality: input.transcriptQuality,
+        video: {
+          canonicalUrl: input.video.canonicalUrl,
+          channel: null,
+          durationSeconds: input.transcriptQuality.durationSeconds,
+          videoId: input.video.videoId,
+          videoTitle: null,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return metadataPath;
 }
 
 function outputPaths(outputDir: string, videoId: string, emailPreview: boolean): IngestionOutputPaths {

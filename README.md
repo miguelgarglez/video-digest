@@ -52,3 +52,19 @@ cp .env.example .env
 ```
 
 Then set `OPENCODE_API_KEY` in `.env`.
+
+## Usage
+
+Run a single-video digest:
+
+```sh
+bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
+```
+
+Generate an email preview too:
+
+```sh
+bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --email-preview
+```
+
+Quote YouTube URLs in the shell because `?` and `&` can be interpreted by zsh.
