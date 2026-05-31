@@ -1,0 +1,127 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { createDigest } from "../digest/digest";
+import type { Transcript } from "../transcript/transcript-source";
+import type { TranscriptQuality } from "../transcript/transcript-quality";
+import type { YouTubeVideo } from "../video/youtube-url";
+import { writeIngestionOutputs } from "./output-writer";
+
+describe("writeIngestionOutputs", () => {
+  test("writes versioned transcript, digest, metadata, and email preview files", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await writeIngestionOutputs({
+      digest,
+      emailPreview: true,
+      outputDir,
+      transcript,
+      transcriptQuality: warningQuality,
+      video,
+    });
+
+    expect(result).toEqual({
+      digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
+      emailPreviewPath: join(outputDir, "emails", "1ZgUcrR0K7I.md"),
+      metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+      transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+    });
+
+    const transcriptJson = JSON.parse(await readFile(result.transcriptPath, "utf8"));
+    expect(transcriptJson.schemaVersion).toBe("transcript.v0");
+
+    const metadataJson = JSON.parse(await readFile(result.metadataPath, "utf8"));
+    expect(metadataJson).toMatchObject({
+      digest: {
+        schemaVersion: "digest.v0",
+      },
+      transcriptQuality: {
+        status: "warning",
+        warnings: ["low-segment-count"],
+      },
+      video: {
+        channel: null,
+        durationSeconds: 5,
+        videoId: "1ZgUcrR0K7I",
+        videoTitle: null,
+      },
+    });
+    expect(JSON.stringify(metadataJson)).not.toContain("test-secret");
+
+    const markdown = await readFile(result.digestPath, "utf8");
+    expect(markdown).toContain("# Generated Digest Title");
+    expect(markdown).toContain("## Transcript warnings");
+    expect(markdown).toContain("- low-segment-count");
+
+    const email = await readFile(result.emailPreviewPath!, "utf8");
+    expect(email).toContain("Subject: Generated Digest Title");
+  });
+
+  test("does not write email preview unless requested", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await writeIngestionOutputs({
+      digest,
+      emailPreview: false,
+      outputDir,
+      transcript,
+      transcriptQuality: usableQuality,
+      video,
+    });
+
+    expect(result.emailPreviewPath).toBeNull();
+  });
+});
+
+const video: YouTubeVideo = {
+  canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+  videoId: "1ZgUcrR0K7I",
+};
+
+const transcript: Transcript = {
+  language: "en",
+  schemaVersion: "transcript.v0",
+  segments: [
+    {
+      duration: 5,
+      start: 0,
+      text: "Technology can change media businesses.",
+    },
+  ],
+  source: "youtube-transcript-api",
+  videoId: "1ZgUcrR0K7I",
+};
+
+const warningQuality: TranscriptQuality = {
+  averageCharsPerMinute: 720,
+  durationSeconds: 5,
+  language: "en",
+  qualitySchemaVersion: "transcript-quality.v0",
+  segmentCount: 1,
+  status: "warning",
+  totalTextLength: 39,
+  warnings: ["low-segment-count"],
+};
+
+const usableQuality: TranscriptQuality = {
+  ...warningQuality,
+  status: "usable",
+  warnings: [],
+};
+
+const digest = createDigest({
+  actionableIdeas: ["Study technology shifts in older industries."],
+  conceptsToInvestigate: ["media economics"],
+  connections: ["Connects to knowledge ingestion."],
+  digestTitle: "Generated Digest Title",
+  keyIdeas: ["Technology changes media economics."],
+  relevantTimestamps: [
+    {
+      note: "Technology and media thesis.",
+      timestamp: "0:00",
+    },
+  ],
+  tldr: ["A concise digest."],
+  verdict: "watch_fragments",
+});
