@@ -1,10 +1,10 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { parseCliArgs } from "./parse-args";
+import { createProgressRenderer } from "./progress-renderer";
 import {
   ingestVideo,
   type IngestVideoInput,
-  type IngestionProgressEvent,
   type IngestVideoResult,
 } from "../ingestion/ingest-video";
 import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
@@ -12,13 +12,16 @@ import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-tran
 
 export type CliIO = {
   error: (message: string) => void;
+  isTTY?: boolean;
   log: (message: string) => void;
   prompt?: (question: string) => Promise<string>;
+  write?: (message: string) => void;
 };
 
 export type CliDependencies = {
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   outputDir?: string;
+  spinnerIntervalMs?: number;
 };
 
 export async function runCli(
@@ -37,15 +40,18 @@ export async function runCli(
     const { emailPreview, video } = result.value;
     const ingest = dependencies.ingestVideo ?? ingestVideo;
     const outputDir = dependencies.outputDir ?? process.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
+    const progress = createProgressRenderer(io, {
+      intervalMs: dependencies.spinnerIntervalMs,
+    });
 
     const ingestion = await ingest({
       emailPreview,
-      onProgress: (event) => printIngestionProgress(event, io),
+      onProgress: progress.handle,
       outputDir,
       summarizer: new OpenCodeSummarizer(),
       transcriptSource: new PythonYoutubeTranscriptSource(),
       video,
-    });
+    }).finally(progress.stop);
 
     printIngestionResult(video.videoId, ingestion, io);
     return ingestion.exitCode;
@@ -57,8 +63,10 @@ export async function runCli(
 
 const defaultCliIO: CliIO = {
   error: (message) => console.error(message),
+  isTTY: stdout.isTTY,
   log: (message) => console.log(message),
   prompt: promptFromTerminal,
+  write: (message) => stdout.write(message),
 };
 
 if (import.meta.main) {
@@ -117,17 +125,4 @@ function printIngestionResult(videoId: string, result: IngestVideoResult, io: Cl
   if (result.paths.emailPreviewPath) {
     io.log(`Email preview: ${result.paths.emailPreviewPath}`);
   }
-}
-
-function printIngestionProgress(event: IngestionProgressEvent, io: CliIO): void {
-  const messages: Record<IngestionProgressEvent["stage"], string> = {
-    completed: "[5/5] Completed ingestion",
-    "fetching-transcript": `[1/5] Fetching transcript for ${event.videoId}`,
-    "generating-digest": "[3/5] Generating digest",
-    "scoring-transcript": "[2/5] Scoring transcript quality",
-    "unusable-transcript": "Transcript is unusable; skipping digest generation",
-    "writing-outputs": "[4/5] Writing output artifacts",
-  };
-
-  io.log(messages[event.stage]);
 }

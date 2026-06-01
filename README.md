@@ -63,7 +63,7 @@ Run a single-video digest:
 bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
 ```
 
-The CLI prints progress while it fetches the transcript, scores quality, generates the digest, and writes output artifacts.
+In an interactive terminal, the CLI shows a small ASCII banner and animated spinner while it fetches the transcript, scores quality, generates the digest, and writes output artifacts. In non-TTY environments, it falls back to plain progress logs.
 
 Generate an email preview too:
 

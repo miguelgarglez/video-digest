@@ -99,6 +99,60 @@ describe("runCli", () => {
     ]);
   });
 
+  test("renders animated terminal progress when TTY output is available", async () => {
+    const logs: string[] = [];
+    const writes: string[] = [];
+
+    await runCli(
+      ["https://youtu.be/1ZgUcrR0K7I"],
+      {
+        error: () => {},
+        isTTY: true,
+        log: (message) => logs.push(message),
+        write: (message) => writes.push(message),
+      },
+      {
+        ingestVideo: async (input) => {
+          input.onProgress?.({ stage: "fetching-transcript", videoId: input.video.videoId });
+          input.onProgress?.({ stage: "scoring-transcript", videoId: input.video.videoId });
+          input.onProgress?.({ stage: "completed", videoId: input.video.videoId });
+
+          return {
+            exitCode: 0,
+            paths: {
+              digestPath: "outputs/digests/1ZgUcrR0K7I.md",
+              emailPreviewPath: null,
+              metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
+              transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+            },
+            status: "completed",
+            transcriptQuality: {
+              averageCharsPerMinute: 720,
+              durationSeconds: 300,
+              language: "en",
+              qualitySchemaVersion: "transcript-quality.v0",
+              segmentCount: 60,
+              status: "usable",
+              totalTextLength: 3600,
+              warnings: [],
+            },
+          };
+        },
+        spinnerIntervalMs: 0,
+      },
+    );
+
+    expect(logs.slice(0, 4)).toEqual([
+      "",
+      "+----------------------+",
+      "| VIDEO DIGEST         |",
+      "+----------------------+",
+    ]);
+    expect(writes.join("")).toContain("\r- Fetching transcript for 1ZgUcrR0K7I");
+    expect(writes.join("")).toContain("\r[ok] Fetching transcript for 1ZgUcrR0K7I");
+    expect(logs).toContain("[done] Completed ingestion");
+  });
+
   test("prints usage errors and exits non-zero", async () => {
     const logs: string[] = [];
     const errors: string[] = [];
