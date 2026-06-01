@@ -3,6 +3,8 @@ import sys
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
+TRANSCRIPT_LANGUAGES = ("en", "es")
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -12,7 +14,7 @@ def main() -> int:
     video_id = sys.argv[1]
 
     try:
-        transcript = YouTubeTranscriptApi().fetch(video_id)
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=TRANSCRIPT_LANGUAGES)
     except Exception as error:
         print(str(error), file=sys.stderr)
         return 2

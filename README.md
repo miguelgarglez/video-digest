@@ -65,6 +65,8 @@ bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
 
 In an interactive terminal, the CLI shows a small ASCII banner and animated spinner while it fetches the transcript, scores quality, generates the digest, and writes output artifacts. In non-TTY environments, it falls back to plain progress logs.
 
+Transcript lookup currently tries English first and Spanish second. Spanish auto-generated transcripts are accepted and then scored by the transcript-quality heuristic before digest generation.
+
 Generate an email preview too:
 
 ```sh
