@@ -10,9 +10,11 @@ import type { YouTubeVideo } from "../video/youtube-url";
 describe("ingestVideo", () => {
   test("writes outputs for usable transcripts", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+    const progressStages: string[] = [];
 
     const result = await ingestVideo({
       emailPreview: true,
+      onProgress: (event) => progressStages.push(event.stage),
       outputDir,
       summarizer: fakeSummarizer(),
       transcriptSource: fakeTranscriptSource(usableTranscript()),
@@ -25,6 +27,13 @@ describe("ingestVideo", () => {
       expect(result.paths.emailPreviewPath).toBe(join(outputDir, "emails", "1ZgUcrR0K7I.md"));
       expect(await readFile(result.paths.digestPath, "utf8")).toContain("# Useful Digest");
     }
+    expect(progressStages).toEqual([
+      "fetching-transcript",
+      "scoring-transcript",
+      "generating-digest",
+      "writing-outputs",
+      "completed",
+    ]);
   });
 
   test("writes warning outputs for warning transcripts", async () => {

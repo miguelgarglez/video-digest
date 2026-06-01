@@ -63,10 +63,18 @@ Run a single-video digest:
 bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
 ```
 
+The CLI prints progress while it fetches the transcript, scores quality, generates the digest, and writes output artifacts.
+
 Generate an email preview too:
 
 ```sh
 bun run video-digest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --email-preview
+```
+
+Run without arguments to enter interactive mode:
+
+```sh
+bun run video-digest
 ```
 
 Quote YouTube URLs in the shell because `?` and `&` can be interpreted by zsh.

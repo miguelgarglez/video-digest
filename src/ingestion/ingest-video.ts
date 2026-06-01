@@ -12,10 +12,24 @@ import type { YouTubeVideo } from "../video/youtube-url";
 
 export type IngestVideoInput = {
   emailPreview: boolean;
+  onProgress?: (event: IngestionProgressEvent) => void;
   outputDir: string;
   summarizer: Summarizer;
   transcriptSource: TranscriptSource;
   video: YouTubeVideo;
+};
+
+export type IngestionProgressStage =
+  | "fetching-transcript"
+  | "scoring-transcript"
+  | "generating-digest"
+  | "writing-outputs"
+  | "completed"
+  | "unusable-transcript";
+
+export type IngestionProgressEvent = {
+  stage: IngestionProgressStage;
+  videoId: string;
 };
 
 export type IngestVideoResult =
@@ -33,10 +47,14 @@ export type IngestVideoResult =
     };
 
 export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoResult> {
+  emitProgress(input, "fetching-transcript");
   const transcript = await input.transcriptSource.fetch(input.video);
+
+  emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);
 
   if (transcriptQuality.status === "unusable") {
+    emitProgress(input, "unusable-transcript");
     const metadataPath = await writeFailedIngestionMetadata({
       error: {
         code: "unusable-transcript",
@@ -55,6 +73,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
     };
   }
 
+  emitProgress(input, "generating-digest");
   const digest = createDigest(
     await input.summarizer.generateDigest({
       transcript,
@@ -63,17 +82,29 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
     }),
   );
 
+  emitProgress(input, "writing-outputs");
+  const paths = await writeIngestionOutputs({
+    digest,
+    emailPreview: input.emailPreview,
+    outputDir: input.outputDir,
+    transcript,
+    transcriptQuality,
+    video: input.video,
+  });
+
+  emitProgress(input, "completed");
+
   return {
     exitCode: 0,
-    paths: await writeIngestionOutputs({
-      digest,
-      emailPreview: input.emailPreview,
-      outputDir: input.outputDir,
-      transcript,
-      transcriptQuality,
-      video: input.video,
-    }),
+    paths,
     status: "completed",
     transcriptQuality,
   };
+}
+
+function emitProgress(input: IngestVideoInput, stage: IngestionProgressStage): void {
+  input.onProgress?.({
+    stage,
+    videoId: input.video.videoId,
+  });
 }
