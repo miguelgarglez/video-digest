@@ -1,9 +1,14 @@
 import { parseYouTubeVideoUrl, type YouTubeVideo } from "../video/youtube-url";
 
-export type CliOptions = {
-  emailPreview: boolean;
-  video: YouTubeVideo;
-};
+export type CliOptions =
+  | {
+      command: "help";
+    }
+  | {
+      command: "ingest";
+      emailPreview: boolean;
+      video: YouTubeVideo;
+    };
 
 export type CliError = {
   code: "missing-url" | "invalid-url";
@@ -23,6 +28,15 @@ export type CliArgsResult =
 export const USAGE = "Usage: bun run video-digest <youtube-url> [--email-preview]";
 
 export function parseCliArgs(args: string[]): CliArgsResult {
+  if (args.includes("--help") || args.includes("-h")) {
+    return {
+      ok: true,
+      value: {
+        command: "help",
+      },
+    };
+  }
+
   const url = args.find((arg) => !arg.startsWith("--"));
 
   if (!url) {
@@ -39,6 +53,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
     return {
       ok: true,
       value: {
+        command: "ingest",
         emailPreview: args.includes("--email-preview"),
         video: parseYouTubeVideoUrl(url),
       },

@@ -37,6 +37,11 @@ export async function runCli(
       return 1;
     }
 
+    if (result.value.command === "help") {
+      printHelp(io);
+      return 0;
+    }
+
     const { emailPreview, video } = result.value;
     const ingest = dependencies.ingestVideo ?? ingestVideo;
     const outputDir = dependencies.outputDir ?? process.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
@@ -60,6 +65,27 @@ export async function runCli(
     return 1;
   }
 }
+
+const HELP_TEXT = [
+  "Personal Video Digest",
+  "",
+  "Usage:",
+  "  bun run video-digest <youtube-url> [--email-preview]",
+  "  bun run video-digest",
+  "  bun run video-digest --help",
+  "",
+  "Options:",
+  "  --email-preview  Also write a Markdown email preview under outputs/emails/.",
+  "  --help, -h       Show this help message.",
+  "",
+  "Interactive mode:",
+  "  Run without arguments to be prompted for the YouTube URL and email preview option.",
+  "",
+  "Environment:",
+  "  OPENCODE_API_KEY      Required for digest generation.",
+  "  OPENCODE_MODEL        Defaults to gpt-5.4-nano via .env.example.",
+  "  VIDEO_DIGEST_OUTPUT_DIR  Defaults to outputs.",
+].join("\n");
 
 const defaultCliIO: CliIO = {
   error: (message) => console.error(message),
@@ -107,6 +133,12 @@ async function promptFromTerminal(question: string): Promise<string> {
 
 function isAffirmative(answer: string): boolean {
   return ["s", "si", "sí", "y", "yes"].includes(answer.trim().toLowerCase());
+}
+
+function printHelp(io: CliIO): void {
+  for (const line of HELP_TEXT.split("\n")) {
+    io.log(line);
+  }
 }
 
 function printIngestionResult(videoId: string, result: IngestVideoResult, io: CliIO): void {

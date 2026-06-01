@@ -2,6 +2,32 @@ import { describe, expect, test } from "bun:test";
 import { runCli } from "./main";
 
 describe("runCli", () => {
+  test("prints help and exits without running ingestion", async () => {
+    const logs: string[] = [];
+    let ingestCalls = 0;
+
+    const exitCode = await runCli(
+      ["--help"],
+      {
+        error: () => {},
+        log: (message) => logs.push(message),
+      },
+      {
+        ingestVideo: async () => {
+          ingestCalls += 1;
+          throw new Error("Should not ingest when printing help");
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(ingestCalls).toBe(0);
+    expect(logs.join("\n")).toContain("Usage:");
+    expect(logs.join("\n")).toContain("--email-preview");
+    expect(logs.join("\n")).toContain("--help");
+    expect(logs.join("\n")).toContain("Interactive mode");
+  });
+
   test("runs ingestion and prints output paths", async () => {
     const logs: string[] = [];
     const errors: string[] = [];

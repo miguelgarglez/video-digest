@@ -79,4 +79,10 @@ Run without arguments to enter interactive mode:
 bun run video-digest
 ```
 
+Show CLI help:
+
+```sh
+bun run video-digest --help
+```
+
 Quote YouTube URLs in the shell because `?` and `&` can be interpreted by zsh.

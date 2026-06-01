@@ -6,6 +6,7 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["https://www.youtube.com/watch?v=1ZgUcrR0K7I"])).toEqual({
       ok: true,
       value: {
+        command: "ingest",
         emailPreview: false,
         video: {
           canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
@@ -22,9 +23,18 @@ describe("parseCliArgs", () => {
     ]);
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
+    if (result.ok && result.value.command === "ingest") {
       expect(result.value.emailPreview).toBe(true);
     }
+  });
+
+  test("parses the help flag", () => {
+    expect(parseCliArgs(["--help"])).toEqual({
+      ok: true,
+      value: {
+        command: "help",
+      },
+    });
   });
 
   test("returns usage error when URL is missing", () => {
