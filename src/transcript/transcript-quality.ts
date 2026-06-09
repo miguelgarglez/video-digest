@@ -7,6 +7,7 @@ export type TranscriptQualityWarning =
   | "low-average-chars-per-minute"
   | "low-segment-count"
   | "missing-valid-timestamps"
+  | "unexpected-language"
   | "very-short-transcript";
 
 export type TranscriptQuality = {
@@ -24,6 +25,7 @@ const MIN_USABLE_SEGMENT_COUNT = 20;
 const MIN_USABLE_TEXT_LENGTH = 1_000;
 const MIN_WARNING_TEXT_LENGTH = 250;
 const MIN_AVERAGE_CHARS_PER_MINUTE = 250;
+const EXPECTED_LANGUAGES = new Set(["en", "es"]);
 
 export function scoreTranscriptQuality(transcript: Transcript): TranscriptQuality {
   const segmentCount = transcript.segments.length;
@@ -60,6 +62,10 @@ export function scoreTranscriptQuality(transcript: Transcript): TranscriptQualit
     averageCharsPerMinute < MIN_AVERAGE_CHARS_PER_MINUTE
   ) {
     warnings.push("low-average-chars-per-minute");
+  }
+
+  if (transcript.language !== null && !EXPECTED_LANGUAGES.has(transcript.language)) {
+    warnings.push("unexpected-language");
   }
 
   return {

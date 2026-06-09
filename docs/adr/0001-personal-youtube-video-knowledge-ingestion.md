@@ -456,6 +456,31 @@ Decision actual:
 
 Riesgo aceptado: el MVP cruza runtime Bun -> Python. Esta complejidad queda aislada en el adapter y no debe filtrarse al core.
 
+## Transcript Source Policy
+
+MVP 002 profundiza el limite de **Transcript Source** antes de anadir polling de playlist, email real o nuevos proveedores.
+
+Politica inicial:
+
+- Idiomas preferidos: `en` primero, `es` despues.
+- El **Transcript Source** no traduce transcripts automaticamente. La capa de resumen podra generar un **Digest** en espanol, pero el **Transcript** debe conservar la evidencia obtenida.
+- Los transcripts auto-generados se aceptan. La **Transcript Provenance** debe guardarse cuando el proveedor la exponga, pero no convierte el transcript en `warning` por si sola.
+- **Transcript Quality** decide si un transcript es `usable`, `warning` o `unusable` mediante heuristicas deterministas.
+- Si el idioma recibido no cumple la **Transcript Language Policy**, el resultado debe quedar como `warning` visible.
+- No hay **Fallback** automatico a `yt-dlp`, SaaS o ASR en MVP 002. Esas capas se deciden despues de benchmarkear videos reales.
+
+La razon es separar dos preguntas:
+
+```text
+Transcript Source:
+  que transcript obtuvimos, en que idioma y con que provenance
+
+Transcript Quality:
+  si ese transcript es suficientemente util para resumir
+```
+
+Esto evita esconder problemas de calidad detras de traducciones o proveedores nuevos antes de entender bien el comportamiento de la primera capa.
+
 ## Trigger Options
 
 ### Option 1: n8n as orchestrator
@@ -621,8 +646,8 @@ Ver completo / ver fragmentos / guardar / descartar.
 
 - Que herramienta de transcript falla menos con los videos reales de Miguel?
 - Es suficiente un extractor no oficial o hace falta proveedor SaaS?
-- Que umbral define "transcript malo"?
-- Cuando activar fallback ASR/AI?
+- Despues de observar mas videos, hay que ajustar los umbrales de **Transcript Quality**?
+- Cuando activar **Fallback** `yt-dlp`, SaaS o ASR/AI?
 - Que modelo LLM barato es suficiente para resumen, extraccion de insights y clasificacion?
 - Conviene usar un unico modelo barato o pipeline de dos pasos: modelo barato para extraccion y modelo mejor para sintesis ocasional?
 - Donde guardar la knowledge base inicialmente: Markdown, Obsidian, Notion, Drive o Readwise?
@@ -825,3 +850,33 @@ outputs/emails/<video-id>.md
 ```
 
 La razon es evitar que Gmail OAuth, SMTP, credenciales, rate limits y errores de entrega distraigan del objetivo central: validar que un **Video** se convierte en un **Digest** util.
+
+## MVP 002 Scope
+
+El segundo MVP debe dejar estable la politica de **Transcript Source** antes de automatizar mas entradas.
+
+```text
+video-digest ingest <youtube-url>
+  -> obtiene Transcript con politica de idioma explicita
+  -> conserva Transcript Provenance cuando este disponible
+  -> evalua Transcript Quality con warnings alineados a la politica
+  -> mantiene outputs locales compatibles para Digest y metadata
+```
+
+Incluido:
+
+- documentar **Transcript Language Policy** y **Transcript Provenance**;
+- preferir `en` y despues `es`;
+- no traducir transcripts automaticamente;
+- aceptar transcripts auto-generados sin tratarlos como warning por defecto;
+- anadir warning determinista para idiomas fuera de politica;
+- mantener errores claros cuando no hay transcript;
+- mantener el core sin dependencia directa de Python o del proveedor concreto.
+
+Fuera de alcance:
+
+- polling de **Source Playlist**;
+- nuevos **Transcript Sources**;
+- **Fallback** automatico a `yt-dlp`, Supadata, TranscriptAPI, Apify o ASR;
+- envio real de email;
+- cambios de formato del **Digest** que no dependan de transcript.

@@ -17,6 +17,8 @@
 | **Transcript Source** | The provider or method used to obtain a transcript. | Extractor |
 | **Transcript Quality** | A system estimate of whether a transcript is complete and useful enough to summarize. | Confidence |
 | **Transcript Artifact** | A local technical file containing a full transcript for debugging and reproducibility. | Knowledge item |
+| **Transcript Language Policy** | The rule that decides which transcript languages are preferred and whether translation is allowed. | Language fallback |
+| **Transcript Provenance** | Metadata describing how a transcript was produced, such as whether it was manually authored or auto-generated. | Transcript quality |
 | **Fallback** | A secondary method used when the preferred transcript source fails or is low quality. | Backup |
 
 ## Knowledge output
@@ -33,6 +35,8 @@
 
 - A **Source Playlist** contains many **Videos**.
 - A **Video** may have zero or more **Transcripts** from different **Transcript Sources**.
+- A **Transcript Language Policy** guides which **Transcript** a **Transcript Source** should request first.
+- **Transcript Provenance** describes origin metadata for a **Transcript** but does not determine **Transcript Quality** by itself.
 - A **Transcript** has one **Transcript Quality** assessment.
 - A **Transcript Artifact** stores a **Transcript** locally but is not a **Knowledge Item**.
 - A **Digest** is generated from one **Video** and usually one **Transcript**.
