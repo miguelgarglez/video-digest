@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { runCli } from "./main";
+import { TranscriptSourceError } from "../transcript/transcript-source";
 
 describe("runCli", () => {
   test("prints help and exits without running ingestion", async () => {
@@ -191,6 +192,38 @@ describe("runCli", () => {
     expect(exitCode).toBe(1);
     expect(logs).toEqual([]);
     expect(errors).toEqual(["Usage: bun run video-digest <youtube-url> [--email-preview]"]);
+  });
+
+  test("prints a friendly message when a transcript is unavailable", async () => {
+    const errors: string[] = [];
+
+    const exitCode = await runCli(
+      ["https://youtu.be/hrIdEuwtODc"],
+      {
+        error: (message) => errors.push(message),
+        log: () => {},
+      },
+      {
+        ingestVideo: async () => {
+          throw new TranscriptSourceError(
+            "transcript-unavailable",
+            [
+              "Could not retrieve a transcript for the video https://www.youtube.com/watch?v=hrIdEuwtODc!",
+              "This is most likely caused by:",
+              "",
+              "Subtitles are disabled for this video",
+              "",
+              "If you are sure that the described cause is not responsible for this error and that a transcript should be retrievable, please create an issue at https://github.com/jdepoix/youtube-transcript-api/issues.",
+            ].join("\n"),
+          );
+        },
+      },
+    );
+
+    expect(exitCode).toBe(2);
+    expect(errors.join("\n")).toContain("No transcript is available for this video.");
+    expect(errors.join("\n")).toContain("Provider reason: Subtitles are disabled for this video");
+    expect(errors.join("\n")).not.toContain("github.com");
   });
 
   test("prompts for URL and email preview when run interactively", async () => {

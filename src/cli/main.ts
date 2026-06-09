@@ -9,6 +9,7 @@ import {
 } from "../ingestion/ingest-video";
 import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
+import { TranscriptSourceError } from "../transcript/transcript-source";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -61,9 +62,56 @@ export async function runCli(
     printIngestionResult(video.videoId, ingestion, io);
     return ingestion.exitCode;
   } catch (error) {
-    io.error(error instanceof Error ? error.message : "Video ingestion failed");
-    return 1;
+    const cliError = formatCliError(error);
+    io.error(cliError.message);
+    return cliError.exitCode;
   }
+}
+
+function formatCliError(error: unknown): { exitCode: number; message: string } {
+  if (error instanceof TranscriptSourceError && error.code === "transcript-unavailable") {
+    const providerReason = extractProviderReason(error.message);
+    const lines = [
+      "No transcript is available for this video.",
+      providerReason ? `Provider reason: ${providerReason}` : null,
+      "Digest generation was skipped. Try another video or a future transcript fallback.",
+    ];
+
+    return {
+      exitCode: 2,
+      message: lines.filter((line): line is string => line !== null).join("\n"),
+    };
+  }
+
+  if (error instanceof TranscriptSourceError) {
+    return {
+      exitCode: 1,
+      message: `Transcript provider failed: ${error.message}`,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      exitCode: 1,
+      message: error.message,
+    };
+  }
+
+  return {
+    exitCode: 1,
+    message: "Video ingestion failed",
+  };
+}
+
+function extractProviderReason(message: string): string | null {
+  const lines = message.split("\n").map((line) => line.trim());
+  const causeIndex = lines.findIndex((line) => line === "This is most likely caused by:");
+
+  if (causeIndex === -1) {
+    return null;
+  }
+
+  return lines.slice(causeIndex + 1).find((line) => line.length > 0) ?? null;
 }
 
 const HELP_TEXT = [
