@@ -1,7 +1,9 @@
 import json
+import os
 import sys
 
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 TRANSCRIPT_LANGUAGES = ("en", "es")
 
@@ -14,7 +16,10 @@ def main() -> int:
     video_id = sys.argv[1]
 
     try:
-        transcript = YouTubeTranscriptApi().fetch(video_id, languages=TRANSCRIPT_LANGUAGES)
+        transcript = YouTubeTranscriptApi(proxy_config=proxy_config()).fetch(
+            video_id,
+            languages=TRANSCRIPT_LANGUAGES,
+        )
     except Exception as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -41,6 +46,31 @@ def main() -> int:
 
     print(json.dumps(payload, ensure_ascii=False))
     return 0
+
+
+def proxy_config():
+    webshare_username = os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME")
+    webshare_password = os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD")
+    if webshare_username and webshare_password:
+        locations = [
+            location.strip()
+            for location in os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS", "").split(",")
+            if location.strip()
+        ]
+        kwargs = {
+            "proxy_username": webshare_username,
+            "proxy_password": webshare_password,
+        }
+        if locations:
+            kwargs["filter_ip_locations"] = locations
+        return WebshareProxyConfig(**kwargs)
+
+    http_url = os.getenv("YOUTUBE_TRANSCRIPT_PROXY_HTTP_URL")
+    https_url = os.getenv("YOUTUBE_TRANSCRIPT_PROXY_HTTPS_URL")
+    if http_url or https_url:
+        return GenericProxyConfig(http_url=http_url, https_url=https_url)
+
+    return None
 
 
 def optional_bool_attr(source, names):

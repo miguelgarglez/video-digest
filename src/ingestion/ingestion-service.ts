@@ -9,10 +9,15 @@ import { ingestVideo } from "./ingest-video";
 
 export type IngestionServiceDependencies = {
   ingestVideoFn?: typeof ingestVideo;
+  logger?: IngestionLogger;
   outputDir: string;
   repository: IngestionRepository;
   summarizer: Summarizer;
   transcriptSource: TranscriptSource;
+};
+
+export type IngestionLogger = {
+  info: (event: Record<string, unknown>) => void;
 };
 
 export type RunIngestionResult =
@@ -83,6 +88,12 @@ export async function runIngestionFromUrl(
     return { ok: true, record };
   } catch (error) {
     if (error instanceof TranscriptSourceError && error.code === "transcript-unavailable") {
+      dependencies.logger?.info({
+        event: "ingestion.transcript_unavailable",
+        providerMessage: error.message,
+        videoId: video.videoId,
+      });
+
       const record = dependencies.repository.save({
         canonicalUrl: video.canonicalUrl,
         errorCode: "transcript-unavailable",
@@ -119,7 +130,7 @@ function formatTranscriptUnavailableMessage(providerMessage: string): string {
 
 function extractProviderReason(message: string): string | null {
   const lines = message.split("\n").map((line) => line.trim());
-  const causeIndex = lines.findIndex((line) => line === "This is most likely caused by:");
+  const causeIndex = lines.findIndex((line) => line.includes("This is most likely caused by:"));
 
   if (causeIndex === -1) {
     return null;

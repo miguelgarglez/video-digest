@@ -103,7 +103,14 @@ function startBackgroundIngestion(
 ): void {
   const runIngestion = dependencies.runIngestion ?? runIngestionFromUrl;
 
+  const logger = {
+    info(event: Record<string, unknown>) {
+      console.log(JSON.stringify({ source: "personal-video-digest", ...event }));
+    },
+  };
+
   void runIngestion(youtubeUrl, {
+    logger,
     outputDir: dependencies.outputDir,
     repository: dependencies.repository,
     summarizer: dependencies.summarizer,

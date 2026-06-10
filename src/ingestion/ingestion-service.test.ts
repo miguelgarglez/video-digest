@@ -103,6 +103,57 @@ describe("runIngestionFromUrl", () => {
       expect(result.record.errorCode).toBe("transcript-unavailable");
     }
   });
+
+  test("preserves provider reason for transcript-unavailable ingestions", async () => {
+    ({ repository, tempDir } = await createRepository());
+
+    const result = await runIngestionFromUrl("https://youtu.be/1ZgUcrR0K7I", {
+      outputDir: join(tempDir, "outputs"),
+      repository,
+      summarizer: fakeSummarizer(),
+      transcriptSource: {
+        async fetch() {
+          throw new TranscriptSourceError(
+            "transcript-unavailable",
+            [
+              "Could not retrieve a transcript for the video https://www.youtube.com/watch?v=1ZgUcrR0K7I! This is most likely caused by:",
+              "",
+              "YouTube is blocking requests from your IP.",
+              "There are two things you can do to work around this:",
+            ].join("\n"),
+          );
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.record.errorMessage).toContain("Provider reason: YouTube is blocking requests from your IP.");
+    }
+  });
+
+  test("logs transcript-unavailable ingestions", async () => {
+    ({ repository, tempDir } = await createRepository());
+    const logs: unknown[] = [];
+
+    await runIngestionFromUrl("https://youtu.be/1ZgUcrR0K7I", {
+      logger: { info: (event) => logs.push(event) },
+      outputDir: join(tempDir, "outputs"),
+      repository,
+      summarizer: fakeSummarizer(),
+      transcriptSource: {
+        async fetch() {
+          throw new TranscriptSourceError("transcript-unavailable", "No transcript found");
+        },
+      },
+    });
+
+    expect(logs).toContainEqual({
+      event: "ingestion.transcript_unavailable",
+      providerMessage: "No transcript found",
+      videoId: "1ZgUcrR0K7I",
+    });
+  });
 });
 
 async function createRepository() {
