@@ -1,6 +1,6 @@
 # Persist Processing Ingestion State
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Parent
@@ -20,14 +20,14 @@ language and should not be added to `CONTEXT.md`.
 
 ## Acceptance criteria
 
-- [ ] `IngestionRecordStatus` accepts `processing`.
-- [ ] `IngestionRecord` persists a nullable `progressStage`.
-- [ ] `progressStage` accepts `queued` plus the stages emitted by `ingestVideo.onProgress`.
-- [ ] `IngestionRepository` can save and read records with `status = "processing"`.
-- [ ] `IngestionRepository` can update only the progress stage for an existing record.
-- [ ] `GET /api/ingestions/:videoId` includes `status`, `progressStage`, `statusLabel`, `progressLabel`, and `updatedAt`.
-- [ ] UI labels are generated in the web layer and are Spanish-facing copy.
-- [ ] Existing completed, unusable, transcript-unavailable, and failed records still round-trip through storage.
+- [x] `IngestionRecordStatus` accepts `processing`.
+- [x] `IngestionRecord` persists a nullable `progressStage`.
+- [x] `progressStage` accepts `queued` plus the stages emitted by `ingestVideo.onProgress`.
+- [x] `IngestionRepository` can save and read records with `status = "processing"`.
+- [x] `IngestionRepository` can update only the progress stage for an existing record.
+- [x] `GET /api/ingestions/:videoId` includes `status`, `progressStage`, `statusLabel`, `progressLabel`, and `updatedAt`.
+- [x] UI labels are generated in the web layer and are Spanish-facing copy.
+- [x] Existing completed, unusable, transcript-unavailable, and failed records still round-trip through storage.
 
 ## Blocked by
 

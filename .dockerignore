@@ -1,0 +1,13 @@
+.git
+.cursor
+.superpowers
+.scratch
+node_modules
+outputs
+data
+.env
+.env.*
+!.env.example
+**/*.log
+**/__pycache__
+python/.venv

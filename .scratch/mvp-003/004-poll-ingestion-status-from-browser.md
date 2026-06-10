@@ -1,6 +1,6 @@
 # Poll Ingestion Status From Browser
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Parent
@@ -19,12 +19,12 @@ dependencies.
 
 ## Acceptance criteria
 
-- [ ] Polling JavaScript is only included or activated for records with `status = "processing"`.
-- [ ] The browser polls `GET /api/ingestions/:videoId` every 1-2 seconds.
-- [ ] The visible progress label updates when the API returns a new `progressLabel`.
-- [ ] The page reloads when the API returns a final status.
-- [ ] Polling failures leave the current page readable and show a small retry/error hint.
-- [ ] No npm, Bun, or browser dependency is added for polling.
+- [x] Polling JavaScript is only included or activated for records with `status = "processing"`.
+- [x] The browser polls `GET /api/ingestions/:videoId` every 1-2 seconds.
+- [x] The visible progress label updates when the API returns a new `progressLabel`.
+- [x] The page reloads when the API returns a final status.
+- [x] Polling failures leave the current page readable and show a small retry/error hint.
+- [x] No npm, Bun, or browser dependency is added for polling.
 
 ## Blocked by
 

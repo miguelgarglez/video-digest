@@ -1,6 +1,6 @@
 # Start Web Ingestions In Background
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Parent
@@ -19,13 +19,13 @@ each observable stage without coupling the core to HTTP, polling, or browser beh
 
 ## Acceptance criteria
 
-- [ ] `POST /ingestions` validates and parses the YouTube URL before creating a record.
-- [ ] Valid submissions save `status = "processing"` with `progressStage = "queued"` before work starts.
-- [ ] Valid submissions return a `303` redirect to `/ingestions/:videoId` without awaiting transcript or digest generation.
-- [ ] Background execution calls the existing ingestion service and updates `progressStage` from `ingestVideo.onProgress`.
-- [ ] Background execution eventually saves the same final records as the current synchronous flow.
-- [ ] Invalid URL submissions return an HTML error response rather than plain text.
-- [ ] Core ingestion remains reusable by CLI and does not import web or storage modules.
+- [x] `POST /ingestions` validates and parses the YouTube URL before creating a record.
+- [x] Valid submissions save `status = "processing"` with `progressStage = "queued"` before work starts.
+- [x] Valid submissions return a `303` redirect to `/ingestions/:videoId` without awaiting transcript or digest generation.
+- [x] Background execution calls the existing ingestion service and updates `progressStage` from `ingestVideo.onProgress`.
+- [x] Background execution eventually saves the same final records as the current synchronous flow.
+- [x] Invalid URL submissions return an HTML error response rather than plain text.
+- [x] Core ingestion remains reusable by CLI and does not import web or storage modules.
 
 ## Blocked by
 

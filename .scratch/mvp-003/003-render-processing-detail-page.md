@@ -1,6 +1,6 @@
 # Render Processing Detail Page
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Parent
@@ -19,12 +19,12 @@ added: a refresh should still show the latest persisted stage from SQLite.
 
 ## Acceptance criteria
 
-- [ ] `GET /ingestions/:videoId` renders a processing state when the record status is `processing`.
-- [ ] The processing page shows the canonical URL, status badge, human progress label, and updated timestamp.
-- [ ] Processing labels use Spanish-facing copy and do not expose raw internal stage strings as the primary text.
-- [ ] The page includes a discreet activity indicator without inventing fake percentage progress.
-- [ ] Final completed records still render the existing **Digest** section.
-- [ ] Final failed, transcript-unavailable, and unusable-transcript records still render their error or warning information.
+- [x] `GET /ingestions/:videoId` renders a processing state when the record status is `processing`.
+- [x] The processing page shows the canonical URL, status badge, human progress label, and updated timestamp.
+- [x] Processing labels use Spanish-facing copy and do not expose raw internal stage strings as the primary text.
+- [x] The page includes a discreet activity indicator without inventing fake percentage progress.
+- [x] Final completed records still render the existing **Digest** section.
+- [x] Final failed, transcript-unavailable, and unusable-transcript records still render their error or warning information.
 
 ## Blocked by
 

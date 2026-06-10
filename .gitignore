@@ -14,6 +14,7 @@ logs/
 .tmp/
 tmp/
 outputs/
+data/
 .venv/
 python/.venv/
 
@@ -25,3 +26,5 @@ coverage/
 __pycache__/
 .pytest_cache/
 .superpowers/
+.playwright-mcp/
+.scratch/handoff-*.md

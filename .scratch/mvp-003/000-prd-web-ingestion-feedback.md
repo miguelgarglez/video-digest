@@ -1,6 +1,6 @@
 # PRD: MVP 003 - Web Ingestion Feedback
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Contexto

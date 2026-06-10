@@ -1,6 +1,6 @@
 # Fail Stale Processing Records On Startup
 
-Status: ready-for-agent  
+Status: done
 Category: enhancement
 
 ## Parent
@@ -19,12 +19,12 @@ queue.
 
 ## Acceptance criteria
 
-- [ ] Startup calls a repository operation that marks stale `processing` records as `failed`.
-- [ ] The failed records receive an operational error code and a human-readable error message.
-- [ ] The implementation does not retry stale work automatically.
-- [ ] Fresh in-process background work is not marked failed after it has started in the same server run.
-- [ ] The failure state renders through the existing ingestion detail page.
-- [ ] Tests cover the repository operation and server startup behavior.
+- [x] Startup calls a repository operation that marks stale `processing` records as `failed`.
+- [x] The failed records receive an operational error code and a human-readable error message.
+- [x] The implementation does not retry stale work automatically.
+- [x] Fresh in-process background work is not marked failed after it has started in the same server run.
+- [x] The failure state renders through the existing ingestion detail page.
+- [x] Tests cover the repository operation and server startup behavior.
 
 ## Blocked by
 
