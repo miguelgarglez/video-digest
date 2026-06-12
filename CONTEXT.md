@@ -8,6 +8,7 @@
 | **Source Playlist** | The YouTube playlist used as an inbox for videos to process. | Watch Later, queue |
 | **Ingestion** | The act of accepting a video into the system for processing. | Import, capture |
 | **Trigger** | The mechanism that starts ingestion or polling. | Automation, workflow |
+| **Processed Video State** | A durable record that a video has already been processed or delivered. | History, cache |
 
 ## Transcript processing
 
@@ -30,10 +31,13 @@
 | **Insight** | A useful idea extracted or inferred from one or more digests. | Takeaway |
 | **Knowledge Item** | A durable note saved into the personal knowledge base. | Note, document |
 | **Knowledge Base** | Miguel's personal system for storing and connecting knowledge items. | PKM, notes app |
+| **Delivery** | Sending or placing a digest where Miguel will consume it, such as Gmail or a future knowledge base. | Notification, export |
+| **Email Preview** | A Markdown artifact formatted as the body of a future email delivery. | Draft, email |
 
 ## Relationships
 
 - A **Source Playlist** contains many **Videos**.
+- **Processed Video State** prevents the same **Video** from being ingested or delivered repeatedly.
 - A **Video** may have zero or more **Transcripts** from different **Transcript Sources**.
 - A **Transcript Language Policy** guides which **Transcript** a **Transcript Source** should request first.
 - **Transcript Provenance** describes origin metadata for a **Transcript** but does not determine **Transcript Quality** by itself.
@@ -41,5 +45,7 @@
 - A **Transcript Artifact** stores a **Transcript** locally but is not a **Knowledge Item**.
 - A **Digest** is generated from one **Video** and usually one **Transcript**.
 - A **Digest Title** belongs to a **Digest** and may differ from the original **Video** title.
+- **Delivery** sends or places a **Digest** for consumption.
+- An **Email Preview** may be created from a **Digest** before Gmail **Delivery**.
 - A **Knowledge Item** may be created from one or more **Digests**.
 - A **Trigger** starts either a single-video **Ingestion** or a playlist poll.
