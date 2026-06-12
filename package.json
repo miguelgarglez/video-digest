@@ -2,10 +2,13 @@
   "name": "personal-video-digest",
   "type": "module",
   "private": true,
+  "bin": {
+    "video-digest": "./bin/video-digest"
+  },
   "scripts": {
     "test": "bun test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
-    "video-digest": "bun run src/cli/main.ts",
+    "video-digest": "bun --silent run src/cli/main.ts",
     "web": "bun run src/web/server.ts",
     "start": "bun run src/web/server.ts"
   },

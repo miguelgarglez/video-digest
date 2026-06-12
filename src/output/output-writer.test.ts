@@ -6,7 +6,7 @@ import { createDigest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
-import { writeIngestionOutputs } from "./output-writer";
+import { writeIngestionOutputs, writeTranscriptOnlyOutputs } from "./output-writer";
 
 describe("writeIngestionOutputs", () => {
   test("writes versioned transcript, digest, metadata, and email preview files", async () => {
@@ -71,6 +71,40 @@ describe("writeIngestionOutputs", () => {
     });
 
     expect(result.emailPreviewPath).toBeNull();
+  });
+});
+
+describe("writeTranscriptOnlyOutputs", () => {
+  test("writes transcript and metadata without digest artifacts", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-"));
+
+    const result = await writeTranscriptOnlyOutputs({
+      outputDir,
+      transcript,
+      transcriptQuality: usableQuality,
+      video,
+    });
+
+    expect(result).toEqual({
+      metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+      transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+    });
+
+    const transcriptJson = JSON.parse(await readFile(result.transcriptPath, "utf8"));
+    expect(transcriptJson.schemaVersion).toBe("transcript.v0");
+
+    const metadataJson = JSON.parse(await readFile(result.metadataPath, "utf8"));
+    expect(metadataJson).toMatchObject({
+      metadataSchemaVersion: "metadata.v0",
+      mode: "transcript-only",
+      transcriptQuality: {
+        status: "usable",
+      },
+      video: {
+        videoId: "1ZgUcrR0K7I",
+      },
+    });
+    await expect(readFile(join(outputDir, "digests", "1ZgUcrR0K7I.md"), "utf8")).rejects.toThrow();
   });
 });
 

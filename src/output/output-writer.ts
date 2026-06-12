@@ -21,6 +21,18 @@ export type IngestionOutputPaths = {
   transcriptPath: string;
 };
 
+export type TranscriptOnlyOutputInput = {
+  outputDir: string;
+  transcript: Transcript;
+  transcriptQuality: TranscriptQuality;
+  video: YouTubeVideo;
+};
+
+export type TranscriptOnlyOutputPaths = {
+  metadataPath: string;
+  transcriptPath: string;
+};
+
 export type FailedIngestionMetadataInput = {
   error: {
     code: string;
@@ -50,6 +62,44 @@ export async function writeIngestionOutputs(
   if (paths.emailPreviewPath) {
     await writeFile(paths.emailPreviewPath, renderEmailPreview(input));
   }
+
+  return paths;
+}
+
+export async function writeTranscriptOnlyOutputs(
+  input: TranscriptOnlyOutputInput,
+): Promise<TranscriptOnlyOutputPaths> {
+  const paths = {
+    metadataPath: join(input.outputDir, "metadata", `${input.video.videoId}.json`),
+    transcriptPath: join(input.outputDir, "transcripts", `${input.video.videoId}.json`),
+  };
+
+  await Promise.all([
+    mkdir(join(input.outputDir, "metadata"), { recursive: true }),
+    mkdir(join(input.outputDir, "transcripts"), { recursive: true }),
+  ]);
+
+  await writeFile(paths.transcriptPath, `${JSON.stringify(input.transcript, null, 2)}\n`);
+  await writeFile(
+    paths.metadataPath,
+    `${JSON.stringify(
+      {
+        metadataSchemaVersion: "metadata.v0",
+        mode: "transcript-only",
+        processedAt: new Date().toISOString(),
+        transcriptQuality: input.transcriptQuality,
+        video: {
+          canonicalUrl: input.video.canonicalUrl,
+          channel: null,
+          durationSeconds: input.transcriptQuality.durationSeconds,
+          videoId: input.video.videoId,
+          videoTitle: null,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
 
   return paths;
 }
