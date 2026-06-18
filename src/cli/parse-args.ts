@@ -8,11 +8,13 @@ export type CliOptions =
       command: "ingest";
       emailPreview: boolean;
       json: boolean;
+      outputDir?: string;
       video: YouTubeVideo;
     }
   | {
       command: "transcript";
       json: boolean;
+      outputDir?: string;
       video: YouTubeVideo;
     }
   | {
@@ -22,21 +24,24 @@ export type CliOptions =
   | {
       command: "list";
       json: boolean;
+      outputDir?: string;
     }
   | {
       command: "open";
       json: boolean;
+      outputDir?: string;
       target: string;
     }
   | {
       command: "config";
       json: boolean;
-      key?: "opencode-api-key";
+      key?: "opencode-api-key" | "output-dir";
       subcommand: "get" | "set" | "unset";
+      value?: string;
     };
 
 export type CliError = {
-  code: "missing-url" | "invalid-url" | "unsupported-command";
+  code: "missing-url" | "invalid-url" | "missing-option-value" | "unsupported-command";
   message: string;
 };
 
@@ -65,7 +70,12 @@ export function parseCliArgs(args: string[]): CliArgsResult {
     };
   }
 
-  const firstArg = args.find((arg) => !arg.startsWith("--"));
+  const parsedOutputDir = extractOutputDir(args);
+  if (!parsedOutputDir.ok) {
+    return parsedOutputDir;
+  }
+  const positional = parsedOutputDir.args.filter((arg) => !arg.startsWith("--"));
+  const firstArg = positional[0];
 
   if (firstArg === "doctor") {
     return {
@@ -83,12 +93,13 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       value: {
         command: "list",
         json: args.includes("--json"),
+        outputDir: parsedOutputDir.outputDir,
       },
     };
   }
 
   if (firstArg === "open") {
-    const target = args.filter((arg) => !arg.startsWith("--"))[1];
+    const target = positional[1];
 
     if (!target) {
       return {
@@ -105,13 +116,13 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       value: {
         command: "open",
         json: args.includes("--json"),
+        outputDir: parsedOutputDir.outputDir,
         target,
       },
     };
   }
 
   if (firstArg === "config") {
-    const positional = args.filter((arg) => !arg.startsWith("--"));
     const subcommand = positional[1];
     const key = positional[2];
 
@@ -138,6 +149,19 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       };
     }
 
+    if (subcommand === "set" && key === "output-dir" && positional[3]) {
+      return {
+        ok: true,
+        value: {
+          command: "config",
+          json: args.includes("--json"),
+          key,
+          subcommand,
+          value: positional[3],
+        },
+      };
+    }
+
     return {
       ok: false,
       error: {
@@ -148,7 +172,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   }
 
   const url = firstArg === "ingest" || firstArg === "transcript"
-    ? args.filter((arg) => !arg.startsWith("--"))[1]
+    ? positional[1]
     : firstArg;
 
   if (!url) {
@@ -187,6 +211,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
         value: {
           command: "transcript",
           json: args.includes("--json"),
+          outputDir: parsedOutputDir.outputDir,
           video,
         },
       };
@@ -198,6 +223,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
         command: "ingest",
         emailPreview: args.includes("--email-preview"),
         json: args.includes("--json"),
+        outputDir: parsedOutputDir.outputDir,
         video,
       },
     };
@@ -210,4 +236,33 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       },
     };
   }
+}
+
+function extractOutputDir(args: string[]):
+  | { args: string[]; ok: true; outputDir?: string }
+  | { error: CliError; ok: false } {
+  const remaining: string[] = [];
+  let outputDir: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== "--output-dir") {
+      remaining.push(args[index]!);
+      continue;
+    }
+
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      return {
+        ok: false,
+        error: {
+          code: "missing-option-value",
+          message: "--output-dir requires a non-empty path.\n\nUsage: video-digest <command> [options] [--output-dir <path>]",
+        },
+      };
+    }
+    outputDir = value;
+    index += 1;
+  }
+
+  return { args: remaining, ok: true, outputDir };
 }

@@ -1,4 +1,5 @@
 import { stdin, stdout } from "node:process";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { listArtifacts, resolveOpenTarget, type ArtifactEntry } from "./artifacts";
 import {
@@ -9,6 +10,9 @@ import {
 import { defaultDoctor, type DoctorReport } from "./doctor";
 import { parseCliArgs, type CliOptions } from "./parse-args";
 import { createProgressRenderer } from "./progress-renderer";
+import { resolveAppPaths, type AppPaths } from "./app-paths";
+import { resolveArtifactLibrary } from "./artifact-library";
+import { FileConfigStore, type AppConfig } from "./config-store";
 import {
   ingestVideo,
   type IngestVideoInput,
@@ -33,9 +37,12 @@ export type CliIO = {
 };
 
 export type CliDependencies = {
+  appPaths?: AppPaths;
+  configStore?: Pick<FileConfigStore, "load" | "save">;
   credentialStore?: CredentialStore;
   doctor?: () => Promise<DoctorReport>;
   env?: Record<string, string | undefined>;
+  homeDir?: string;
   fetchTranscriptOnly?: (input: FetchTranscriptOnlyInput) => Promise<FetchTranscriptOnlyResult>;
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   openPath?: (path: string) => Promise<void>;
@@ -74,11 +81,19 @@ export async function runCli(
     }
 
     const env = dependencies.env ?? process.env;
-    const outputDir = dependencies.outputDir ?? env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
+    const appPaths = dependencies.appPaths ?? resolveAppPaths(dependencies.homeDir ?? homedir());
+    const configStore = dependencies.configStore ?? new FileConfigStore(appPaths.configPath);
+    const config = await configStore.load();
+    const outputDir = resolveArtifactLibrary({
+      cliOutputDir: ("outputDir" in result.value ? result.value.outputDir : undefined) ?? dependencies.outputDir,
+      defaultArtifactLibrary: appPaths.defaultArtifactLibrary,
+      envOutputDir: env.VIDEO_DIGEST_OUTPUT_DIR,
+      savedArtifactLibrary: config?.artifactLibrary,
+    });
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
 
     if (result.value.command === "config") {
-      return await runConfigCommand(result.value, io, credentialStore, env);
+      return await runConfigCommand(result.value, io, credentialStore, configStore, env, outputDir);
     }
 
     if (result.value.command === "doctor") {
@@ -300,12 +315,13 @@ const HELP_TEXT = [
   "Personal Video Digest",
   "",
   "Usage:",
-  "  video-digest ingest <youtube-url> [--email-preview] [--json]",
-  "  video-digest transcript <youtube-url> [--json]",
+  "  video-digest ingest <youtube-url> [--email-preview] [--json] [--output-dir <path>]",
+  "  video-digest transcript <youtube-url> [--json] [--output-dir <path>]",
   "  video-digest config <get|set|unset> [opencode-api-key] [--json]",
+  "  video-digest config set output-dir <path> [--json]",
   "  video-digest doctor [--json]",
-  "  video-digest list [--json]",
-  "  video-digest open <latest|video-id> [--json]",
+  "  video-digest list [--json] [--output-dir <path>]",
+  "  video-digest open <latest|video-id> [--json] [--output-dir <path>]",
   "",
   "Compatibility:",
   "  bun run video-digest <youtube-url> [--email-preview]",
@@ -315,6 +331,7 @@ const HELP_TEXT = [
   "Options:",
   "  --email-preview  Also write a Markdown email preview under outputs/emails/.",
   "  --json           Write one machine-readable JSON object.",
+  "  --output-dir     Override the Artifact Library for this command.",
   "  --help, -h       Show this help message.",
   "",
   "Interactive mode:",
@@ -323,7 +340,7 @@ const HELP_TEXT = [
   "Environment:",
   "  OPENCODE_API_KEY      Required for digest generation with ingest.",
   "  OPENCODE_MODEL        Defaults to gpt-5.4-nano via .env.example.",
-  "  VIDEO_DIGEST_OUTPUT_DIR  Defaults to outputs.",
+  "  VIDEO_DIGEST_OUTPUT_DIR  Overrides the configured Artifact Library.",
   "",
   "Transcript mode:",
   "  video-digest transcript <youtube-url> does not require OPENCODE_API_KEY.",
@@ -370,7 +387,9 @@ async function runConfigCommand(
   command: Extract<CliOptions, { command: "config" }>,
   io: CliIO,
   credentialStore: CredentialStore,
+  configStore: Pick<FileConfigStore, "load" | "save">,
   env: Record<string, string | undefined>,
+  artifactLibrary: string,
 ): Promise<number> {
   if (command.subcommand === "get") {
     const credential = await resolveOpenCodeApiKey({
@@ -382,6 +401,7 @@ async function runConfigCommand(
 
     if (command.json) {
       io.log(JSON.stringify({
+        artifactLibrary,
         opencodeApiKey: {
           configured,
           source: credential.source,
@@ -392,11 +412,25 @@ async function runConfigCommand(
       io.log(configured
         ? `OpenCode API key: configured via ${sourceLabel}`
         : "OpenCode API key: not configured");
+      io.log(`Artifact Library: ${artifactLibrary}`);
     }
     return 0;
   }
 
   if (command.subcommand === "set") {
+    if (command.key === "output-dir") {
+      const config: AppConfig = {
+        artifactLibrary: command.value!,
+        schemaVersion: "config.v0",
+      };
+      await configStore.save(config);
+      if (command.json) {
+        io.log(JSON.stringify({ artifactLibrary: config.artifactLibrary, schemaVersion: "config-result.v0", status: "saved" }));
+      } else {
+        io.log(`Artifact Library saved: ${config.artifactLibrary}`);
+      }
+      return 0;
+    }
     if (command.json) {
       io.log(JSON.stringify({
         error: {

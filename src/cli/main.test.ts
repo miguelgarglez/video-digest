@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import { runCli } from "./main";
+import { runCli as runCliProduction, type CliDependencies, type CliIO } from "./main";
+import type { AppConfig } from "./config-store";
 import type { CredentialStore } from "./credentials";
 import type { IngestVideoResult } from "../ingestion/ingest-video";
 import type { FetchTranscriptOnlyResult } from "../ingestion/transcript-only";
@@ -10,7 +11,64 @@ import { SummarizerError } from "../summarizer/summarizer";
 import { TranscriptSourceError, type Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 
+async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<number> {
+  return runCliProduction(args, io, {
+    appPaths: {
+      configPath: "/test-home/Library/Application Support/video-digest/config.json",
+      defaultArtifactLibrary: "/test-home/Documents/Video Digest",
+      runtimeDir: "/test-home/Library/Application Support/video-digest/runtime/python",
+    },
+    configStore: { load: async () => null, save: async () => {} },
+    ...dependencies,
+  });
+}
+
 describe("runCli", () => {
+  test("persists output-dir config", async () => {
+    let saved: AppConfig | undefined;
+    const exitCode = await runCli(
+      ["config", "set", "output-dir", "/chosen/library"],
+      { error: () => {}, log: () => {} },
+      {
+        appPaths: { configPath: "/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+        configStore: { load: async () => null, save: async (config) => { saved = config; } },
+        env: {},
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(saved).toEqual({ artifactLibrary: "/chosen/library", schemaVersion: "config.v0" });
+  });
+
+  test("reports effective artifact library in human and JSON config output without secrets", async () => {
+    const human: string[] = [];
+    const json: string[] = [];
+    const dependencies = {
+      appPaths: { configPath: "/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+      configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" as const }), save: async () => {} },
+      credentialStore: fakeCredentialStore({ storedKey: "never-print-this" }),
+      env: { VIDEO_DIGEST_OUTPUT_DIR: "/env" },
+    };
+    await runCli(["config", "get"], { error: () => {}, log: (message) => human.push(message) }, dependencies);
+    await runCli(["config", "get", "--json"], { error: () => {}, log: (message) => json.push(message) }, dependencies);
+    expect(human.join("\n")).toContain("Artifact Library: /env");
+    expect(JSON.parse(json[0]!)).toMatchObject({ artifactLibrary: "/env", opencodeApiKey: { configured: true, source: "keychain" } });
+    expect(`${human.join("\n")} ${json.join("\n")}`).not.toContain("never-print-this");
+  });
+
+  test("passes CLI output-dir precedence to ingest", async () => {
+    let seen = "";
+    await runCli(
+      ["ingest", "https://youtu.be/1ZgUcrR0K7I", "--output-dir", "/cli"],
+      { error: () => {}, log: () => {} },
+      {
+        appPaths: { configPath: "/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+        configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" }), save: async () => {} },
+        env: { VIDEO_DIGEST_OUTPUT_DIR: "/env" },
+        ingestVideo: async (input) => { seen = input.outputDir; return completedIngestion(); },
+      },
+    );
+    expect(seen).toBe("/cli");
+  });
   test("prints help and exits without running ingestion", async () => {
     const logs: string[] = [];
     let ingestCalls = 0;
@@ -450,6 +508,7 @@ describe("runCli", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(logs[0]!)).toEqual({
+      artifactLibrary: "/test-home/Documents/Video Digest",
       opencodeApiKey: {
         configured: true,
         source: "keychain",

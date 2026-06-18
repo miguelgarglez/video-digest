@@ -71,6 +71,32 @@ describe("parseCliArgs", () => {
     });
   });
 
+  test.each([
+    [["ingest", "--output-dir", "/library", "https://youtu.be/1ZgUcrR0K7I"], "ingest"],
+    [["transcript", "https://youtu.be/1ZgUcrR0K7I", "--output-dir", "/library"], "transcript"],
+    [["list", "--output-dir", "/library", "--json"], "list"],
+    [["open", "--json", "--output-dir", "/library", "latest"], "open"],
+  ])("parses --output-dir without treating its value as positional: %j", (args, command) => {
+    const result = parseCliArgs(args);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.command).toBe(command as typeof result.value.command);
+      expect("outputDir" in result.value ? result.value.outputDir : undefined).toBe("/library");
+    }
+  });
+
+  test.each([
+    ["ingest"], ["transcript"], ["list"], ["open"],
+  ])("returns actionable usage when --output-dir has no value for %s", (command) => {
+    expect(parseCliArgs([command, "--output-dir"])).toEqual({
+      ok: false,
+      error: {
+        code: "missing-option-value",
+        message: "--output-dir requires a non-empty path.\n\nUsage: video-digest <command> [options] [--output-dir <path>]",
+      },
+    });
+  });
+
   test("returns transcript usage when transcript URL is missing", () => {
     expect(parseCliArgs(["transcript"])).toEqual({
       ok: false,
@@ -137,6 +163,16 @@ describe("parseCliArgs", () => {
         json: false,
         key: "opencode-api-key",
         subcommand: "unset",
+      },
+    });
+    expect(parseCliArgs(["config", "set", "output-dir", "/library"])).toEqual({
+      ok: true,
+      value: {
+        command: "config",
+        json: false,
+        key: "output-dir",
+        subcommand: "set",
+        value: "/library",
       },
     });
   });
