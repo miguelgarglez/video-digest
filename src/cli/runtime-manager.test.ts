@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   expectedRuntimeMarker,
+  buildRuntimeCommandEnvironment,
   inspectRuntime,
   managedInterpreterPath,
   prepareRuntime,
   runtimeMarkerPath,
+  resolveUvExecutable,
 } from "./runtime-manager";
 
 describe("prepareRuntime", () => {
@@ -26,6 +28,7 @@ describe("prepareRuntime", () => {
     await mkdir(pythonDir);
 
     await prepareRuntime({
+      idFactory: () => "test",
       lockContents: "locked\n",
       pythonDir,
       runtimeDir,
@@ -43,7 +46,7 @@ describe("prepareRuntime", () => {
       command: ["/fake/uv", "sync", "--frozen", "--python", "3.12", "--project", pythonDir],
       options: {
         cwd: pythonDir,
-        env: { UV_PROJECT_ENVIRONMENT: `${runtimeDir}.staging` },
+        env: { UV_PROJECT_ENVIRONMENT: `${runtimeDir}.staging-test` },
       },
     }]);
     expect(await readFile(runtimeMarkerPath(runtimeDir), "utf8")).toBe(expectedRuntimeMarker("locked\n"));
@@ -69,15 +72,37 @@ describe("prepareRuntime", () => {
     await expect(readFile(runtimeMarkerPath(runtimeDir), "utf8")).rejects.toThrow();
   });
 
+  test("rejects a successful uv run that did not create an executable interpreter", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root);
+    const runtimeDir = join(root, "python"); await mkdir(runtimeDir); await writeFile(join(runtimeDir, "sentinel"), "existing");
+    await expect(prepareRuntime({ idFactory: () => "one", lockContents: "lock", pythonDir: root, runtimeDir,
+      runner: async (_command, options) => { await mkdir(options.env.UV_PROJECT_ENVIRONMENT!); return { exitCode: 0, stderr: "", stdout: "" }; }, uvPath: "uv" })).rejects.toThrow("not ready");
+    expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("existing");
+  });
+
+  test("uses an exclusive lock and does not disturb an active setup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root);
+    const runtimeDir = join(root, "python"); let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const first = prepareRuntime({ idFactory: () => "first", lockContents: "lock", pythonDir: root, runtimeDir,
+      runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await blocked; return { exitCode: 0, stderr: "", stdout: "" }; }, uvPath: "uv" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect(prepareRuntime({ idFactory: () => "second", lockContents: "lock", pythonDir: root, runtimeDir,
+      runner: async () => { throw new Error("must not run"); }, uvPath: "uv" })).rejects.toThrow("already in progress");
+    expect(await readFile(join(`${runtimeDir}.staging-first`, "bin/python"), "utf8")).toBe("");
+    release(); await first;
+  });
+
   test("restores the existing runtime when the atomic staging swap fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-"));
     roots.push(root);
     const runtimeDir = join(root, "python");
-    const stagingDir = `${runtimeDir}.staging`;
+    const stagingDir = `${runtimeDir}.staging-test`;
     await mkdir(runtimeDir);
     await writeFile(join(runtimeDir, "sentinel"), "existing");
 
     await expect(prepareRuntime({
+      idFactory: () => "test",
       filesystem: {
         access,
         mkdir,
@@ -92,7 +117,9 @@ describe("prepareRuntime", () => {
       pythonDir: join(root, "package-python"),
       runtimeDir,
       runner: async (_command, options) => {
-        await mkdir(options.env.UV_PROJECT_ENVIRONMENT!, { recursive: true });
+        await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true });
+        await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), "");
+        await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755);
         return { exitCode: 0, stderr: "", stdout: "" };
       },
       uvPath: "uv",
@@ -100,6 +127,27 @@ describe("prepareRuntime", () => {
 
     expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("existing");
   });
+
+  test("rolls back when final runtime validation fails after the swap", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root);
+    const runtimeDir = join(root, "python"); await mkdir(runtimeDir); await writeFile(join(runtimeDir, "sentinel"), "existing");
+    await expect(prepareRuntime({ idFactory: () => "post", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv",
+      filesystem: { access, mkdir, rm, writeFile, rename: async (from, to) => { await rename(from, to); if (to === runtimeDir && String(from).includes("staging")) await chmod(managedInterpreterPath(runtimeDir), 0o000); } },
+      runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); return { exitCode: 0, stderr: "", stdout: "" }; },
+    })).rejects.toThrow("Installed Python runtime is not ready");
+    expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("existing");
+  });
+});
+
+test("buildRuntimeCommandEnvironment allowlists operational variables and excludes secrets", () => {
+  expect(buildRuntimeCommandEnvironment({ PATH: "/bin", HOME: "/home", OPENCODE_API_KEY: "secret", ARBITRARY_SECRET: "no" }, "/stage")).toEqual({
+    HOME: "/home", PATH: "/bin", UV_PROJECT_ENVIRONMENT: "/stage",
+  });
+});
+
+test("resolveUvExecutable defaults to uv and honors only explicit UV_BIN", () => {
+  expect(resolveUvExecutable({ HOME: "/home" })).toBe("uv");
+  expect(resolveUvExecutable({ HOME: "/home", UV_BIN: "/custom/uv" })).toBe("/custom/uv");
 });
 
 describe("expectedRuntimeMarker", () => {

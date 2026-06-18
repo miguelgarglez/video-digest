@@ -29,7 +29,7 @@ import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-tran
 import { TranscriptSourceError } from "../transcript/transcript-source";
 import { readFile } from "node:fs/promises";
 import { resolvePackageResources } from "./package-resources";
-import { inspectRuntime, prepareRuntime, type RuntimeReadiness } from "./runtime-manager";
+import { inspectRuntime, prepareRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -43,7 +43,7 @@ export type CliDependencies = {
   appPaths?: AppPaths;
   configStore?: Pick<FileConfigStore, "load" | "save">;
   credentialStore?: CredentialStore;
-  doctor?: () => Promise<DoctorReport>;
+  doctor?: (outputDir: string) => Promise<DoctorReport>;
   env?: Record<string, string | undefined>;
   homeDir?: string;
   fetchTranscriptOnly?: (input: FetchTranscriptOnlyInput) => Promise<FetchTranscriptOnlyResult>;
@@ -113,8 +113,8 @@ export async function runCli(
 
     if (result.value.command === "doctor") {
       const report = dependencies.doctor
-        ? await dependencies.doctor()
-        : await defaultDoctor(credentialStore);
+        ? await dependencies.doctor(artifactLibrary.path)
+        : await defaultDoctor(credentialStore, artifactLibrary.path);
       if (result.value.json) {
         io.log(JSON.stringify({ schemaVersion: "doctor-report.v0", ...report }));
       } else {
@@ -706,7 +706,7 @@ function createRuntimeManager(
 ): RuntimeManager {
   const resources = resolvePackageResources(import.meta.url);
   const readLock = () => readFile(resources.uvLock, "utf8");
-  const uvPath = env.UV_BIN ?? (env.HOME ? `${env.HOME}/.local/bin/uv` : "uv");
+  const uvPath = resolveUvExecutable(env);
   return {
     inspect: async () => inspectRuntime(appPaths.runtimeDir, await readLock()),
     prepare: async () => prepareRuntime({

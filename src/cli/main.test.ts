@@ -772,6 +772,16 @@ describe("runCli", () => {
     });
   });
 
+  test("passes the resolved effective Artifact Library to doctor", async () => {
+    let checkedPath = "";
+    await runCli(["doctor"], { error: () => {}, log: () => {} }, {
+      configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" }), save: async () => {} },
+      env: { VIDEO_DIGEST_OUTPUT_DIR: "/effective-env" },
+      doctor: async (path) => { checkedPath = path; return { checks: [], ok: true }; },
+    });
+    expect(checkedPath).toBe("/effective-env");
+  });
+
   test("lists digest artifacts in human and json output", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const logs: string[] = [];

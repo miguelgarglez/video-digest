@@ -1,11 +1,11 @@
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./credentials";
 import { resolveAppPaths } from "./app-paths";
 import { resolvePackageResources } from "./package-resources";
-import { inspectRuntime, type RuntimeReadiness } from "./runtime-manager";
+import { inspectRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
 
 export type DoctorCapability = "transcript" | "digest";
 
@@ -28,6 +28,7 @@ export type DoctorProbe = {
   env: Record<string, string | undefined>;
   fileExists: (path: string) => Promise<boolean>;
   getStoredOpenCodeApiKey?: () => Promise<string | null>;
+  outputDir?: string;
   runtimeReadiness: () => Promise<RuntimeReadiness>;
   sidecarPath?: string;
   uvAvailable: (uvPath: string) => Promise<boolean>;
@@ -35,16 +36,18 @@ export type DoctorProbe = {
 
 export async function defaultDoctor(
   credentialStore: CredentialStore = new MacOSKeychainCredentialStore(),
+  outputDir = resolveAppPaths(homedir()).defaultArtifactLibrary,
 ): Promise<DoctorReport> {
   const resources = resolvePackageResources(import.meta.url);
   const appPaths = resolveAppPaths(homedir());
   const lockContents = await readFile(resources.uvLock, "utf8");
   return buildDoctorReport({
     bunVersion: Bun.version,
-    canWriteOutputDir: async (outputDir) => directoryWritableOrCreatable(outputDir),
+    canWriteOutputDir: async (path) => isOutputDirectoryWritable(path),
     env: process.env,
     fileExists: async (path) => fileExists(path),
     getStoredOpenCodeApiKey: async () => credentialStore.getOpenCodeApiKey(),
+    outputDir,
     runtimeReadiness: async () => inspectRuntime(appPaths.runtimeDir, lockContents),
     sidecarPath: resources.sidecarScript,
     uvAvailable: async (uvPath) => uvAvailable(uvPath),
@@ -52,9 +55,10 @@ export async function defaultDoctor(
 }
 
 export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorReport> {
-  const outputDir = probe.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
-  const uvPath = probe.env.UV_BIN ?? (probe.env.HOME ? `${probe.env.HOME}/.local/bin/uv` : "uv");
+  const outputDir = probe.outputDir ?? probe.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
+  const uvPath = resolveUvExecutable(probe.env);
   const sidecarPath = probe.sidecarPath ?? join(import.meta.dir, "../../python/fetch_transcript.py");
+  const readiness = await probe.runtimeReadiness();
   const checks: DoctorCheck[] = [
     {
       capability: "transcript",
@@ -63,9 +67,9 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
       remediation: null,
       status: "pass",
     },
-    await uvCheck(probe, uvPath),
+    await uvCheck(probe, uvPath, readiness),
     await sidecarCheck(probe, sidecarPath),
-    await runtimeCheck(probe),
+    runtimeCheck(readiness),
     await opencodeCheck(probe),
     await outputDirCheck(probe, outputDir),
   ];
@@ -76,8 +80,7 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
   };
 }
 
-async function runtimeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
-  const readiness = await probe.runtimeReadiness();
+function runtimeCheck(readiness: RuntimeReadiness): DoctorCheck {
   if (readiness.status === "ready") {
     return {
       capability: "transcript",
@@ -96,7 +99,7 @@ async function runtimeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
   };
 }
 
-async function uvCheck(probe: DoctorProbe, uvPath: string): Promise<DoctorCheck> {
+async function uvCheck(probe: DoctorProbe, uvPath: string, readiness: RuntimeReadiness): Promise<DoctorCheck> {
   const available = await probe.uvAvailable(uvPath);
 
   return available
@@ -110,9 +113,9 @@ async function uvCheck(probe: DoctorProbe, uvPath: string): Promise<DoctorCheck>
     : {
         capability: "transcript",
         id: "uv",
-        message: `${uvPath} is not available and uv is not on PATH`,
+        message: `${uvPath} is not available`,
         remediation: "Install uv, source $HOME/.local/bin/env, or set UV_BIN.",
-        status: "fail",
+        status: readiness.status === "ready" ? "warn" : "fail",
       };
 }
 
@@ -196,27 +199,27 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function uvAvailable(uvPath: string): Promise<boolean> {
-  if (await fileExists(uvPath)) {
-    return true;
+  try {
+    const process = Bun.spawn([uvPath, "--version"], { stderr: "pipe", stdout: "pipe" });
+    return (await process.exited) === 0;
+  } catch {
+    return false;
   }
-
-  const process = Bun.spawn(["uv", "--version"], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  return (await process.exited) === 0;
 }
 
-async function directoryWritableOrCreatable(outputDir: string): Promise<boolean> {
-  try {
-    await access(outputDir, constants.W_OK);
-    return true;
-  } catch {
+export async function isOutputDirectoryWritable(outputDir: string): Promise<boolean> {
+  let candidate = outputDir;
+  while (true) {
     try {
-      await access(".", constants.W_OK);
-      return true;
-    } catch {
-      return false;
+      const metadata = await stat(candidate);
+      if (candidate === outputDir && !metadata.isDirectory()) return false;
+      await access(candidate, constants.W_OK);
+      return metadata.isDirectory();
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;
+      const parent = dirname(candidate);
+      if (parent === candidate) return false;
+      candidate = parent;
     }
   }
 }

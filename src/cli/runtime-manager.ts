@@ -17,6 +17,7 @@ export type RuntimeCommandRunner = (
 
 export type PrepareRuntimeInput = {
   filesystem?: RuntimeFilesystem;
+  idFactory?: () => string;
   lockContents: string;
   pythonDir: string;
   runner?: RuntimeCommandRunner;
@@ -35,16 +36,22 @@ export type RuntimeFilesystem = {
 const defaultRuntimeFilesystem: RuntimeFilesystem = { access, mkdir, rename, rm, writeFile };
 
 export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> {
-  const stagingDir = `${input.runtimeDir}.staging`;
-  const backupDir = `${input.runtimeDir}.backup`;
+  const id = (input.idFactory ?? (() => crypto.randomUUID()))();
+  const stagingDir = `${input.runtimeDir}.staging-${id}`;
+  const backupDir = `${input.runtimeDir}.backup-${id}`;
+  const lockDir = `${input.runtimeDir}.setup-lock`;
   const runner = input.runner ?? runRuntimeCommand;
   const filesystem = input.filesystem ?? defaultRuntimeFilesystem;
 
   await filesystem.mkdir(dirname(input.runtimeDir), { recursive: true });
-  await Promise.all([
-    filesystem.rm(stagingDir, { force: true, recursive: true }),
-    filesystem.rm(backupDir, { force: true, recursive: true }),
-  ]);
+  try {
+    await filesystem.mkdir(lockDir);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new Error("Runtime setup is already in progress.");
+    }
+    throw error;
+  }
 
   try {
     const result = await runner(
@@ -56,6 +63,9 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
     }
 
     await filesystem.writeFile(runtimeMarkerPath(stagingDir), expectedRuntimeMarker(input.lockContents));
+    if ((await inspectRuntime(stagingDir, input.lockContents)).status !== "ready") {
+      throw new Error("Prepared Python runtime is not ready.");
+    }
     const hadRuntime = await pathExists(input.runtimeDir, filesystem.access);
     if (hadRuntime) {
       await filesystem.rename(input.runtimeDir, backupDir);
@@ -68,9 +78,18 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
       }
       throw error;
     }
+    if ((await inspectRuntime(input.runtimeDir, input.lockContents)).status !== "ready") {
+      await filesystem.rm(input.runtimeDir, { force: true, recursive: true });
+      if (hadRuntime) await filesystem.rename(backupDir, input.runtimeDir);
+      throw new Error("Installed Python runtime is not ready.");
+    }
     await filesystem.rm(backupDir, { force: true, recursive: true });
   } finally {
-    await filesystem.rm(stagingDir, { force: true, recursive: true });
+    await Promise.all([
+      filesystem.rm(stagingDir, { force: true, recursive: true }),
+      filesystem.rm(backupDir, { force: true, recursive: true }),
+      filesystem.rm(lockDir, { force: true, recursive: true }),
+    ]);
   }
 }
 
@@ -154,7 +173,7 @@ async function runRuntimeCommand(
 ): Promise<RuntimeCommandResult> {
   const child = Bun.spawn(command, {
     cwd: options.cwd,
-    env: { ...process.env, ...options.env },
+    env: buildRuntimeCommandEnvironment(process.env, options.env.UV_PROJECT_ENVIRONMENT!),
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -164,4 +183,26 @@ async function runRuntimeCommand(
     child.exited,
   ]);
   return { exitCode, stderr, stdout };
+}
+
+const RUNTIME_ENV_ALLOWLIST = [
+  "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  "REQUESTS_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+] as const;
+
+export function buildRuntimeCommandEnvironment(
+  source: Record<string, string | undefined>,
+  stagingDir: string,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of RUNTIME_ENV_ALLOWLIST) {
+    if (source[key] !== undefined) env[key] = source[key]!;
+  }
+  env.UV_PROJECT_ENVIRONMENT = stagingDir;
+  return env;
+}
+
+export function resolveUvExecutable(env: Record<string, string | undefined>): string {
+  return env.UV_BIN ?? "uv";
 }
