@@ -1,5 +1,7 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { resolveAppPaths } from "../cli/app-paths";
+import { resolvePackageResources } from "../cli/package-resources";
+import { managedInterpreterPath } from "../cli/runtime-manager";
 import type { YouTubeVideo } from "../video/youtube-url";
 import {
   TranscriptSourceError,
@@ -18,8 +20,10 @@ export type CommandResult = {
 export type CommandRunner = (command: string[], options: { cwd: string }) => Promise<CommandResult>;
 
 export type PythonYoutubeTranscriptSourceOptions = {
+  pythonDir?: string;
   runner?: CommandRunner;
-  uvPath?: string;
+  runtimePython?: string;
+  sidecarScript?: string;
 };
 
 type SidecarTranscript = {
@@ -30,24 +34,25 @@ type SidecarTranscript = {
   videoId?: unknown;
 };
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(currentDir, "../..");
-const pythonDir = resolve(repoRoot, "python");
-const sidecarScript = resolve(pythonDir, "fetch_transcript.py");
-
 export class PythonYoutubeTranscriptSource implements TranscriptSource {
+  private readonly pythonDir: string;
   private readonly runner: CommandRunner;
-  private readonly uvPath: string;
+  private readonly runtimePython: string;
+  private readonly sidecarScript: string;
 
   constructor(options: PythonYoutubeTranscriptSourceOptions = {}) {
+    const resources = resolvePackageResources(import.meta.url);
+    const runtimeDir = resolveAppPaths(homedir()).runtimeDir;
+    this.pythonDir = options.pythonDir ?? resources.pythonDir;
     this.runner = options.runner ?? runCommand;
-    this.uvPath = options.uvPath ?? defaultUvPath();
+    this.runtimePython = options.runtimePython ?? managedInterpreterPath(runtimeDir);
+    this.sidecarScript = options.sidecarScript ?? resources.sidecarScript;
   }
 
   async fetch(video: YouTubeVideo): Promise<Transcript> {
     const result = await this.runner(
-      [this.uvPath, "run", "python", sidecarScript, video.videoId],
-      { cwd: pythonDir },
+      [this.runtimePython, this.sidecarScript, video.videoId],
+      { cwd: this.pythonDir },
     );
 
     if (result.exitCode !== 0) {
@@ -142,16 +147,4 @@ async function runCommand(command: string[], options: { cwd: string }): Promise<
     stderr,
     stdout,
   };
-}
-
-function defaultUvPath(): string {
-  if (process.env.UV_BIN) {
-    return process.env.UV_BIN;
-  }
-
-  if (process.env.HOME) {
-    return `${process.env.HOME}/.local/bin/uv`;
-  }
-
-  return "uv";
 }

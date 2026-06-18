@@ -11,6 +11,36 @@ const video = {
 };
 
 describe("PythonYoutubeTranscriptSource", () => {
+  test("invokes the managed interpreter directly with packaged paths", async () => {
+    let invocation: { command: string[]; cwd: string } | undefined;
+    const runner: CommandRunner = async (command, options) => {
+      invocation = { command, cwd: options.cwd };
+      return {
+        exitCode: 0,
+        stderr: "",
+        stdout: JSON.stringify({
+          segments: [],
+          source: "youtube-transcript-api",
+          videoId: video.videoId,
+        }),
+      };
+    };
+    const source = new PythonYoutubeTranscriptSource({
+      pythonDir: "/package/python",
+      runner,
+      runtimePython: "/user/runtime/bin/python",
+      sidecarScript: "/package/python/fetch_transcript.py",
+    });
+
+    await source.fetch(video);
+
+    expect(invocation).toEqual({
+      command: ["/user/runtime/bin/python", "/package/python/fetch_transcript.py", video.videoId],
+      cwd: "/package/python",
+    });
+    expect(invocation?.command.join(" ")).not.toMatch(/\b(?:uv|sync|install)\b/);
+  });
+
   test("returns a normalized transcript from sidecar JSON", async () => {
     const runner: CommandRunner = async () => ({
       exitCode: 0,
