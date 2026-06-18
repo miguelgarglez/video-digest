@@ -1,7 +1,11 @@
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./credentials";
+import { resolveAppPaths } from "./app-paths";
+import { resolvePackageResources } from "./package-resources";
+import { inspectRuntime, type RuntimeReadiness } from "./runtime-manager";
 
 export type DoctorCapability = "transcript" | "digest";
 
@@ -24,18 +28,25 @@ export type DoctorProbe = {
   env: Record<string, string | undefined>;
   fileExists: (path: string) => Promise<boolean>;
   getStoredOpenCodeApiKey?: () => Promise<string | null>;
+  runtimeReadiness: () => Promise<RuntimeReadiness>;
+  sidecarPath?: string;
   uvAvailable: (uvPath: string) => Promise<boolean>;
 };
 
 export async function defaultDoctor(
   credentialStore: CredentialStore = new MacOSKeychainCredentialStore(),
 ): Promise<DoctorReport> {
+  const resources = resolvePackageResources(import.meta.url);
+  const appPaths = resolveAppPaths(homedir());
+  const lockContents = await readFile(resources.uvLock, "utf8");
   return buildDoctorReport({
     bunVersion: Bun.version,
     canWriteOutputDir: async (outputDir) => directoryWritableOrCreatable(outputDir),
     env: process.env,
     fileExists: async (path) => fileExists(path),
     getStoredOpenCodeApiKey: async () => credentialStore.getOpenCodeApiKey(),
+    runtimeReadiness: async () => inspectRuntime(appPaths.runtimeDir, lockContents),
+    sidecarPath: resources.sidecarScript,
     uvAvailable: async (uvPath) => uvAvailable(uvPath),
   });
 }
@@ -43,7 +54,7 @@ export async function defaultDoctor(
 export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorReport> {
   const outputDir = probe.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
   const uvPath = probe.env.UV_BIN ?? (probe.env.HOME ? `${probe.env.HOME}/.local/bin/uv` : "uv");
-  const sidecarPath = join(import.meta.dir, "../../python/fetch_transcript.py");
+  const sidecarPath = probe.sidecarPath ?? join(import.meta.dir, "../../python/fetch_transcript.py");
   const checks: DoctorCheck[] = [
     {
       capability: "transcript",
@@ -54,6 +65,7 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
     },
     await uvCheck(probe, uvPath),
     await sidecarCheck(probe, sidecarPath),
+    await runtimeCheck(probe),
     await opencodeCheck(probe),
     await outputDirCheck(probe, outputDir),
   ];
@@ -61,6 +73,26 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
   return {
     checks,
     ok: checks.every((check) => check.status !== "fail"),
+  };
+}
+
+async function runtimeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
+  const readiness = await probe.runtimeReadiness();
+  if (readiness.status === "ready") {
+    return {
+      capability: "transcript",
+      id: "python-runtime",
+      message: "Managed Python runtime is ready",
+      remediation: null,
+      status: "pass",
+    };
+  }
+  return {
+    capability: "transcript",
+    id: "python-runtime",
+    message: `Managed Python runtime is ${readiness.status}`,
+    remediation: readiness.remediation,
+    status: "fail",
   };
 }
 

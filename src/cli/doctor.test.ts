@@ -8,6 +8,7 @@ describe("buildDoctorReport", () => {
       canWriteOutputDir: async () => true,
       env: {},
       fileExists: async (path) => path.includes("fetch_transcript.py"),
+      runtimeReadiness: async () => ({ status: "ready" }),
       uvAvailable: async () => true,
     });
 
@@ -35,6 +36,13 @@ describe("buildDoctorReport", () => {
         status: "pass",
       },
       {
+        capability: "transcript",
+        id: "python-runtime",
+        message: "Managed Python runtime is ready",
+        remediation: null,
+        status: "pass",
+      },
+      {
         capability: "digest",
         id: "opencode-api-key",
         message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
@@ -58,6 +66,7 @@ describe("buildDoctorReport", () => {
       env: {},
       fileExists: async (path) => path.includes("fetch_transcript.py"),
       getStoredOpenCodeApiKey: async () => "stored-key",
+      runtimeReadiness: async () => ({ status: "ready" }),
       uvAvailable: async () => true,
     });
 
@@ -69,5 +78,25 @@ describe("buildDoctorReport", () => {
       status: "pass",
     });
     expect(JSON.stringify(report)).not.toContain("stored-key");
+  });
+
+  test.each(["missing", "obsolete"] as const)("distinguishes a %s managed Python runtime", async (status) => {
+    const report = await buildDoctorReport({
+      bunVersion: "1.3.14",
+      canWriteOutputDir: async () => true,
+      env: {},
+      fileExists: async () => true,
+      runtimeReadiness: async () => ({ status, remediation: "Run video-digest setup." }),
+      uvAvailable: async () => true,
+    });
+
+    expect(report.checks.find((check) => check.id === "python-runtime")).toEqual({
+      capability: "transcript",
+      id: "python-runtime",
+      message: `Managed Python runtime is ${status}`,
+      remediation: "Run video-digest setup.",
+      status: "fail",
+    });
+    expect(report.ok).toBe(false);
   });
 });

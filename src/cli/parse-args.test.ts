@@ -134,6 +134,24 @@ describe("parseCliArgs", () => {
     });
   });
 
+  test("parses setup consent and json flags", () => {
+    expect(parseCliArgs(["setup", "--yes", "--json"])).toEqual({
+      ok: true,
+      value: { command: "setup", json: true, yes: true },
+    });
+    expect(parseCliArgs(["setup"])).toEqual({
+      ok: true,
+      value: { command: "setup", json: false, yes: false },
+    });
+  });
+
+  test("rejects output-dir for setup", () => {
+    expect(parseCliArgs(["setup", "--output-dir", "/library"])).toMatchObject({
+      ok: false,
+      error: { code: "unsupported-option" },
+    });
+  });
+
   test("parses list command", () => {
     expect(parseCliArgs(["list", "--json"])).toEqual({
       ok: true,

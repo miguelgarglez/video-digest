@@ -23,7 +23,7 @@ export type SecurityCommandResult = {
 export type SecurityCommandRunner = (args: string[]) => Promise<SecurityCommandResult>;
 
 const KEYCHAIN_ACCOUNT = "opencode-api-key";
-const KEYCHAIN_SERVICE = "personal-video-digest";
+const KEYCHAIN_SERVICE = "video-digest";
 
 export class MacOSKeychainCredentialStore implements CredentialStore {
   private readonly account: string;

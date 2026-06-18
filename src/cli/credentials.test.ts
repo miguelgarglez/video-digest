@@ -20,7 +20,7 @@ describe("MacOSKeychainCredentialStore", () => {
 
     await expect(store.getOpenCodeApiKey()).resolves.toBe("test-key");
     expect(commands).toEqual([
-      ["find-generic-password", "-a", "opencode-api-key", "-s", "personal-video-digest", "-w"],
+      ["find-generic-password", "-a", "opencode-api-key", "-s", "video-digest", "-w"],
     ]);
   });
 
@@ -45,7 +45,7 @@ describe("MacOSKeychainCredentialStore", () => {
         "-a",
         "opencode-api-key",
         "-s",
-        "personal-video-digest",
+        "video-digest",
         "-w",
         "test-key",
         "-U",
@@ -69,7 +69,7 @@ describe("MacOSKeychainCredentialStore", () => {
     await store.deleteOpenCodeApiKey();
 
     expect(commands).toEqual([
-      ["delete-generic-password", "-a", "opencode-api-key", "-s", "personal-video-digest"],
+      ["delete-generic-password", "-a", "opencode-api-key", "-s", "video-digest"],
     ]);
   });
 

@@ -22,6 +22,11 @@ export type CliOptions =
       json: boolean;
     }
   | {
+      command: "setup";
+      json: boolean;
+      yes: boolean;
+    }
+  | {
       command: "list";
       json: boolean;
       outputDir?: string;
@@ -58,7 +63,7 @@ export type CliArgsResult =
 export const USAGE = "Usage: video-digest <command> [options]";
 export const LEGACY_USAGE = "Usage: bun run video-digest <youtube-url> [--email-preview]";
 
-const COMMANDS = new Set(["ingest", "transcript", "doctor", "list", "open", "config"]);
+const COMMANDS = new Set(["ingest", "transcript", "doctor", "setup", "list", "open", "config"]);
 
 export function parseCliArgs(args: string[]): CliArgsResult {
   if (args.includes("--help") || args.includes("-h")) {
@@ -103,6 +108,17 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       value: {
         command: "doctor",
         json: args.includes("--json"),
+      },
+    };
+  }
+
+  if (firstArg === "setup") {
+    return {
+      ok: true,
+      value: {
+        command: "setup",
+        json: args.includes("--json"),
+        yes: args.includes("--yes"),
       },
     };
   }

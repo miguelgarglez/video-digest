@@ -19,11 +19,104 @@ async function runCli(args: string[], io: CliIO, dependencies: CliDependencies =
       runtimeDir: "/test-home/Library/Application Support/video-digest/runtime/python",
     },
     configStore: { load: async () => null, save: async () => {} },
+    runtimeManager: {
+      inspect: async () => ({ status: "ready" }),
+      prepare: async () => {},
+    },
     ...dependencies,
   });
 }
 
 describe("runCli", () => {
+  test("setup requires explicit consent before preparing the isolated runtime", async () => {
+    let prepareCalls = 0;
+    const errors: string[] = [];
+    const exitCode = await runCli(
+      ["setup"],
+      { error: (message) => errors.push(message), isTTY: true, log: () => {}, prompt: async () => "no" },
+      { runtimeManager: { inspect: async () => ({ status: "missing", remediation: "Run video-digest setup." }), prepare: async () => { prepareCalls += 1; } } },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(prepareCalls).toBe(0);
+    expect(errors.join("\n")).toContain("cancelled");
+  });
+
+  test("setup --yes prepares the runtime and emits exactly one stable JSON result", async () => {
+    let prepareCalls = 0;
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      ["setup", "--yes", "--json"],
+      { error: () => {}, isTTY: false, log: (message) => logs.push(message) },
+      { runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => { prepareCalls += 1; } } },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(prepareCalls).toBe(1);
+    expect(logs).toEqual([JSON.stringify({ schemaVersion: "setup-result.v0", status: "ready" })]);
+  });
+
+  test("setup --yes explains the isolated Python installation in human output", async () => {
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      ["setup", "--yes"],
+      { error: () => {}, log: (message) => logs.push(message) },
+      { runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => {} } },
+    );
+    expect(exitCode).toBe(0);
+    expect(logs.join("\n")).toContain("may install an isolated Python 3.12");
+    expect(logs.join("\n")).toContain("shipped uv.lock");
+  });
+
+  test("non-interactive setup without --yes fails without prompting or mutation", async () => {
+    let prepareCalls = 0;
+    let promptCalls = 0;
+    const exitCode = await runCli(
+      ["setup", "--json"],
+      { error: () => {}, isTTY: false, log: () => {}, prompt: async () => { promptCalls += 1; return "yes"; } },
+      { runtimeManager: { inspect: async () => ({ status: "missing", remediation: "Run video-digest setup." }), prepare: async () => { prepareCalls += 1; } } },
+    );
+    expect(exitCode).toBe(1);
+    expect(promptCalls).toBe(0);
+    expect(prepareCalls).toBe(0);
+  });
+
+  test("setup failures emit stable JSON without leaking command details", async () => {
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      ["setup", "--yes", "--json"],
+      { error: () => {}, log: (message) => logs.push(message) },
+      { runtimeManager: { inspect: async () => ({ status: "missing", remediation: "Run video-digest setup." }), prepare: async () => { throw new Error("secret-token"); } } },
+    );
+    expect(exitCode).toBe(1);
+    expect(logs).toEqual([JSON.stringify({
+      error: { code: "setup-failed", message: "Setup failed while preparing the isolated Python runtime." },
+      schemaVersion: "setup-result.v0",
+      status: "failed",
+    })]);
+    expect(logs.join("\n")).not.toContain("secret-token");
+  });
+
+  test.each(["ingest", "transcript"])("gates %s before invoking providers when runtime is not ready", async (command) => {
+    let providerCalls = 0;
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      [command, "https://youtu.be/1ZgUcrR0K7I", "--json"],
+      { error: () => {}, log: (message) => logs.push(message) },
+      {
+        fetchTranscriptOnly: async () => { providerCalls += 1; return completedTranscriptOnly(); },
+        ingestVideo: async () => { providerCalls += 1; return completedIngestion(); },
+        runtimeManager: { inspect: async () => ({ status: "obsolete", remediation: "Run video-digest setup." }), prepare: async () => {} },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(providerCalls).toBe(0);
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      error: { code: "runtime-not-ready", message: expect.stringContaining("Run video-digest setup.") },
+      schemaVersion: "cli-result.v0",
+      status: "failed",
+    });
+  });
   test("persists output-dir config", async () => {
     let saved: AppConfig | undefined;
     const exitCode = await runCli(

@@ -27,6 +27,9 @@ import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
 import { SummarizerError, type Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { TranscriptSourceError } from "../transcript/transcript-source";
+import { readFile } from "node:fs/promises";
+import { resolvePackageResources } from "./package-resources";
+import { inspectRuntime, prepareRuntime, type RuntimeReadiness } from "./runtime-manager";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -47,8 +50,14 @@ export type CliDependencies = {
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
+  runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
+};
+
+export type RuntimeManager = {
+  inspect: () => Promise<RuntimeReadiness>;
+  prepare: () => Promise<void>;
 };
 
 export async function runCli(
@@ -82,6 +91,7 @@ export async function runCli(
 
     const env = dependencies.env ?? process.env;
     const appPaths = dependencies.appPaths ?? resolveAppPaths(dependencies.homeDir ?? homedir());
+    const runtimeManager = dependencies.runtimeManager ?? createRuntimeManager(appPaths, env);
     const configStore = dependencies.configStore ?? new FileConfigStore(appPaths.configPath);
     const config = await configStore.load();
     const artifactLibrary = resolveArtifactLibrary({
@@ -91,6 +101,10 @@ export async function runCli(
       savedArtifactLibrary: config?.artifactLibrary,
     });
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
+
+    if (result.value.command === "setup") {
+      return await runSetupCommand(result.value, io, runtimeManager);
+    }
 
     if (result.value.command === "config") {
       return await runConfigCommand(result.value, io, credentialStore, configStore, env, artifactLibrary, config?.artifactLibrary ?? null);
@@ -150,6 +164,8 @@ export async function runCli(
     }
 
     if (result.value.command === "transcript") {
+      const readinessExitCode = await requireReadyRuntime(runtimeManager, result.value.json, io);
+      if (readinessExitCode !== null) return readinessExitCode;
       const { json, video } = result.value;
       const fetchTranscript = dependencies.fetchTranscriptOnly ?? fetchTranscriptOnly;
       return await runTranscriptCommand({
@@ -163,6 +179,8 @@ export async function runCli(
     }
 
     const { emailPreview, json, video } = result.value;
+    const readinessExitCode = await requireReadyRuntime(runtimeManager, json, io);
+    if (readinessExitCode !== null) return readinessExitCode;
     const ingest = dependencies.ingestVideo ?? ingestVideo;
     const credential = await resolveOpenCodeApiKey({
       env,
@@ -320,6 +338,7 @@ const HELP_TEXT = [
   "  video-digest config <get|set|unset> [opencode-api-key] [--json]",
   "  video-digest config set output-dir <path> [--json]",
   "  video-digest doctor [--json]",
+  "  video-digest setup [--yes] [--json]",
   "  video-digest list [--json] [--output-dir <path>]",
   "  video-digest open <latest|video-id> [--json] [--output-dir <path>]",
   "",
@@ -331,6 +350,7 @@ const HELP_TEXT = [
   "Options:",
   "  --email-preview  Also write a Markdown email preview under <Artifact Library>/emails/.",
   "  --json           Write one machine-readable JSON object.",
+  "  --yes            Confirm setup without an interactive prompt.",
   "  --output-dir     Override the Artifact Library for this command.",
   "  --help, -h       Show this help message.",
   "",
@@ -677,6 +697,95 @@ function printArtifactList(items: ArtifactEntry[], io: CliIO): void {
   for (const item of items) {
     io.log(`${item.videoId}  ${item.digestTitle ?? "(untitled)"}  ${item.digestPath}`);
   }
+}
+
+function createRuntimeManager(
+  appPaths: AppPaths,
+  env: Record<string, string | undefined>,
+): RuntimeManager {
+  const resources = resolvePackageResources(import.meta.url);
+  const readLock = () => readFile(resources.uvLock, "utf8");
+  const uvPath = env.UV_BIN ?? (env.HOME ? `${env.HOME}/.local/bin/uv` : "uv");
+  return {
+    inspect: async () => inspectRuntime(appPaths.runtimeDir, await readLock()),
+    prepare: async () => prepareRuntime({
+      lockContents: await readLock(),
+      pythonDir: resources.pythonDir,
+      runtimeDir: appPaths.runtimeDir,
+      uvPath,
+    }),
+  };
+}
+
+async function runSetupCommand(
+  command: Extract<CliOptions, { command: "setup" }>,
+  io: CliIO,
+  runtimeManager: RuntimeManager,
+): Promise<number> {
+  if (!command.yes) {
+    if (command.json || !io.isTTY || !io.prompt) {
+      const message = "Setup requires explicit consent; rerun with --yes.";
+      if (command.json) {
+        io.log(JSON.stringify({
+          error: { code: "consent-required", message },
+          schemaVersion: "setup-result.v0",
+          status: "failed",
+        }));
+      } else {
+        io.error(message);
+      }
+      return 1;
+    }
+    io.log("Setup may install an isolated Python 3.12 runtime and dependencies locked in the shipped uv.lock.");
+    if (!isAffirmative(await io.prompt("Continue with setup? [y/N]: "))) {
+      io.error("Setup cancelled; no changes were made.");
+      return 1;
+    }
+  } else if (!command.json) {
+    io.log("Setup may install an isolated Python 3.12 runtime and dependencies locked in the shipped uv.lock.");
+  }
+
+  try {
+    await runtimeManager.prepare();
+    if (command.json) {
+      io.log(JSON.stringify({ schemaVersion: "setup-result.v0", status: "ready" }));
+    } else {
+      io.log("Python runtime is ready.");
+    }
+    return 0;
+  } catch {
+    const message = "Setup failed while preparing the isolated Python runtime.";
+    if (command.json) {
+      io.log(JSON.stringify({
+        error: { code: "setup-failed", message },
+        schemaVersion: "setup-result.v0",
+        status: "failed",
+      }));
+    } else {
+      io.error(message);
+    }
+    return 1;
+  }
+}
+
+async function requireReadyRuntime(
+  runtimeManager: RuntimeManager,
+  json: boolean,
+  io: CliIO,
+): Promise<number | null> {
+  const readiness = await runtimeManager.inspect();
+  if (readiness.status === "ready") return null;
+  const message = `Python runtime is ${readiness.status}. ${readiness.remediation}`;
+  if (json) {
+    io.log(JSON.stringify({
+      error: { code: "runtime-not-ready", message },
+      schemaVersion: "cli-result.v0",
+      status: "failed",
+    }));
+  } else {
+    io.error(message);
+  }
+  return 1;
 }
 
 async function openWithSystem(path: string): Promise<void> {
