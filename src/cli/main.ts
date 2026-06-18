@@ -371,16 +371,20 @@ async function resolveCliOptions(args: string[], io: CliIO): Promise<ReturnType<
 
   const mode = (await io.prompt("What do you want to create? [1] Digest [2] Transcript only: ")).trim();
   const url = (await io.prompt("YouTube URL: ")).trim();
+  const outputDirIndex = args.indexOf("--output-dir");
+  const outputDirArgs = outputDirIndex === -1
+    ? []
+    : ["--output-dir", args[outputDirIndex + 1]!];
 
   if (mode === "2" || mode.toLowerCase() === "transcript") {
-    return parseCliArgs(["transcript", url]);
+    return parseCliArgs(["transcript", url, ...outputDirArgs]);
   }
 
   const emailPreview = args.includes("--email-preview") || isAffirmative(
     await io.prompt("Create email preview? [y/N]: "),
   );
 
-  return parseCliArgs(["ingest", url, ...(emailPreview ? ["--email-preview"] : [])]);
+  return parseCliArgs(["ingest", url, ...(emailPreview ? ["--email-preview"] : []), ...outputDirArgs]);
 }
 
 async function runConfigCommand(

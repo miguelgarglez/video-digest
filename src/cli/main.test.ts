@@ -880,6 +880,30 @@ describe("runCli", () => {
     expect(logs).toContain("Email preview: outputs/emails/1ZgUcrR0K7I.md");
   });
 
+  test("preserves output-dir when prompting for an ingest URL", async () => {
+    const answers = ["1", "https://www.youtube.com/watch?v=1ZgUcrR0K7I", "n"];
+    let outputDir = "";
+
+    const exitCode = await runCli(
+      ["ingest", "--output-dir", "/cli"],
+      {
+        error: () => {},
+        log: () => {},
+        prompt: async () => answers.shift() ?? "",
+      },
+      {
+        credentialStore: fakeCredentialStore({ storedKey: "stored-key" }),
+        ingestVideo: async (input) => {
+          outputDir = input.outputDir;
+          return completedIngestion();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(outputDir).toBe("/cli");
+  });
+
   test("interactive mode can choose transcript only", async () => {
     const prompts: string[] = [];
     const logs: string[] = [];
@@ -911,6 +935,29 @@ describe("runCli", () => {
     ]);
     expect(transcriptCalls).toEqual(["1ZgUcrR0K7I"]);
     expect(logs).toContain("Fetched transcript for 1ZgUcrR0K7I");
+  });
+
+  test("preserves output-dir when interactively selecting transcript", async () => {
+    const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
+    let outputDir = "";
+
+    const exitCode = await runCli(
+      ["ingest", "--output-dir", "/cli"],
+      {
+        error: () => {},
+        log: () => {},
+        prompt: async () => answers.shift() ?? "",
+      },
+      {
+        fetchTranscriptOnly: async (input) => {
+          outputDir = input.outputDir;
+          return completedTranscriptOnly();
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(outputDir).toBe("/cli");
   });
 
   test("interactive digest setup can store a token and continue", async () => {
