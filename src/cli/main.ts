@@ -11,7 +11,7 @@ import { defaultDoctor, type DoctorReport } from "./doctor";
 import { parseCliArgs, type CliOptions } from "./parse-args";
 import { createProgressRenderer } from "./progress-renderer";
 import { resolveAppPaths, type AppPaths } from "./app-paths";
-import { resolveArtifactLibrary } from "./artifact-library";
+import { resolveArtifactLibrary, type ArtifactLibraryResolution } from "./artifact-library";
 import { FileConfigStore, type AppConfig } from "./config-store";
 import {
   ingestVideo,
@@ -84,7 +84,7 @@ export async function runCli(
     const appPaths = dependencies.appPaths ?? resolveAppPaths(dependencies.homeDir ?? homedir());
     const configStore = dependencies.configStore ?? new FileConfigStore(appPaths.configPath);
     const config = await configStore.load();
-    const outputDir = resolveArtifactLibrary({
+    const artifactLibrary = resolveArtifactLibrary({
       cliOutputDir: ("outputDir" in result.value ? result.value.outputDir : undefined) ?? dependencies.outputDir,
       defaultArtifactLibrary: appPaths.defaultArtifactLibrary,
       envOutputDir: env.VIDEO_DIGEST_OUTPUT_DIR,
@@ -93,7 +93,7 @@ export async function runCli(
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
 
     if (result.value.command === "config") {
-      return await runConfigCommand(result.value, io, credentialStore, configStore, env, outputDir);
+      return await runConfigCommand(result.value, io, credentialStore, configStore, env, artifactLibrary, config?.artifactLibrary ?? null);
     }
 
     if (result.value.command === "doctor") {
@@ -109,7 +109,7 @@ export async function runCli(
     }
 
     if (result.value.command === "list") {
-      const items = await listArtifacts(outputDir);
+      const items = await listArtifacts(artifactLibrary.path);
       if (result.value.json) {
         io.log(JSON.stringify({ items, schemaVersion: "artifact-list.v0" }));
       } else {
@@ -119,7 +119,7 @@ export async function runCli(
     }
 
     if (result.value.command === "open") {
-      const openResult = await resolveOpenTarget(outputDir, result.value.target);
+      const openResult = await resolveOpenTarget(artifactLibrary.path, result.value.target);
 
       if (!openResult.ok) {
         const payload = {
@@ -156,7 +156,7 @@ export async function runCli(
         fetchTranscript,
         io,
         json,
-        outputDir,
+        outputDir: artifactLibrary.path,
         spinnerIntervalMs: dependencies.spinnerIntervalMs,
         video,
       });
@@ -180,7 +180,7 @@ export async function runCli(
           fetchTranscript: dependencies.fetchTranscriptOnly ?? fetchTranscriptOnly,
           io,
           json: false,
-          outputDir,
+          outputDir: artifactLibrary.path,
           spinnerIntervalMs: dependencies.spinnerIntervalMs,
           video,
         });
@@ -199,7 +199,7 @@ export async function runCli(
     const ingestion = await ingest({
       emailPreview,
       onProgress: progress?.handle,
-      outputDir,
+      outputDir: artifactLibrary.path,
       summarizer: summarizerFactory(apiKey),
       transcriptSource: new PythonYoutubeTranscriptSource(),
       video,
@@ -329,7 +329,7 @@ const HELP_TEXT = [
   "  bun run video-digest --help",
   "",
   "Options:",
-  "  --email-preview  Also write a Markdown email preview under outputs/emails/.",
+  "  --email-preview  Also write a Markdown email preview under <Artifact Library>/emails/.",
   "  --json           Write one machine-readable JSON object.",
   "  --output-dir     Override the Artifact Library for this command.",
   "  --help, -h       Show this help message.",
@@ -393,7 +393,8 @@ async function runConfigCommand(
   credentialStore: CredentialStore,
   configStore: Pick<FileConfigStore, "load" | "save">,
   env: Record<string, string | undefined>,
-  artifactLibrary: string,
+  artifactLibrary: ArtifactLibraryResolution,
+  configuredArtifactLibrary: string | null,
 ): Promise<number> {
   if (command.subcommand === "get") {
     const credential = await resolveOpenCodeApiKey({
@@ -405,7 +406,11 @@ async function runConfigCommand(
 
     if (command.json) {
       io.log(JSON.stringify({
-        artifactLibrary,
+        artifactLibrary: {
+          configured: configuredArtifactLibrary,
+          effective: artifactLibrary.path,
+          source: artifactLibrary.source,
+        },
         opencodeApiKey: {
           configured,
           source: credential.source,
@@ -416,7 +421,10 @@ async function runConfigCommand(
       io.log(configured
         ? `OpenCode API key: configured via ${sourceLabel}`
         : "OpenCode API key: not configured");
-      io.log(`Artifact Library: ${artifactLibrary}`);
+      io.log(`Artifact Library: ${artifactLibrary.path} (${artifactLibrary.source})`);
+      if (configuredArtifactLibrary !== null && configuredArtifactLibrary !== artifactLibrary.path) {
+        io.log(`Saved Artifact Library: ${configuredArtifactLibrary}`);
+      }
     }
     return 0;
   }

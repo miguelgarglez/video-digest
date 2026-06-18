@@ -86,6 +86,23 @@ describe("parseCliArgs", () => {
   });
 
   test.each([
+    [["doctor", "--output-dir", "/library"]],
+    [["doctor", "--output-dir"]],
+    [["config", "get", "--output-dir", "/library"]],
+    [["config", "get", "--output-dir"]],
+    [["wat", "--output-dir", "/library"]],
+    [["wat", "--output-dir"]],
+  ])("rejects --output-dir for unsupported commands: %j", (args) => {
+    expect(parseCliArgs(args)).toEqual({
+      ok: false,
+      error: {
+        code: "unsupported-option",
+        message: "--output-dir is only supported for ingest, transcript, list, and open.\n\nUsage: video-digest <command> [options]",
+      },
+    });
+  });
+
+  test.each([
     ["ingest"], ["transcript"], ["list"], ["open"],
   ])("returns actionable usage when --output-dir has no value for %s", (command) => {
     expect(parseCliArgs([command, "--output-dir"])).toEqual({
@@ -173,6 +190,19 @@ describe("parseCliArgs", () => {
         key: "output-dir",
         subcommand: "set",
         value: "/library",
+      },
+    });
+  });
+
+  test.each([
+    [["config", "set", "output-dir"]],
+    [["config", "set", "output-dir", ""]],
+  ])("returns output-dir usage when config value is missing: %j", (args) => {
+    expect(parseCliArgs(args)).toEqual({
+      ok: false,
+      error: {
+        code: "missing-option-value",
+        message: "output-dir requires a non-empty path.\n\nUsage: video-digest config set output-dir <path> [--json]",
       },
     });
   });

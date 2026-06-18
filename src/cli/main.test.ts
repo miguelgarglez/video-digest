@@ -50,8 +50,12 @@ describe("runCli", () => {
     };
     await runCli(["config", "get"], { error: () => {}, log: (message) => human.push(message) }, dependencies);
     await runCli(["config", "get", "--json"], { error: () => {}, log: (message) => json.push(message) }, dependencies);
-    expect(human.join("\n")).toContain("Artifact Library: /env");
-    expect(JSON.parse(json[0]!)).toMatchObject({ artifactLibrary: "/env", opencodeApiKey: { configured: true, source: "keychain" } });
+    expect(human.join("\n")).toContain("Artifact Library: /env (env)");
+    expect(human.join("\n")).toContain("Saved Artifact Library: /saved");
+    expect(JSON.parse(json[0]!)).toMatchObject({
+      artifactLibrary: { configured: "/saved", effective: "/env", source: "env" },
+      opencodeApiKey: { configured: true, source: "keychain" },
+    });
     expect(`${human.join("\n")} ${json.join("\n")}`).not.toContain("never-print-this");
   });
 
@@ -91,6 +95,8 @@ describe("runCli", () => {
     expect(ingestCalls).toBe(0);
     expect(logs.join("\n")).toContain("Usage:");
     expect(logs.join("\n")).toContain("--email-preview");
+    expect(logs.join("\n")).toContain("<Artifact Library>/emails/");
+    expect(logs.join("\n")).not.toContain("under outputs/emails/");
     expect(logs.join("\n")).toContain("--help");
     expect(logs.join("\n")).toContain("Interactive mode");
   });
@@ -508,7 +514,11 @@ describe("runCli", () => {
 
     expect(exitCode).toBe(0);
     expect(JSON.parse(logs[0]!)).toEqual({
-      artifactLibrary: "/test-home/Documents/Video Digest",
+      artifactLibrary: {
+        configured: null,
+        effective: "/test-home/Documents/Video Digest",
+        source: "default",
+      },
       opencodeApiKey: {
         configured: true,
         source: "keychain",
