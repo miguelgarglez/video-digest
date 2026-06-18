@@ -29,7 +29,7 @@ import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-tran
 import { TranscriptSourceError } from "../transcript/transcript-source";
 import { readFile } from "node:fs/promises";
 import { resolvePackageResources } from "./package-resources";
-import { inspectRuntime, prepareRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
+import { inspectRuntime, prepareRuntime, resolveUvExecutable, RuntimeSetupError, type RuntimeReadiness } from "./runtime-manager";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -754,11 +754,14 @@ async function runSetupCommand(
       io.log("Python runtime is ready.");
     }
     return 0;
-  } catch {
-    const message = "Setup failed while preparing the isolated Python runtime.";
+  } catch (error) {
+    const message = error instanceof RuntimeSetupError
+      ? error.message
+      : "Setup failed while preparing the isolated Python runtime.";
+    const code = error instanceof RuntimeSetupError ? error.code : "setup-failed";
     if (command.json) {
       io.log(JSON.stringify({
-        error: { code: "setup-failed", message },
+        error: { code, message },
         schemaVersion: "setup-result.v0",
         status: "failed",
       }));

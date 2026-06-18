@@ -10,6 +10,7 @@ import type { FetchTranscriptOnlyResult } from "../ingestion/transcript-only";
 import { SummarizerError } from "../summarizer/summarizer";
 import { TranscriptSourceError, type Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
+import { RuntimeSetupError } from "./runtime-manager";
 
 async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<number> {
   return runCliProduction(args, io, {
@@ -118,6 +119,17 @@ describe("runCli", () => {
       status: "failed",
     })]);
     expect(logs.join("\n")).not.toContain("secret-token");
+  });
+
+  test.each([
+    ["already-running", "Runtime setup is already in progress."],
+    ["recovery-required", "Runtime recovery is required at /safe/backup"],
+  ] as const)("surfaces safe runtime setup error %s", async (code, message) => {
+    const logs: string[] = [];
+    await runCli(["setup", "--yes", "--json"], { error: () => {}, log: (value) => logs.push(value) }, {
+      runtimeManager: { inspect: async () => ({ status: "missing", remediation: "Run video-digest setup." }), prepare: async () => { throw new RuntimeSetupError(code, message); } },
+    });
+    expect(JSON.parse(logs[0]!)).toEqual({ error: { code, message }, schemaVersion: "setup-result.v0", status: "failed" });
   });
 
   test.each([
