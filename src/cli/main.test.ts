@@ -56,6 +56,29 @@ describe("runCli", () => {
     expect(logs).toEqual([JSON.stringify({ schemaVersion: "setup-result.v0", status: "ready" })]);
   });
 
+  test("setup is isolated from malformed application configuration", async () => {
+    let prepareCalls = 0;
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      ["setup", "--yes", "--json"],
+      { error: () => {}, log: (message) => logs.push(message) },
+      {
+        configStore: {
+          load: async () => { throw new Error("Malformed config"); },
+          save: async () => {},
+        },
+        runtimeManager: {
+          inspect: async () => ({ status: "ready" }),
+          prepare: async () => { prepareCalls += 1; },
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(prepareCalls).toBe(1);
+    expect(logs).toEqual([JSON.stringify({ schemaVersion: "setup-result.v0", status: "ready" })]);
+  });
+
   test("setup --yes explains the isolated Python installation in human output", async () => {
     const logs: string[] = [];
     const exitCode = await runCli(
@@ -95,6 +118,23 @@ describe("runCli", () => {
       status: "failed",
     })]);
     expect(logs.join("\n")).not.toContain("secret-token");
+  });
+
+  test.each([
+    ["--bogus"],
+    ["unexpected"],
+  ])("setup parse failures use the setup result schema: %s", async (argument) => {
+    const logs: string[] = [];
+    const exitCode = await runCli(
+      ["setup", argument, "--json"],
+      { error: () => {}, log: (message) => logs.push(message) },
+    );
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      error: { code: expect.stringMatching(/^unsupported-/) },
+      schemaVersion: "setup-result.v0",
+      status: "failed",
+    });
   });
 
   test.each(["ingest", "transcript"])("gates %s before invoking providers when runtime is not ready", async (command) => {

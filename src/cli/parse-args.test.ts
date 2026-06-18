@@ -152,6 +152,26 @@ describe("parseCliArgs", () => {
     });
   });
 
+  test("rejects extra setup positional arguments", () => {
+    expect(parseCliArgs(["setup", "unexpected"])).toEqual({
+      ok: false,
+      error: {
+        code: "unsupported-command",
+        message: "Unexpected setup argument: unexpected\n\nUsage: video-digest setup [--yes] [--json]",
+      },
+    });
+  });
+
+  test("rejects unknown setup options", () => {
+    expect(parseCliArgs(["setup", "--bogus"])).toEqual({
+      ok: false,
+      error: {
+        code: "unsupported-option",
+        message: "Unsupported setup option: --bogus\n\nUsage: video-digest setup [--yes] [--json]",
+      },
+    });
+  });
+
   test("parses list command", () => {
     expect(parseCliArgs(["list", "--json"])).toEqual({
       ok: true,

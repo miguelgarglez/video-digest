@@ -113,6 +113,26 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   }
 
   if (firstArg === "setup") {
+    const unknownOption = args.find((arg) => arg.startsWith("--") && arg !== "--yes" && arg !== "--json");
+    if (unknownOption) {
+      return {
+        ok: false,
+        error: {
+          code: "unsupported-option",
+          message: `Unsupported setup option: ${unknownOption}\n\nUsage: video-digest setup [--yes] [--json]`,
+        },
+      };
+    }
+    const unexpectedArgument = positional[1];
+    if (unexpectedArgument) {
+      return {
+        ok: false,
+        error: {
+          code: "unsupported-command",
+          message: `Unexpected setup argument: ${unexpectedArgument}\n\nUsage: video-digest setup [--yes] [--json]`,
+        },
+      };
+    }
     return {
       ok: true,
       value: {

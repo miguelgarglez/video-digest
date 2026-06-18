@@ -75,7 +75,7 @@ export async function runCli(
             code: result.error.code,
             message: result.error.message,
           },
-          schemaVersion: "cli-result.v0",
+          schemaVersion: args[0] === "setup" ? "setup-result.v0" : "cli-result.v0",
           status: "failed",
         }));
       } else {
@@ -92,6 +92,11 @@ export async function runCli(
     const env = dependencies.env ?? process.env;
     const appPaths = dependencies.appPaths ?? resolveAppPaths(dependencies.homeDir ?? homedir());
     const runtimeManager = dependencies.runtimeManager ?? createRuntimeManager(appPaths, env);
+
+    if (result.value.command === "setup") {
+      return await runSetupCommand(result.value, io, runtimeManager);
+    }
+
     const configStore = dependencies.configStore ?? new FileConfigStore(appPaths.configPath);
     const config = await configStore.load();
     const artifactLibrary = resolveArtifactLibrary({
@@ -101,10 +106,6 @@ export async function runCli(
       savedArtifactLibrary: config?.artifactLibrary,
     });
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
-
-    if (result.value.command === "setup") {
-      return await runSetupCommand(result.value, io, runtimeManager);
-    }
 
     if (result.value.command === "config") {
       return await runConfigCommand(result.value, io, credentialStore, configStore, env, artifactLibrary, config?.artifactLibrary ?? null);
