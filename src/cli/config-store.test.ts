@@ -46,6 +46,20 @@ describe("FileConfigStore", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 
+  test("tightens permissions on an existing config directory", async () => {
+    const path = await makeConfigPath();
+    const parent = dirname(path);
+    await mkdir(parent, { mode: 0o755, recursive: true });
+    await chmod(parent, 0o755);
+
+    await new FileConfigStore(path).save({
+      artifactLibrary: "/tmp/library",
+      schemaVersion: "config.v0",
+    });
+
+    expect((await stat(parent)).mode & 0o777).toBe(0o700);
+  });
+
   test("rejects malformed JSON with a clear config error", async () => {
     const path = await makeConfigPath();
     await writeConfigFixture(path, "not-json");

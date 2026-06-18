@@ -38,6 +38,7 @@ export class FileConfigStore {
     const parent = dirname(this.path);
 
     await mkdir(parent, { mode: 0o700, recursive: true });
+    await chmod(parent, 0o700);
     await writeFile(this.path, `${JSON.stringify(validated, null, 2)}\n`, { mode: 0o600 });
     await chmod(this.path, 0o600);
   }
