@@ -93,13 +93,8 @@ describe("FileConfigStore", () => {
 
   test("only treats ENOENT as a missing config", async () => {
     const path = await makeConfigPath();
-    await writeConfigFixture(path, '{}');
-    await chmod(path, 0o000);
+    await writeFile(dirname(path), "not-a-directory");
 
-    try {
-      await expect(new FileConfigStore(path).load()).rejects.toBeDefined();
-    } finally {
-      await chmod(path, 0o600);
-    }
+    await expect(new FileConfigStore(path).load()).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 });
