@@ -207,13 +207,16 @@ async function uvAvailable(uvPath: string): Promise<boolean> {
   }
 }
 
-export async function isOutputDirectoryWritable(outputDir: string): Promise<boolean> {
+export async function isOutputDirectoryWritable(
+  outputDir: string,
+  accessPath: (path: string, mode?: number) => Promise<void> = access,
+): Promise<boolean> {
   let candidate = outputDir;
   while (true) {
     try {
       const metadata = await stat(candidate);
       if (candidate === outputDir && !metadata.isDirectory()) return false;
-      await access(candidate, constants.W_OK);
+      await accessPath(candidate, constants.W_OK | constants.X_OK);
       return metadata.isDirectory();
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;

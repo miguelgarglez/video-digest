@@ -3,6 +3,7 @@ import { buildDoctorReport, isOutputDirectoryWritable } from "./doctor";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { constants } from "node:fs";
 
 describe("buildDoctorReport", () => {
   test("reports transcript readiness separately from digest readiness", async () => {
@@ -129,5 +130,17 @@ describe("isOutputDirectoryWritable", () => {
   test("walks to the nearest existing writable ancestor", async () => {
     const root = await mkdtemp(join(tmpdir(), "doctor-output-")); await mkdir(join(root, "parent"));
     await expect(isOutputDirectoryWritable(join(root, "parent", "missing", "nested"))).resolves.toBe(true);
+  });
+  test("requires write and search access on an existing directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "doctor-output-")); const modes: number[] = [];
+    await expect(isOutputDirectoryWritable(root, async (_path, mode) => { modes.push(mode!); })).resolves.toBe(true);
+    expect(modes).toEqual([constants.W_OK | constants.X_OK]);
+  });
+  test("rejects a write-only directory without search access", async () => {
+    const root = await mkdtemp(join(tmpdir(), "doctor-output-"));
+    await expect(isOutputDirectoryWritable(root, async (_path, mode) => {
+      expect(mode).toBe(constants.W_OK | constants.X_OK);
+      const error = new Error("not searchable") as NodeJS.ErrnoException; error.code = "EACCES"; throw error;
+    })).resolves.toBe(false);
   });
 });
