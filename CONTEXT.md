@@ -31,6 +31,8 @@
 | **Insight** | A useful idea extracted or inferred from one or more digests. | Takeaway |
 | **Knowledge Item** | A durable note saved into the personal knowledge base. | Note, document |
 | **Knowledge Base** | Miguel's personal system for storing and connecting knowledge items. | PKM, notes app |
+| **Artifact Library** | A user-chosen durable collection of locally generated Digest and Transcript artifacts. | Output folder, output directory |
+| **Library Entry** | The set of locally generated artifacts that belong to one Video in an Artifact Library. | File, result, artifact row |
 | **Delivery** | Sending or placing a digest where Miguel will consume it, such as Gmail or a future knowledge base. | Notification, export |
 | **Email Preview** | A Markdown artifact formatted as the body of a future email delivery. | Draft, email |
 
@@ -48,4 +50,6 @@
 - **Delivery** sends or places a **Digest** for consumption.
 - An **Email Preview** may be created from a **Digest** before Gmail **Delivery**.
 - A **Knowledge Item** may be created from one or more **Digests**.
+- An **Artifact Library** contains zero or more **Library Entries**.
+- A **Library Entry** belongs to one **Video** and contains its available **Digest**, **Transcript Artifact**, and **Email Preview**.
 - A **Trigger** starts either a single-video **Ingestion** or a playlist poll.
