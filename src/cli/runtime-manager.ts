@@ -1,4 +1,5 @@
-import { access, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 const REMEDIATION = "Run video-digest setup.";
@@ -21,7 +22,7 @@ export function runtimeMarkerPath(runtimeDir: string): string {
 }
 
 export async function inspectRuntime(runtimeDir: string, lockContents: string): Promise<RuntimeReadiness> {
-  if (!(await pathExists(managedInterpreterPath(runtimeDir)))) {
+  if (!(await isExecutableFile(managedInterpreterPath(runtimeDir)))) {
     return { remediation: REMEDIATION, status: "missing" };
   }
 
@@ -42,12 +43,16 @@ export async function inspectRuntime(runtimeDir: string, lockContents: string): 
   return { status: "ready" };
 }
 
-async function pathExists(path: string): Promise<boolean> {
+async function isExecutableFile(path: string): Promise<boolean> {
   try {
-    await access(path);
+    const metadata = await stat(path);
+    if (!metadata.isFile()) {
+      return false;
+    }
+    await access(path, constants.X_OK);
     return true;
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (isUnavailablePathError(error)) {
       return false;
     }
     throw error;
@@ -56,4 +61,12 @@ async function pathExists(path: string): Promise<boolean> {
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isUnavailablePathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")
+  );
 }
