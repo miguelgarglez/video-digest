@@ -57,14 +57,13 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
   const clock = input.clock ?? (() => new Date());
   const pid = input.pid ?? process.pid;
   const getProcessIdentity = input.getProcessIdentity ?? defaultProcessIdentity;
-  const claimDir = `${lockDir}.claim-${id}`;
 
   await filesystem.mkdir(dirname(input.runtimeDir), { recursive: true });
   const createdAt = clock().toISOString();
   const processIdentity = await getProcessIdentity(pid);
   if (!processIdentity) throw new RuntimeSetupError("recovery-required", "Could not establish setup process identity safely.");
   const owner: SetupLockOwner = { schemaVersion: "runtime-setup-lock.v2", pid, processIdentity, token: id, stagingDir, backupDir, createdAt };
-  await acquireSetupLock({ claimDir, clock, filesystem, getProcessIdentity, lockDir, lockContents: input.lockContents, owner, runtimeDir: input.runtimeDir });
+  await acquireSetupLock({ clock, filesystem, getProcessIdentity, lockDir, lockContents: input.lockContents, owner, runtimeDir: input.runtimeDir });
 
   let backupCreated = false;
   let backupConsumed = false;
@@ -125,7 +124,7 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
   }
 }
 
-async function acquireSetupLock(input: { claimDir: string; clock: () => Date; filesystem: RuntimeFilesystem; getProcessIdentity: (pid: number) => Promise<string | null>; lockDir: string; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
+async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeFilesystem; getProcessIdentity: (pid: number) => Promise<string | null>; lockDir: string; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
   while (true) {
     try {
       await input.filesystem.mkdir(input.lockDir);
@@ -134,6 +133,13 @@ async function acquireSetupLock(input: { claimDir: string; clock: () => Date; fi
       return;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+    const recoveryClaim = join(input.lockDir, "recovery-claim");
+    if (await pathExists(recoveryClaim, input.filesystem.access)) {
+      const recoveryRequired = await pathExists(join(recoveryClaim, "recovery-required"), input.filesystem.access);
+      throw new RuntimeSetupError(recoveryRequired ? "recovery-required" : "already-running", recoveryRequired
+        ? `Runtime setup recovery is required. Inspect ${input.lockDir}`
+        : "Runtime setup recovery is already in progress.");
     }
     let owner: SetupLockOwner | null = null;
     let missing = false;
@@ -144,8 +150,9 @@ async function acquireSetupLock(input: { claimDir: string; clock: () => Date; fi
     } catch (error) {
       missing = isMissingPathError(error);
       if (!missing) {
-        if (!(await claimLock(input.filesystem, input.lockDir, input.claimDir))) continue;
-        throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Preserved malformed lock at ${input.claimDir}`);
+        if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim))) continue;
+        await input.filesystem.writeFile(join(recoveryClaim, "recovery-required"), `Manual recovery required for ${input.lockDir}`);
+        throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
       }
     }
     if (owner) {
@@ -158,13 +165,32 @@ async function acquireSetupLock(input: { claimDir: string; clock: () => Date; fi
       const age = input.clock().getTime() - (await stat(input.lockDir)).mtimeMs;
       if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
     }
-    if (!(await claimLock(input.filesystem, input.lockDir, input.claimDir))) continue;
-    if (owner) await recoverClaimedLock({ ...input, claimDir: input.claimDir, owner });
-    await input.filesystem.rm(input.claimDir, { force: true, recursive: true });
+    if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim))) continue;
+    if (owner) {
+      let snapshot: unknown;
+      try { snapshot = JSON.parse(await readFile(join(input.lockDir, "owner.json"), "utf8")); } catch { snapshot = null; }
+      if (!isValidOwner(snapshot, input.runtimeDir) || snapshot.token !== owner.token || snapshot.processIdentity !== owner.processIdentity) {
+        await input.filesystem.rm(recoveryClaim, { force: true, recursive: true });
+        continue;
+      }
+      await recoverClaimedLock({ ...input, owner });
+    } else {
+      try {
+        await readFile(join(input.lockDir, "owner.json"), "utf8");
+        await input.filesystem.rm(recoveryClaim, { force: true, recursive: true });
+        continue;
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          await input.filesystem.writeFile(join(recoveryClaim, "recovery-required"), `Manual recovery required for ${input.lockDir}`);
+          throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
+        }
+      }
+    }
+    await input.filesystem.rm(input.lockDir, { force: true, recursive: true });
   }
 }
 
-async function recoverClaimedLock(input: { claimDir: string; filesystem: RuntimeFilesystem; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
+async function recoverClaimedLock(input: { filesystem: RuntimeFilesystem; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
   await input.filesystem.rm(input.owner.stagingDir, { force: true, recursive: true });
   if (await pathExists(input.owner.backupDir, input.filesystem.access)) {
     const readiness = await inspectRuntime(input.runtimeDir, input.lockContents);
@@ -177,9 +203,9 @@ async function recoverClaimedLock(input: { claimDir: string; filesystem: Runtime
   }
 }
 
-async function claimLock(filesystem: RuntimeFilesystem, lockDir: string, claimDir: string): Promise<boolean> {
-  try { await filesystem.rename(lockDir, claimDir); return true; }
-  catch (error) { if (isMissingPathError(error)) return false; throw error; }
+async function acquireRecoveryClaim(filesystem: RuntimeFilesystem, recoveryClaim: string): Promise<boolean> {
+  try { await filesystem.mkdir(recoveryClaim); return true; }
+  catch (error) { if (error instanceof Error && "code" in error && error.code === "EEXIST") return false; throw error; }
 }
 
 function isValidOwner(value: unknown, runtimeDir: string): value is SetupLockOwner {
@@ -197,6 +223,12 @@ async function publishOwner(filesystem: RuntimeFilesystem, lockDir: string, owne
 }
 
 async function assertLockOwnership(lockDir: string, owner: SetupLockOwner): Promise<void> {
+  try {
+    await access(join(lockDir, "recovery-claim"));
+    throw new Error("recovery in progress");
+  } catch (error) {
+    if (!isMissingPathError(error)) throw new RuntimeSetupError("recovery-required", `Runtime setup lock ownership was lost. Inspect ${lockDir}`);
+  }
   try {
     const current = JSON.parse(await readFile(join(lockDir, "owner.json"), "utf8")) as Partial<SetupLockOwner>;
     if (current.token === owner.token && current.processIdentity === owner.processIdentity) return;

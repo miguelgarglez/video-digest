@@ -170,7 +170,7 @@ describe("prepareRuntime", () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root);
     const runtimeDir = join(root, "python"); await mkdir(`${runtimeDir}.setup-lock`);
     await expect(prepareRuntime({ idFactory: () => "fresh", clock: () => new Date(Date.now() + 600_000), lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => ({ exitCode: 1, stderr: "continued", stdout: "" }) })).rejects.toThrow("continued");
-    await expect(access(`${runtimeDir}.setup-lock.claim-fresh`)).rejects.toThrow();
+    await expect(access(`${runtimeDir}.setup-lock`)).rejects.toThrow();
   });
 
   test("two stale recoverers yield one live owner and never delete its lock", async () => {
@@ -182,9 +182,19 @@ describe("prepareRuntime", () => {
     const loser = await Promise.race(attempts.map((attempt) => attempt.then(() => null, (error) => error)));
     expect(loser).toBeInstanceOf(RuntimeSetupError); expect(loser.code).toBe("already-running");
     let liveOwner: { token: string } | undefined;
-    while (!liveOwner || !runningToken) { try { liveOwner = JSON.parse(await readFile(join(lockDir, "owner.json"), "utf8")); } catch {} if (!liveOwner || !runningToken) await new Promise((resolve) => setTimeout(resolve, 0)); }
+    while (!liveOwner || !runningToken || liveOwner.token !== runningToken) { try { liveOwner = JSON.parse(await readFile(join(lockDir, "owner.json"), "utf8")); } catch {} if (!liveOwner || !runningToken || liveOwner.token !== runningToken) await new Promise((resolve) => setTimeout(resolve, 0)); }
     expect(liveOwner.token).toBe(runningToken);
     release(); const settled = await Promise.allSettled(attempts); expect(settled.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+  });
+
+  test("stale backup recovery keeps canonical lock while repair blocks a second setup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; const stagingDir = `${runtimeDir}.staging-dead`; const backupDir = `${runtimeDir}.backup-dead`;
+    await mkdir(lockDir); await mkdir(stagingDir); await mkdir(backupDir); await writeFile(join(backupDir, "sentinel"), "only-copy"); await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v2", pid: 1, processIdentity: "dead", token: "dead", stagingDir, backupDir, createdAt: "old" }));
+    let unblock!: () => void; let repairing!: () => void; const blocked = new Promise<void>((resolve) => { unblock = resolve; }); const repairStarted = new Promise<void>((resolve) => { repairing = resolve; });
+    const first = prepareRuntime({ idFactory: () => "repairer", getProcessIdentity: async (pid) => pid === 1 ? null : "repairer", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", filesystem: { access, mkdir, rename, writeFile, rm: async (path, options) => { if (path === stagingDir) { repairing(); await blocked; } await rm(path, options); } }, runner: async () => ({ exitCode: 1, stderr: "stop", stdout: "" }) });
+    await repairStarted; let secondRunnerCalls = 0;
+    await expect(prepareRuntime({ idFactory: () => "second", getProcessIdentity: async () => "second", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { secondRunnerCalls += 1; return { exitCode: 0, stderr: "", stdout: "" }; } })).rejects.toThrow("recovery");
+    expect(secondRunnerCalls).toBe(0); unblock(); await expect(first).rejects.toThrow("stop"); expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("only-copy");
   });
 
   test("atomically preserves malformed owner metadata for manual recovery", async () => {
@@ -192,7 +202,17 @@ describe("prepareRuntime", () => {
     await mkdir(lockDir); await writeFile(join(lockDir, "owner.json"), "{broken");
     const error = await prepareRuntime({ idFactory: () => "claim", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { throw new Error("must not run"); } }).catch((value) => value);
     expect(error).toBeInstanceOf(RuntimeSetupError); expect(error.code).toBe("recovery-required");
-    expect(await readFile(join(`${lockDir}.claim-claim`, "owner.json"), "utf8")).toBe("{broken");
+    expect(await readFile(join(lockDir, "owner.json"), "utf8")).toBe("{broken");
+    expect(await readFile(join(lockDir, "recovery-claim", "recovery-required"), "utf8")).toContain(lockDir);
+    let runnerCalls = 0;
+    const repeated = await prepareRuntime({ idFactory: () => "again", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { runnerCalls += 1; throw new Error("must not run"); } }).catch((value) => value);
+    expect(repeated.code).toBe("recovery-required"); expect(runnerCalls).toBe(0);
+  });
+
+  test("a resumed owner fails fencing when an in-place recovery claim exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; await mkdir(runtimeDir); await writeFile(join(runtimeDir, "sentinel"), "old");
+    const error = await prepareRuntime({ idFactory: () => "paused", getProcessIdentity: async () => "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await mkdir(join(lockDir, "recovery-claim")); return { exitCode: 0, stderr: "", stdout: "" }; } }).catch((value) => value);
+    expect(error).toBeInstanceOf(RuntimeSetupError); expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("old"); await access(join(lockDir, "recovery-claim"));
   });
 
   test("aborts before swap when canonical lock ownership was replaced", async () => {
