@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -9,6 +9,7 @@ import type { YouTubeVideo } from "../video/youtube-url";
 import {
   OutputRecoveryError,
   recoverPendingOutputTransactions,
+  writeFailedIngestionMetadata,
   writeIngestionOutputs,
   writeTranscriptOnlyOutputs,
 } from "./output-writer";
@@ -143,7 +144,8 @@ describe("writeIngestionOutputs", () => {
       {
         rename: async (from, to) => {
           if (!from.includes("/.transactions/") && manifestAtFirstCanonicalRename === undefined) {
-            const names = await readdir(join(outputDir, ".transactions"));
+            const names = (await readdir(join(outputDir, ".transactions")))
+              .filter((name) => name.endsWith(".json"));
             manifestAtFirstCanonicalRename = JSON.parse(
               await readFile(join(outputDir, ".transactions", names[0]!), "utf8"),
             );
@@ -390,6 +392,40 @@ describe("writeIngestionOutputs", () => {
       ),
     ).toEqual([]);
   });
+
+  test("does not let recovery inspect an active writer transaction", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-active-writer-"));
+    let unblock!: () => void;
+    let markStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const first = writeIngestionOutputs(
+      { digest, emailPreview: false, outputDir, transcript, transcriptQuality: usableQuality, video },
+      {
+        rename: async (from, to) => {
+          if (!from.includes("/.transactions/") && from.endsWith(".tmp")) {
+            markStarted();
+            await blocked;
+          }
+          await rename(from, to);
+        },
+      },
+    );
+    await started;
+
+    await expect(recoverPendingOutputTransactions(outputDir)).rejects.toMatchObject({
+      code: "already-running",
+    });
+    await expect(writeTranscriptOnlyOutputs({
+      outputDir,
+      transcript,
+      transcriptQuality: usableQuality,
+      video,
+    })).rejects.toMatchObject({ code: "already-running" });
+
+    unblock();
+    await first;
+  });
 });
 
 describe("recoverPendingOutputTransactions", () => {
@@ -574,6 +610,50 @@ describe("recoverPendingOutputTransactions", () => {
       await expect(readFile(ownedPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
+
+  test("rejects a symlinked owned directory without touching the outside victim", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-symlink-root-"));
+    const outsideDir = await mkdtemp(join(tmpdir(), "video-digest-symlink-victim-"));
+    const token = "55555555-5555-4555-8555-555555555555";
+    const transactionDir = join(outputDir, ".transactions");
+    const targetPath = join(outputDir, "transcripts", `${video.videoId}.json`);
+    const backupPath = `${targetPath}.${token}.backup`;
+    const tempPath = `${targetPath}.${token}.tmp`;
+    const manifestPath = join(transactionDir, `${token}.json`);
+    await mkdir(transactionDir, { recursive: true });
+    await symlink(outsideDir, join(outputDir, "transcripts"));
+    await writeFile(join(outsideDir, `${video.videoId}.json`), "victim\n");
+    await writeFile(join(outsideDir, `${video.videoId}.json.${token}.backup`), "backup\n");
+    await writeFile(manifestPath, `${JSON.stringify({
+      artifacts: [{ backupPath, hadOriginal: true, targetPath, tempPath }],
+      schemaVersion: "output-transaction.v0",
+      state: "prepared",
+      token,
+      videoId: video.videoId,
+    })}\n`);
+
+    await expect(recoverPendingOutputTransactions(outputDir)).rejects.toBeInstanceOf(
+      OutputRecoveryError,
+    );
+    expect(await readFile(join(outsideDir, `${video.videoId}.json`), "utf8")).toBe("victim\n");
+    expect(await readFile(join(outsideDir, `${video.videoId}.json.${token}.backup`), "utf8"))
+      .toBe("backup\n");
+  });
+
+  test("removes only owned orphan manifest temp files", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-orphan-manifest-"));
+    const transactionDir = join(outputDir, ".transactions");
+    const token = "66666666-6666-4666-8666-666666666666";
+    const ownedTemp = join(transactionDir, `${token}.json.tmp`);
+    const unknown = join(transactionDir, "notes.tmp");
+    await mkdir(transactionDir, { recursive: true });
+    await Promise.all([writeFile(ownedTemp, "partial"), writeFile(unknown, "keep")]);
+
+    await recoverPendingOutputTransactions(outputDir);
+
+    await expect(readFile(ownedTemp, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(unknown, "utf8")).toBe("keep");
+  });
 });
 
 describe("writeTranscriptOnlyOutputs", () => {
@@ -628,6 +708,74 @@ describe("writeTranscriptOnlyOutputs", () => {
       },
     });
     await expect(readFile(join(outputDir, "digests", "1ZgUcrR0K7I.md"), "utf8")).rejects.toThrow();
+  });
+
+  test("removes stale digest and email artifacts", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-replace-"));
+    await writeIngestionOutputs({
+      digest, emailPreview: true, outputDir, transcript, transcriptQuality: usableQuality, video,
+    });
+
+    await writeTranscriptOnlyOutputs({ outputDir, transcript, transcriptQuality: usableQuality, video });
+
+    await expect(readFile(join(outputDir, "digests", `${video.videoId}.md`), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(outputDir, "emails", `${video.videoId}.md`), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("writeFailedIngestionMetadata", () => {
+  test("removes stale successful-entry artifacts", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-failed-replace-"));
+    await writeIngestionOutputs({
+      digest, emailPreview: true, outputDir, transcript, transcriptQuality: usableQuality, video,
+    });
+
+    await writeFailedIngestionMetadata({
+      error: { code: "unusable-transcript", message: "No usable transcript" },
+      outputDir,
+      transcriptQuality: usableQuality,
+      video,
+    });
+
+    for (const path of [
+      join(outputDir, "digests", `${video.videoId}.md`),
+      join(outputDir, "emails", `${video.videoId}.md`),
+      join(outputDir, "transcripts", `${video.videoId}.json`),
+      join(outputDir, "transcripts", `${video.videoId}.md`),
+      join(outputDir, "transcripts", `${video.videoId}.txt`),
+    ]) {
+      await expect(readFile(path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  test("restores a successful entry when failed-metadata replacement rolls back", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-failed-rollback-"));
+    await writeIngestionOutputs({
+      digest, emailPreview: true, outputDir, transcript, transcriptQuality: usableQuality, video,
+    });
+    const previous = new Map<string, string>();
+    for (const path of artifactContents(outputDir).keys()) previous.set(path, await readFile(path, "utf8"));
+
+    await expect(writeFailedIngestionMetadata(
+      {
+        error: { code: "unusable-transcript", message: "No usable transcript" },
+        outputDir,
+        transcriptQuality: usableQuality,
+        video,
+      },
+      {
+        rename: async (from, to) => {
+          if (from.includes("/.transactions/") && from.endsWith(".commit.tmp")) {
+            throw new Error("simulated error-entry commit failure");
+          }
+          await rename(from, to);
+        },
+      },
+    )).rejects.toThrow("simulated error-entry commit failure");
+
+    for (const [path, contents] of previous) expect(await readFile(path, "utf8")).toBe(contents);
   });
 });
 

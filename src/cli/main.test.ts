@@ -828,7 +828,7 @@ describe("runCli", () => {
     });
   });
 
-  test("recovers pending output transactions before list, open, transcript, and ingest", async () => {
+  test("recovers before list and open without duplicating writer recovery", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const events: string[] = [];
     const baseDependencies: CliDependencies = {
@@ -856,9 +856,7 @@ describe("runCli", () => {
     expect(events).toEqual([
       `recover:${outputDir}`,
       `recover:${outputDir}`,
-      `recover:${outputDir}`,
       "transcript",
-      `recover:${outputDir}`,
       "ingest",
     ]);
   });

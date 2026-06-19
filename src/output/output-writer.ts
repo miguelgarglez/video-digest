@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Digest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 import { renderTranscriptMarkdown, renderTranscriptText } from "./transcript-renderer";
+import { withProcessLock } from "../storage/process-lock";
+
+const TRANSACTION_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type IngestionOutputInput = {
   digest: Digest;
@@ -40,7 +43,9 @@ export type TranscriptOnlyOutputPaths = {
 };
 
 export type OutputFileOperations = {
+  lstat(path: string): Promise<{ isSymbolicLink(): boolean }>;
   pathExists(path: string): Promise<boolean>;
+  realpath(path: string): Promise<string>;
   readDirectory(path: string): Promise<string[]>;
   readFile(path: string): Promise<string>;
   rename(from: string, to: string): Promise<void>;
@@ -49,6 +54,7 @@ export type OutputFileOperations = {
 };
 
 const defaultFileOperations: OutputFileOperations = {
+  lstat,
   pathExists: async (path) => {
     try {
       await access(path);
@@ -58,6 +64,7 @@ const defaultFileOperations: OutputFileOperations = {
       throw error;
     }
   },
+  realpath,
   readDirectory: readdir,
   readFile: (path) => readFile(path, "utf8"),
   rename,
@@ -90,7 +97,15 @@ export async function writeIngestionOutputs(
   input: IngestionOutputInput,
   fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<IngestionOutputPaths> {
-  await recoverPendingOutputTransactions(input.outputDir, fileOperations);
+  return withOutputLibraryLock(input.outputDir, async () =>
+    writeIngestionOutputsLocked(input, fileOperations));
+}
+
+async function writeIngestionOutputsLocked(
+  input: IngestionOutputInput,
+  fileOperations: Partial<OutputFileOperations>,
+): Promise<IngestionOutputPaths> {
+  await recoverPendingOutputTransactionsLocked(input.outputDir, fileOperations);
   const paths = outputPaths(input.outputDir, input.video.videoId, input.emailPreview);
 
   await Promise.all([
@@ -129,7 +144,15 @@ export async function writeTranscriptOnlyOutputs(
   input: TranscriptOnlyOutputInput,
   fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<TranscriptOnlyOutputPaths> {
-  await recoverPendingOutputTransactions(input.outputDir, fileOperations);
+  return withOutputLibraryLock(input.outputDir, async () =>
+    writeTranscriptOnlyOutputsLocked(input, fileOperations));
+}
+
+async function writeTranscriptOnlyOutputsLocked(
+  input: TranscriptOnlyOutputInput,
+  fileOperations: Partial<OutputFileOperations>,
+): Promise<TranscriptOnlyOutputPaths> {
+  await recoverPendingOutputTransactionsLocked(input.outputDir, fileOperations);
   const paths = {
     metadataPath: join(input.outputDir, "metadata", `${input.video.videoId}.json`),
     transcriptJsonPath: join(input.outputDir, "transcripts", `${input.video.videoId}.json`),
@@ -154,7 +177,10 @@ export async function writeTranscriptOnlyOutputs(
         path: paths.metadataPath,
       },
     ],
-    [],
+    [
+      join(input.outputDir, "digests", `${input.video.videoId}.md`),
+      join(input.outputDir, "emails", `${input.video.videoId}.md`),
+    ],
     fileOperations,
   );
 
@@ -165,7 +191,15 @@ export async function writeFailedIngestionMetadata(
   input: FailedIngestionMetadataInput,
   fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<string> {
-  await recoverPendingOutputTransactions(input.outputDir, fileOperations);
+  return withOutputLibraryLock(input.outputDir, async () =>
+    writeFailedIngestionMetadataLocked(input, fileOperations));
+}
+
+async function writeFailedIngestionMetadataLocked(
+  input: FailedIngestionMetadataInput,
+  fileOperations: Partial<OutputFileOperations>,
+): Promise<string> {
+  await recoverPendingOutputTransactionsLocked(input.outputDir, fileOperations);
   const metadataPath = join(input.outputDir, "metadata", `${input.video.videoId}.json`);
 
   await mkdir(join(input.outputDir, "metadata"), { recursive: true });
@@ -188,7 +222,13 @@ export async function writeFailedIngestionMetadata(
         path: metadataPath,
       },
     ],
-    [],
+    [
+      join(input.outputDir, "digests", `${input.video.videoId}.md`),
+      join(input.outputDir, "emails", `${input.video.videoId}.md`),
+      join(input.outputDir, "transcripts", `${input.video.videoId}.json`),
+      join(input.outputDir, "transcripts", `${input.video.videoId}.md`),
+      join(input.outputDir, "transcripts", `${input.video.videoId}.txt`),
+    ],
     fileOperations,
   );
 
@@ -245,18 +285,25 @@ export async function recoverPendingOutputTransactions(
   outputDir: string,
   operationOverrides: Partial<OutputFileOperations> = {},
 ): Promise<void> {
+  await withOutputLibraryLock(outputDir, async () =>
+    recoverPendingOutputTransactionsLocked(outputDir, operationOverrides));
+}
+
+async function recoverPendingOutputTransactionsLocked(
+  outputDir: string,
+  operationOverrides: Partial<OutputFileOperations> = {},
+): Promise<void> {
   const fileOperations = { ...defaultFileOperations, ...operationOverrides };
   const transactionDir = join(outputDir, ".transactions");
-  let manifestNames: string[];
+  let directoryNames: string[];
 
   try {
-    manifestNames = (await fileOperations.readDirectory(transactionDir))
-      .filter((name) => name.endsWith(".json"))
-      .sort();
+    directoryNames = await fileOperations.readDirectory(transactionDir);
   } catch (error) {
     if (isMissingPathError(error)) return;
     throw error;
   }
+  const manifestNames = directoryNames.filter((name) => name.endsWith(".json")).sort();
 
   const manifests = await Promise.all(
     manifestNames.map(async (name) => {
@@ -276,6 +323,15 @@ export async function recoverPendingOutputTransactions(
       }
     }),
   );
+
+  await validateRecoveryPathsSafe(outputDir, manifests.map(({ manifest }) => manifest), fileOperations);
+  const manifestNameSet = new Set(manifestNames);
+  for (const name of directoryNames) {
+    const match = name.match(/^([0-9a-f-]{36})\.json(?:\.commit)?\.tmp$/i);
+    if (match && !TRANSACTION_TOKEN_PATTERN.test(match[1]!)) continue;
+    if (!match || manifestNameSet.has(`${match[1]}.json`)) continue;
+    await unlinkIfPresent(join(transactionDir, name), fileOperations);
+  }
 
   for (const { manifest, manifestPath } of manifests) {
     const recoveryFailures: string[] = [];
@@ -334,6 +390,22 @@ async function replaceArtifactsTransactionally(
   let manifestPublished = false;
 
   try {
+    await validateRecoveryPathsSafe(
+      outputDir,
+      [{
+        artifacts: destinations.map((targetPath) => ({
+          backupPath: `${targetPath}.${operationId}.backup`,
+          hadOriginal: false,
+          targetPath,
+          tempPath: `${targetPath}.${operationId}.tmp`,
+        })),
+        schemaVersion: "output-transaction.v0",
+        state: "prepared",
+        token: operationId,
+        videoId,
+      }],
+      fileOperations,
+    );
     const writeResults = await Promise.allSettled(
       temporaryEntries.map((entry) => fileOperations.writeFile(entry.temporaryPath, entry.contents)),
     );
@@ -399,7 +471,7 @@ async function replaceArtifactsTransactionally(
 
     if (manifestPublished) {
       try {
-        await recoverPendingOutputTransactions(outputDir, fileOperations);
+        await recoverPendingOutputTransactionsLocked(outputDir, fileOperations);
       } catch (recoveryError) {
         throw recoveryError;
       }
@@ -417,6 +489,20 @@ async function replaceArtifactsTransactionally(
   }
 }
 
+async function withOutputLibraryLock<T>(outputDir: string, operation: () => Promise<T>): Promise<T> {
+  const transactionDir = join(outputDir, ".transactions");
+  await mkdir(transactionDir, { recursive: true });
+  const canonicalRoot = await realpath(outputDir);
+  if ((await lstat(transactionDir)).isSymbolicLink()) {
+    throw new OutputRecoveryError([], new Error("Symlinked transaction directory"));
+  }
+  const transactionRelative = relative(canonicalRoot, await realpath(transactionDir));
+  if (transactionRelative.startsWith("..") || isAbsolute(transactionRelative)) {
+    throw new OutputRecoveryError([], new Error("Transaction directory escapes output root"));
+  }
+  return withProcessLock({ lockDir: join(transactionDir, "library.lock") }, operation);
+}
+
 function validateManifest(
   value: unknown,
   outputDir: string,
@@ -427,10 +513,10 @@ function validateManifest(
     || value.schemaVersion !== "output-transaction.v0"
     || (value.state !== "prepared" && value.state !== "committed")
     || typeof value.token !== "string"
-    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.token)
+    || !TRANSACTION_TOKEN_PATTERN.test(value.token)
     || manifestName !== `${value.token}.json`
     || typeof value.videoId !== "string"
-    || value.videoId.length === 0
+    || !/^[A-Za-z0-9_-]{11}$/.test(value.videoId)
     || !Array.isArray(value.artifacts)
     || value.artifacts.length === 0
   ) {
@@ -438,6 +524,8 @@ function validateManifest(
   }
 
   const seenTargets = new Set<string>();
+  const videoId = value.videoId;
+  const token = value.token;
   const artifacts = value.artifacts.map((artifact) => {
     if (!isRecord(artifact)
       || !hasExactKeys(artifact, ["backupPath", "hadOriginal", "targetPath", "tempPath"])
@@ -445,9 +533,9 @@ function validateManifest(
       || typeof artifact.hadOriginal !== "boolean"
       || typeof artifact.targetPath !== "string"
       || typeof artifact.tempPath !== "string"
-      || !isOwnedTargetPath(outputDir, artifact.targetPath)
-      || artifact.backupPath !== `${artifact.targetPath}.${value.token}.backup`
-      || artifact.tempPath !== `${artifact.targetPath}.${value.token}.tmp`
+      || !isOwnedTargetPath(outputDir, videoId, artifact.targetPath)
+      || artifact.backupPath !== `${artifact.targetPath}.${token}.backup`
+      || artifact.tempPath !== `${artifact.targetPath}.${token}.tmp`
       || seenTargets.has(artifact.targetPath)
     ) {
       throw new Error("Unsafe output transaction artifact path");
@@ -459,10 +547,50 @@ function validateManifest(
   return { ...value, artifacts } as OutputTransactionManifest;
 }
 
-function isOwnedTargetPath(outputDir: string, targetPath: string): boolean {
+function isOwnedTargetPath(outputDir: string, videoId: string, targetPath: string): boolean {
   const relativePath = relative(resolve(outputDir), resolve(targetPath));
   if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) return false;
-  return ["digests", "emails", "metadata", "transcripts"].includes(relativePath.split(/[\\/]/)[0]!);
+  const normalized = relativePath.replaceAll("\\", "/");
+  return new Set([
+    `digests/${videoId}.md`,
+    `emails/${videoId}.md`,
+    `metadata/${videoId}.json`,
+    `transcripts/${videoId}.json`,
+    `transcripts/${videoId}.md`,
+    `transcripts/${videoId}.txt`,
+  ]).has(normalized);
+}
+
+async function validateRecoveryPathsSafe(
+  outputDir: string,
+  manifests: OutputTransactionManifest[],
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  const canonicalRoot = await fileOperations.realpath(outputDir);
+  for (const manifest of manifests) {
+    for (const artifact of manifest.artifacts) {
+      for (const path of [artifact.targetPath, artifact.backupPath, artifact.tempPath]) {
+        const parent = join(path, "..");
+        try {
+          if ((await fileOperations.lstat(parent)).isSymbolicLink()) {
+            throw new Error(`Symlinked artifact parent: ${parent}`);
+          }
+          const canonicalParent = await fileOperations.realpath(parent);
+          const fromRoot = relative(canonicalRoot, canonicalParent);
+          if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+            throw new Error(`Artifact parent escapes output root: ${parent}`);
+          }
+        } catch (error) {
+          if (isMissingPathError(error)) continue;
+          throw new OutputRecoveryError(
+            [],
+            error,
+            `Cannot recover unsafe output transaction path ${path}. No artifact paths were changed.`,
+          );
+        }
+      }
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

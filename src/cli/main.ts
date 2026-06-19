@@ -107,7 +107,7 @@ export async function runCli(
       envOutputDir: env.VIDEO_DIGEST_OUTPUT_DIR,
       savedArtifactLibrary: config?.artifactLibrary,
     });
-    if (["ingest", "list", "open", "transcript"].includes(result.value.command)) {
+    if (["list", "open"].includes(result.value.command)) {
       await (dependencies.recoverPendingOutputTransactions ?? recoverPendingOutputTransactions)(
         artifactLibrary.path,
       );
