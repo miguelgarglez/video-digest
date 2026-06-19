@@ -193,7 +193,7 @@ describe("prepareRuntime", () => {
     let unblock!: () => void; let repairing!: () => void; const blocked = new Promise<void>((resolve) => { unblock = resolve; }); const repairStarted = new Promise<void>((resolve) => { repairing = resolve; });
     const first = prepareRuntime({ idFactory: () => "repairer", getProcessIdentity: async (pid) => pid === 1 ? null : "repairer", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", filesystem: { access, mkdir, rename, writeFile, rm: async (path, options) => { if (path === stagingDir) { repairing(); await blocked; } await rm(path, options); } }, runner: async () => ({ exitCode: 1, stderr: "stop", stdout: "" }) });
     await repairStarted; let secondRunnerCalls = 0;
-    await expect(prepareRuntime({ idFactory: () => "second", getProcessIdentity: async () => "second", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { secondRunnerCalls += 1; return { exitCode: 0, stderr: "", stdout: "" }; } })).rejects.toThrow("recovery");
+    await expect(prepareRuntime({ idFactory: () => "second", getProcessIdentity: async () => "repairer", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { secondRunnerCalls += 1; return { exitCode: 0, stderr: "", stdout: "" }; } })).rejects.toThrow("recovery");
     expect(secondRunnerCalls).toBe(0); unblock(); await expect(first).rejects.toThrow("stop"); expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("only-copy");
   });
 
@@ -203,7 +203,7 @@ describe("prepareRuntime", () => {
     const error = await prepareRuntime({ idFactory: () => "claim", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { throw new Error("must not run"); } }).catch((value) => value);
     expect(error).toBeInstanceOf(RuntimeSetupError); expect(error.code).toBe("recovery-required");
     expect(await readFile(join(lockDir, "owner.json"), "utf8")).toBe("{broken");
-    expect(await readFile(join(lockDir, "recovery-claim", "recovery-required"), "utf8")).toContain(lockDir);
+    expect(await readFile(join(lockDir, "recovery-required"), "utf8")).toContain(lockDir);
     let runnerCalls = 0;
     const repeated = await prepareRuntime({ idFactory: () => "again", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { runnerCalls += 1; throw new Error("must not run"); } }).catch((value) => value);
     expect(repeated.code).toBe("recovery-required"); expect(runnerCalls).toBe(0);
@@ -213,6 +213,28 @@ describe("prepareRuntime", () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; await mkdir(runtimeDir); await writeFile(join(runtimeDir, "sentinel"), "old");
     const error = await prepareRuntime({ idFactory: () => "paused", getProcessIdentity: async () => "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await mkdir(join(lockDir, "recovery-claim")); return { exitCode: 0, stderr: "", stdout: "" }; } }).catch((value) => value);
     expect(error).toBeInstanceOf(RuntimeSetupError); expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("old"); await access(join(lockDir, "recovery-claim"));
+  });
+
+  test("reclaims a stale empty recovery claim left before owner publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`;
+    await mkdir(join(lockDir, "recovery-claim"), { recursive: true });
+    await expect(prepareRuntime({ idFactory: () => "reclaimer", clock: () => new Date(Date.now() + 600_000), getProcessIdentity: async () => "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => ({ exitCode: 1, stderr: "continued", stdout: "" }) })).rejects.toThrow("continued");
+  });
+
+  test("reclaims a dead recovery owner and completes recovery idempotently", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; const claim = join(lockDir, "recovery-claim");
+    await mkdir(claim, { recursive: true }); await writeFile(join(claim, "owner.json"), JSON.stringify({ schemaVersion: "runtime-recovery-owner.v0", token: "dead-claim", pid: 22, processIdentity: "dead", createdAt: "old" }));
+    await expect(prepareRuntime({ idFactory: () => "next", clock: () => new Date(Date.now() + 600_000), getProcessIdentity: async (pid) => pid === 22 ? null : "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => ({ exitCode: 1, stderr: "continued", stdout: "" }) })).rejects.toThrow("continued");
+  });
+
+  test("turns a recovery exception into a durable recovery-required sentinel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; const backupDir = `${runtimeDir}.backup-dead`;
+    await mkdir(lockDir); await mkdir(backupDir); await writeFile(join(backupDir, "sentinel"), "only"); await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v2", pid: 22, processIdentity: "dead", token: "dead", stagingDir: `${runtimeDir}.staging-dead`, backupDir, createdAt: "old" }));
+    const error = await prepareRuntime({ idFactory: () => "repair", getProcessIdentity: async (pid) => pid === 22 ? null : "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", filesystem: { access, mkdir, rm, writeFile, rename: async (from, to) => { if (from === backupDir) throw new Error("disk-secret"); await rename(from, to); } }, runner: async () => { throw new Error("must not run"); } }).catch((value) => value);
+    expect(error).toBeInstanceOf(RuntimeSetupError); expect(error.code).toBe("recovery-required"); expect(error.message).not.toContain("secret");
+    expect(await readFile(join(lockDir, "recovery-required"), "utf8")).toContain(lockDir);
+    let calls = 0; const repeated = await prepareRuntime({ idFactory: () => "again", getProcessIdentity: async () => "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => { calls += 1; throw new Error(); } }).catch((value) => value);
+    expect(repeated.code).toBe("recovery-required"); expect(calls).toBe(0);
   });
 
   test("aborts before swap when canonical lock ownership was replaced", async () => {

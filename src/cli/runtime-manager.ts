@@ -36,6 +36,7 @@ export class RuntimeSetupError extends Error {
 }
 
 type SetupLockOwner = { schemaVersion: "runtime-setup-lock.v2"; pid: number; processIdentity: string; token: string; stagingDir: string; backupDir: string; createdAt: string };
+type RecoveryOwner = { schemaVersion: "runtime-recovery-owner.v0"; token: string; pid: number; processIdentity: string; createdAt: string };
 
 export type RuntimeFilesystem = {
   access: typeof access;
@@ -135,11 +136,12 @@ async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeF
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
     }
     const recoveryClaim = join(input.lockDir, "recovery-claim");
+    if (await pathExists(join(input.lockDir, "recovery-required"), input.filesystem.access)) {
+      throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
+    }
     if (await pathExists(recoveryClaim, input.filesystem.access)) {
-      const recoveryRequired = await pathExists(join(recoveryClaim, "recovery-required"), input.filesystem.access);
-      throw new RuntimeSetupError(recoveryRequired ? "recovery-required" : "already-running", recoveryRequired
-        ? `Runtime setup recovery is required. Inspect ${input.lockDir}`
-        : "Runtime setup recovery is already in progress.");
+      const reclaimed = await reclaimAbandonedRecoveryClaim({ ...input, recoveryClaim });
+      if (reclaimed) continue;
     }
     let owner: SetupLockOwner | null = null;
     let missing = false;
@@ -150,8 +152,8 @@ async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeF
     } catch (error) {
       missing = isMissingPathError(error);
       if (!missing) {
-        if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim))) continue;
-        await input.filesystem.writeFile(join(recoveryClaim, "recovery-required"), `Manual recovery required for ${input.lockDir}`);
+        if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim, recoveryOwner(input.owner)))) continue;
+        await publishRecoveryRequired(input.filesystem, input.lockDir);
         throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
       }
     }
@@ -165,7 +167,7 @@ async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeF
       const age = input.clock().getTime() - (await stat(input.lockDir)).mtimeMs;
       if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
     }
-    if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim))) continue;
+    if (!(await acquireRecoveryClaim(input.filesystem, recoveryClaim, recoveryOwner(input.owner)))) continue;
     if (owner) {
       let snapshot: unknown;
       try { snapshot = JSON.parse(await readFile(join(input.lockDir, "owner.json"), "utf8")); } catch { snapshot = null; }
@@ -173,7 +175,12 @@ async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeF
         await input.filesystem.rm(recoveryClaim, { force: true, recursive: true });
         continue;
       }
-      await recoverClaimedLock({ ...input, owner });
+      try {
+        await recoverClaimedLock({ ...input, owner });
+      } catch {
+        await publishRecoveryRequired(input.filesystem, input.lockDir);
+        throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
+      }
     } else {
       try {
         await readFile(join(input.lockDir, "owner.json"), "utf8");
@@ -181,7 +188,7 @@ async function acquireSetupLock(input: { clock: () => Date; filesystem: RuntimeF
         continue;
       } catch (error) {
         if (!isMissingPathError(error)) {
-          await input.filesystem.writeFile(join(recoveryClaim, "recovery-required"), `Manual recovery required for ${input.lockDir}`);
+          await publishRecoveryRequired(input.filesystem, input.lockDir);
           throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
         }
       }
@@ -203,9 +210,68 @@ async function recoverClaimedLock(input: { filesystem: RuntimeFilesystem; lockCo
   }
 }
 
-async function acquireRecoveryClaim(filesystem: RuntimeFilesystem, recoveryClaim: string): Promise<boolean> {
-  try { await filesystem.mkdir(recoveryClaim); return true; }
+async function acquireRecoveryClaim(filesystem: RuntimeFilesystem, recoveryClaim: string, owner: RecoveryOwner): Promise<boolean> {
+  try {
+    await filesystem.mkdir(recoveryClaim);
+    try { await publishRecoveryOwner(filesystem, recoveryClaim, owner); }
+    catch (error) { await filesystem.rm(recoveryClaim, { force: true, recursive: true }); throw error; }
+    return true;
+  }
   catch (error) { if (error instanceof Error && "code" in error && error.code === "EEXIST") return false; throw error; }
+}
+
+async function reclaimAbandonedRecoveryClaim(input: { clock: () => Date; filesystem: RuntimeFilesystem; getProcessIdentity: (pid: number) => Promise<string | null>; lockDir: string; owner: SetupLockOwner; recoveryClaim: string }): Promise<boolean> {
+  let owner: RecoveryOwner | null = null;
+  let missing = false;
+  try {
+    const parsed = JSON.parse(await readFile(join(input.recoveryClaim, "owner.json"), "utf8"));
+    if (!isValidRecoveryOwner(parsed)) throw new Error("malformed recovery owner");
+    owner = parsed;
+  } catch (error) {
+    missing = isMissingPathError(error);
+    if (!missing) {
+      const age = input.clock().getTime() - (await stat(input.recoveryClaim)).mtimeMs;
+      if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup recovery is already in progress.");
+      await publishRecoveryRequired(input.filesystem, input.lockDir);
+      throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
+    }
+  }
+  if (owner) {
+    let identity: string | null;
+    try { identity = await input.getProcessIdentity(owner.pid); }
+    catch { throw new RuntimeSetupError("already-running", "Runtime setup recovery is already in progress; owner identity could not be verified safely."); }
+    if (identity === owner.processIdentity) throw new RuntimeSetupError("already-running", "Runtime setup recovery is already in progress.");
+  } else {
+    const age = input.clock().getTime() - (await stat(input.recoveryClaim)).mtimeMs;
+    if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup recovery is already in progress.");
+  }
+  const abandoned = join(input.lockDir, `recovery-abandoned-${input.owner.token}`);
+  try { await input.filesystem.rename(input.recoveryClaim, abandoned); }
+  catch (error) { if (isMissingPathError(error)) return true; throw error; }
+  await input.filesystem.rm(abandoned, { force: true, recursive: true });
+  return true;
+}
+
+function recoveryOwner(owner: SetupLockOwner): RecoveryOwner {
+  return { schemaVersion: "runtime-recovery-owner.v0", token: owner.token, pid: owner.pid, processIdentity: owner.processIdentity, createdAt: owner.createdAt };
+}
+
+function isValidRecoveryOwner(value: unknown): value is RecoveryOwner {
+  if (typeof value !== "object" || value === null) return false;
+  const owner = value as Partial<RecoveryOwner>;
+  return owner.schemaVersion === "runtime-recovery-owner.v0" && typeof owner.token === "string" && Number.isInteger(owner.pid) && typeof owner.processIdentity === "string" && typeof owner.createdAt === "string";
+}
+
+async function publishRecoveryOwner(filesystem: RuntimeFilesystem, claim: string, owner: RecoveryOwner): Promise<void> {
+  const temp = join(claim, `owner.${owner.token}.tmp`);
+  await filesystem.writeFile(temp, JSON.stringify(owner));
+  await filesystem.rename(temp, join(claim, "owner.json"));
+}
+
+async function publishRecoveryRequired(filesystem: RuntimeFilesystem, lockDir: string): Promise<void> {
+  const temp = join(lockDir, `recovery-required.${crypto.randomUUID()}.tmp`);
+  await filesystem.writeFile(temp, `Manual recovery required for ${lockDir}`);
+  await filesystem.rename(temp, join(lockDir, "recovery-required"));
 }
 
 function isValidOwner(value: unknown, runtimeDir: string): value is SetupLockOwner {
