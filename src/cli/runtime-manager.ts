@@ -19,14 +19,18 @@ export type PrepareRuntimeInput = {
   clock?: () => Date;
   filesystem?: RuntimeFilesystem;
   idFactory?: () => string;
+  heartbeatFactory?: HeartbeatFactory;
+  heartbeatIntervalMs?: number;
+  leaseDurationMs?: number;
   lockContents: string;
   pythonDir: string;
   pid?: number;
-  processAlive?: (pid: number) => boolean;
   runner?: RuntimeCommandRunner;
   runtimeDir: string;
   uvPath: string;
 };
+
+export type HeartbeatFactory = (renew: () => Promise<void>, intervalMs: number) => { stop: () => Promise<void> };
 
 export class RuntimeSetupError extends Error {
   constructor(public readonly code: "already-running" | "recovery-required", message: string) {
@@ -35,7 +39,7 @@ export class RuntimeSetupError extends Error {
   }
 }
 
-type SetupLockOwner = { schemaVersion: "runtime-setup-lock.v0"; pid: number; token: string; stagingDir: string; backupDir: string; createdAt: string };
+type SetupLockOwner = { schemaVersion: "runtime-setup-lock.v1"; pid: number; token: string; stagingDir: string; backupDir: string; createdAt: string; leaseExpiresAt: string };
 
 export type RuntimeFilesystem = {
   access: typeof access;
@@ -56,26 +60,18 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
   const filesystem = input.filesystem ?? defaultRuntimeFilesystem;
   const clock = input.clock ?? (() => new Date());
   const pid = input.pid ?? process.pid;
-  const processAlive = input.processAlive ?? defaultProcessAlive;
+  const leaseDurationMs = input.leaseDurationMs ?? 60_000;
+  const claimDir = `${lockDir}.claim-${id}`;
 
   await filesystem.mkdir(dirname(input.runtimeDir), { recursive: true });
-  try {
-    await filesystem.mkdir(lockDir);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-      await recoverExistingLock({ clock, filesystem, lockDir, lockContents: input.lockContents, processAlive, runtimeDir: input.runtimeDir });
-      await filesystem.mkdir(lockDir);
-    } else {
-      throw error;
-    }
-  }
-  const owner: SetupLockOwner = { schemaVersion: "runtime-setup-lock.v0", pid, token: id, stagingDir, backupDir, createdAt: clock().toISOString() };
-  try {
-    await filesystem.writeFile(join(lockDir, "owner.json"), JSON.stringify(owner));
-  } catch (error) {
-    await filesystem.rm(lockDir, { force: true, recursive: true });
-    throw error;
-  }
+  const createdAt = clock().toISOString();
+  let owner: SetupLockOwner = { schemaVersion: "runtime-setup-lock.v1", pid, token: id, stagingDir, backupDir, createdAt, leaseExpiresAt: new Date(clock().getTime() + leaseDurationMs).toISOString() };
+  await acquireSetupLock({ claimDir, clock, filesystem, lockDir, lockContents: input.lockContents, owner, runtimeDir: input.runtimeDir });
+  const renew = async () => {
+    owner = { ...owner, leaseExpiresAt: new Date(clock().getTime() + leaseDurationMs).toISOString() };
+    await publishOwner(filesystem, lockDir, owner);
+  };
+  const heartbeat = (input.heartbeatFactory ?? defaultHeartbeatFactory)(renew, input.heartbeatIntervalMs ?? 20_000);
 
   let backupCreated = false;
   let backupConsumed = false;
@@ -125,38 +121,85 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
     await filesystem.rm(backupDir, { force: true, recursive: true });
     backupConsumed = true;
   } finally {
+    await heartbeat.stop();
     await filesystem.rm(stagingDir, { force: true, recursive: true });
     if (!backupCreated || backupConsumed) await filesystem.rm(backupDir, { force: true, recursive: true });
     await filesystem.rm(lockDir, { force: true, recursive: true });
   }
 }
 
-async function recoverExistingLock(input: { clock: () => Date; filesystem: RuntimeFilesystem; lockDir: string; lockContents: string; processAlive: (pid: number) => boolean; runtimeDir: string }): Promise<void> {
-  let owner: SetupLockOwner;
-  try {
-    owner = JSON.parse(await readFile(join(input.lockDir, "owner.json"), "utf8")) as SetupLockOwner;
-    if (owner.schemaVersion !== "runtime-setup-lock.v0" || !Number.isInteger(owner.pid) || typeof owner.token !== "string" || owner.stagingDir !== `${input.runtimeDir}.staging-${owner.token}` || owner.backupDir !== `${input.runtimeDir}.backup-${owner.token}`) throw new Error("invalid metadata");
-  } catch {
-    const age = input.clock().getTime() - (await stat(input.lockDir)).mtimeMs;
-    if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
-    throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Inspect ${input.lockDir}`);
-  }
-  if (input.processAlive(owner.pid)) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
-  await input.filesystem.rm(owner.stagingDir, { force: true, recursive: true });
-  if (await pathExists(owner.backupDir, input.filesystem.access)) {
-    const readiness = await inspectRuntime(input.runtimeDir, input.lockContents);
-    if (readiness.status === "ready") {
-      await input.filesystem.rm(owner.backupDir, { force: true, recursive: true });
-    } else {
-      await input.filesystem.rm(input.runtimeDir, { force: true, recursive: true });
-      await input.filesystem.rename(owner.backupDir, input.runtimeDir);
+async function acquireSetupLock(input: { claimDir: string; clock: () => Date; filesystem: RuntimeFilesystem; lockDir: string; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
+  while (true) {
+    try {
+      await input.filesystem.mkdir(input.lockDir);
+      try { await publishOwner(input.filesystem, input.lockDir, input.owner); }
+      catch (error) { await input.filesystem.rm(input.lockDir, { force: true, recursive: true }); throw error; }
+      return;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
     }
+    let owner: SetupLockOwner | null = null;
+    let missing = false;
+    try {
+      const parsed = JSON.parse(await readFile(join(input.lockDir, "owner.json"), "utf8"));
+      if (!isValidOwner(parsed, input.runtimeDir)) throw new Error("malformed-owner");
+      owner = parsed;
+    } catch (error) {
+      missing = isMissingPathError(error);
+      if (!missing) {
+        if (!(await claimLock(input.filesystem, input.lockDir, input.claimDir))) continue;
+        throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Preserved malformed lock at ${input.claimDir}`);
+      }
+    }
+    if (owner && new Date(owner.leaseExpiresAt).getTime() > input.clock().getTime()) {
+      throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
+    }
+    if (missing) {
+      const age = input.clock().getTime() - (await stat(input.lockDir)).mtimeMs;
+      if (age < 5 * 60_000) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
+    }
+    if (!(await claimLock(input.filesystem, input.lockDir, input.claimDir))) continue;
+    if (owner) await recoverClaimedLock({ ...input, claimDir: input.claimDir, owner });
+    await input.filesystem.rm(input.claimDir, { force: true, recursive: true });
   }
-  await input.filesystem.rm(input.lockDir, { force: true, recursive: true });
 }
 
-function defaultProcessAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (error) { return error instanceof Error && "code" in error && error.code === "EPERM"; }
+async function recoverClaimedLock(input: { claimDir: string; filesystem: RuntimeFilesystem; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
+  await input.filesystem.rm(input.owner.stagingDir, { force: true, recursive: true });
+  if (await pathExists(input.owner.backupDir, input.filesystem.access)) {
+    const readiness = await inspectRuntime(input.runtimeDir, input.lockContents);
+    if (readiness.status === "ready") {
+      await input.filesystem.rm(input.owner.backupDir, { force: true, recursive: true });
+    } else {
+      await input.filesystem.rm(input.runtimeDir, { force: true, recursive: true });
+      await input.filesystem.rename(input.owner.backupDir, input.runtimeDir);
+    }
+  }
+}
+
+async function claimLock(filesystem: RuntimeFilesystem, lockDir: string, claimDir: string): Promise<boolean> {
+  try { await filesystem.rename(lockDir, claimDir); return true; }
+  catch (error) { if (isMissingPathError(error)) return false; throw error; }
+}
+
+function isValidOwner(value: unknown, runtimeDir: string): value is SetupLockOwner {
+  if (typeof value !== "object" || value === null) return false;
+  const owner = value as Partial<SetupLockOwner>;
+  return owner.schemaVersion === "runtime-setup-lock.v1" && Number.isInteger(owner.pid) && typeof owner.token === "string"
+    && owner.stagingDir === `${runtimeDir}.staging-${owner.token}` && owner.backupDir === `${runtimeDir}.backup-${owner.token}`
+    && typeof owner.createdAt === "string" && typeof owner.leaseExpiresAt === "string" && Number.isFinite(new Date(owner.leaseExpiresAt).getTime());
+}
+
+async function publishOwner(filesystem: RuntimeFilesystem, lockDir: string, owner: SetupLockOwner): Promise<void> {
+  const temp = join(lockDir, `owner.${owner.token}.tmp`);
+  await filesystem.writeFile(temp, JSON.stringify(owner));
+  await filesystem.rename(temp, join(lockDir, "owner.json"));
+}
+
+const defaultHeartbeatFactory: HeartbeatFactory = (renew, intervalMs) => {
+  let pending = Promise.resolve();
+  const timer = setInterval(() => { pending = pending.then(renew); }, intervalMs);
+  return { stop: async () => { clearInterval(timer); await pending; } };
 }
 
 export function expectedRuntimeMarker(lockContents: string): string {
