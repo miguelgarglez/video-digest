@@ -8,6 +8,7 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 import {
   OutputRecoveryError,
+  recoverPendingOutputTransactions,
   writeIngestionOutputs,
   writeTranscriptOnlyOutputs,
 } from "./output-writer";
@@ -124,6 +125,44 @@ describe("writeIngestionOutputs", () => {
     expect(renamedDestinations.at(-1)).toBe(
       join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
     );
+  });
+
+  test("publishes a valid manifest before the first canonical rename", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-manifest-order-"));
+    let manifestAtFirstCanonicalRename: unknown;
+
+    await writeIngestionOutputs(
+      {
+        digest,
+        emailPreview: false,
+        outputDir,
+        transcript,
+        transcriptQuality: usableQuality,
+        video,
+      },
+      {
+        rename: async (from, to) => {
+          if (!from.includes("/.transactions/") && manifestAtFirstCanonicalRename === undefined) {
+            const names = await readdir(join(outputDir, ".transactions"));
+            manifestAtFirstCanonicalRename = JSON.parse(
+              await readFile(join(outputDir, ".transactions", names[0]!), "utf8"),
+            );
+          }
+          await rename(from, to);
+        },
+      },
+    );
+
+    expect(manifestAtFirstCanonicalRename).toMatchObject({
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({
+          hadOriginal: false,
+          targetPath: join(outputDir, "transcripts", `${video.videoId}.json`),
+        }),
+      ]),
+      schemaVersion: "output-transaction.v0",
+      videoId: video.videoId,
+    });
   });
 
   test("commits metadata last and cleans temporary siblings after a write failure", async () => {
@@ -313,6 +352,136 @@ describe("writeIngestionOutputs", () => {
       (path) => path.endsWith(".tmp") || path.endsWith(".backup"),
     );
     expect(leftovers).toEqual([unrestoredBackupPath.slice(outputDir.length + 1)]);
+  });
+});
+
+describe("recoverPendingOutputTransactions", () => {
+  test("restores an interrupted transaction and is idempotent", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-interrupted-"));
+    const token = "11111111-1111-4111-8111-111111111111";
+    const transactionDir = join(outputDir, ".transactions");
+    const manifestPath = join(transactionDir, `${token}.json`);
+    const jsonPath = join(outputDir, "transcripts", `${video.videoId}.json`);
+    const markdownPath = join(outputDir, "transcripts", `${video.videoId}.md`);
+    const textPath = join(outputDir, "transcripts", `${video.videoId}.txt`);
+    const jsonBackupPath = `${jsonPath}.${token}.backup`;
+    const jsonTempPath = `${jsonPath}.${token}.tmp`;
+    const markdownBackupPath = `${markdownPath}.${token}.backup`;
+    const markdownTempPath = `${markdownPath}.${token}.tmp`;
+    const textBackupPath = `${textPath}.${token}.backup`;
+    const textTempPath = `${textPath}.${token}.tmp`;
+
+    await Promise.all([
+      mkdir(transactionDir, { recursive: true }),
+      mkdir(dirname(jsonPath), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(jsonPath, "new json\n"),
+      writeFile(jsonBackupPath, "old json\n"),
+      writeFile(jsonTempPath, "staged json\n"),
+      writeFile(markdownPath, "new markdown\n"),
+      writeFile(markdownTempPath, "staged markdown\n"),
+      writeFile(textPath, "old text\n"),
+      writeFile(textTempPath, "staged text\n"),
+      writeFile(
+        manifestPath,
+        `${JSON.stringify({
+          artifacts: [
+            {
+              backupPath: jsonBackupPath,
+              hadOriginal: true,
+              targetPath: jsonPath,
+              tempPath: jsonTempPath,
+            },
+            {
+              backupPath: markdownBackupPath,
+              hadOriginal: false,
+              targetPath: markdownPath,
+              tempPath: markdownTempPath,
+            },
+            {
+              backupPath: textBackupPath,
+              hadOriginal: true,
+              targetPath: textPath,
+              tempPath: textTempPath,
+            },
+          ],
+          schemaVersion: "output-transaction.v0",
+          token,
+          videoId: video.videoId,
+        }, null, 2)}\n`,
+      ),
+    ]);
+
+    await recoverPendingOutputTransactions(outputDir);
+    await recoverPendingOutputTransactions(outputDir);
+
+    expect(await readFile(jsonPath, "utf8")).toBe("old json\n");
+    expect(await readFile(textPath, "utf8")).toBe("old text\n");
+    await expect(readFile(markdownPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    for (const ownedPath of [
+      jsonBackupPath,
+      jsonTempPath,
+      markdownBackupPath,
+      markdownTempPath,
+      textBackupPath,
+      textTempPath,
+      manifestPath,
+    ]) {
+      await expect(readFile(ownedPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  test("rejects an unsafe manifest without deleting any path", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-unsafe-manifest-"));
+    const unrelatedDir = await mkdtemp(join(tmpdir(), "video-digest-unrelated-"));
+    const unrelatedPath = join(unrelatedDir, "keep.txt");
+    const token = "22222222-2222-4222-8222-222222222222";
+    const transactionDir = join(outputDir, ".transactions");
+    const manifestPath = join(transactionDir, `${token}.json`);
+    await mkdir(transactionDir, { recursive: true });
+    await writeFile(unrelatedPath, "do not delete\n");
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        artifacts: [{
+          backupPath: `${unrelatedPath}.${token}.backup`,
+          hadOriginal: false,
+          targetPath: unrelatedPath,
+          tempPath: `${unrelatedPath}.${token}.tmp`,
+        }],
+        schemaVersion: "output-transaction.v0",
+        token,
+        videoId: video.videoId,
+      })}\n`,
+    );
+
+    const error = await recoverPendingOutputTransactions(outputDir).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(OutputRecoveryError);
+    expect(error.message).toContain("unsafe output transaction manifest");
+    expect(await readFile(unrelatedPath, "utf8")).toBe("do not delete\n");
+    expect(await readFile(manifestPath, "utf8")).toContain(token);
+  });
+
+  test("rejects an unexpected manifest schema without touching its target", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-schema-manifest-"));
+    const token = "33333333-3333-4333-8333-333333333333";
+    const targetPath = join(outputDir, "transcripts", `${video.videoId}.txt`);
+    const transactionDir = join(outputDir, ".transactions");
+    const manifestPath = join(transactionDir, `${token}.json`);
+    await Promise.all([
+      mkdir(dirname(targetPath), { recursive: true }),
+      mkdir(transactionDir, { recursive: true }),
+    ]);
+    await writeFile(targetPath, "keep target\n");
+    await writeFile(manifestPath, `${JSON.stringify({ schemaVersion: "output-transaction.v99" })}\n`);
+
+    await expect(recoverPendingOutputTransactions(outputDir)).rejects.toBeInstanceOf(
+      OutputRecoveryError,
+    );
+    expect(await readFile(targetPath, "utf8")).toBe("keep target\n");
+    expect(await readFile(manifestPath, "utf8")).toContain("output-transaction.v99");
   });
 });
 

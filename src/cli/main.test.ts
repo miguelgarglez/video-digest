@@ -828,6 +828,41 @@ describe("runCli", () => {
     });
   });
 
+  test("recovers pending output transactions before list, open, transcript, and ingest", async () => {
+    const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
+    const events: string[] = [];
+    const baseDependencies: CliDependencies = {
+      env: { OPENCODE_API_KEY: "configured-key" },
+      fetchTranscriptOnly: async () => {
+        events.push("transcript");
+        return completedTranscriptOnly();
+      },
+      ingestVideo: async () => {
+        events.push("ingest");
+        return completedIngestion();
+      },
+      outputDir,
+      recoverPendingOutputTransactions: async (path) => {
+        events.push(`recover:${path}`);
+      },
+    };
+    const io = { error: () => {}, log: () => {} };
+
+    await runCli(["list"], io, baseDependencies);
+    await runCli(["open", "latest", "--json"], io, baseDependencies);
+    await runCli(["transcript", "https://youtu.be/1ZgUcrR0K7I"], io, baseDependencies);
+    await runCli(["ingest", "https://youtu.be/1ZgUcrR0K7I"], io, baseDependencies);
+
+    expect(events).toEqual([
+      `recover:${outputDir}`,
+      `recover:${outputDir}`,
+      `recover:${outputDir}`,
+      "transcript",
+      `recover:${outputDir}`,
+      "ingest",
+    ]);
+  });
+
   test("resolves latest digest without opening it in json mode", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const logs: string[] = [];

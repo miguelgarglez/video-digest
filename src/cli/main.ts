@@ -30,6 +30,7 @@ import { TranscriptSourceError } from "../transcript/transcript-source";
 import { readFile } from "node:fs/promises";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, prepareRuntime, resolveUvExecutable, RuntimeSetupError, type RuntimeReadiness } from "./runtime-manager";
+import { recoverPendingOutputTransactions } from "../output/output-writer";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -50,6 +51,7 @@ export type CliDependencies = {
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
+  recoverPendingOutputTransactions?: (outputDir: string) => Promise<void>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
@@ -105,6 +107,11 @@ export async function runCli(
       envOutputDir: env.VIDEO_DIGEST_OUTPUT_DIR,
       savedArtifactLibrary: config?.artifactLibrary,
     });
+    if (["ingest", "list", "open", "transcript"].includes(result.value.command)) {
+      await (dependencies.recoverPendingOutputTransactions ?? recoverPendingOutputTransactions)(
+        artifactLibrary.path,
+      );
+    }
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
 
     if (result.value.command === "config") {
