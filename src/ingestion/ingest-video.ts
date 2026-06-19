@@ -9,9 +9,14 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import { scoreTranscriptQuality } from "../transcript/transcript-quality";
 import type { TranscriptSource } from "../transcript/transcript-source";
 import type { YouTubeVideo } from "../video/youtube-url";
+import {
+  fetchVideoMetadataBestEffort,
+  type VideoMetadataSource,
+} from "../video/video-metadata-source";
 
 export type IngestVideoInput = {
   emailPreview: boolean;
+  metadataSource?: VideoMetadataSource;
   onProgress?: (event: IngestionProgressEvent) => void;
   outputDir: string;
   summarizer: Summarizer;
@@ -49,6 +54,7 @@ export type IngestVideoResult =
 export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoResult> {
   emitProgress(input, "fetching-transcript");
   const transcript = await input.transcriptSource.fetch(input.video);
+  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video);
 
   emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);
@@ -61,6 +67,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
         message: "Transcript quality is unusable; digest generation was skipped.",
       },
       outputDir: input.outputDir,
+      metadata,
       transcriptQuality,
       video: input.video,
     });
@@ -86,6 +93,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   const paths = await writeIngestionOutputs({
     digest,
     emailPreview: input.emailPreview,
+    metadata,
     outputDir: input.outputDir,
     transcript,
     transcriptQuality,

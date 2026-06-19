@@ -31,6 +31,8 @@ import { readFile } from "node:fs/promises";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, prepareRuntime, resolveUvExecutable, RuntimeSetupError, type RuntimeReadiness } from "./runtime-manager";
 import { withRecoveredOutputLibrary } from "../output/output-writer";
+import type { VideoMetadataSource } from "../video/video-metadata-source";
+import { YouTubeOEmbedMetadataSource } from "../video/youtube-oembed-metadata-source";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -49,6 +51,7 @@ export type CliDependencies = {
   homeDir?: string;
   fetchTranscriptOnly?: (input: FetchTranscriptOnlyInput) => Promise<FetchTranscriptOnlyResult>;
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
+  metadataSource?: VideoMetadataSource;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
@@ -188,6 +191,7 @@ export async function runCli(
         fetchTranscript,
         io,
         json,
+        metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
         outputDir: artifactLibrary.path,
         spinnerIntervalMs: dependencies.spinnerIntervalMs,
         video,
@@ -214,6 +218,7 @@ export async function runCli(
           fetchTranscript: dependencies.fetchTranscriptOnly ?? fetchTranscriptOnly,
           io,
           json: false,
+          metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
           outputDir: artifactLibrary.path,
           spinnerIntervalMs: dependencies.spinnerIntervalMs,
           video,
@@ -232,6 +237,7 @@ export async function runCli(
 
     const ingestion = await ingest({
       emailPreview,
+      metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
       onProgress: progress?.handle,
       outputDir: artifactLibrary.path,
       summarizer: summarizerFactory(apiKey),
@@ -557,6 +563,7 @@ async function runTranscriptCommand(input: {
   fetchTranscript: (input: FetchTranscriptOnlyInput) => Promise<FetchTranscriptOnlyResult>;
   io: CliIO;
   json: boolean;
+  metadataSource: VideoMetadataSource;
   outputDir: string;
   spinnerIntervalMs?: number;
   video: { canonicalUrl: string; videoId: string };
@@ -566,6 +573,7 @@ async function runTranscriptCommand(input: {
   });
 
   const transcriptResult = await input.fetchTranscript({
+    metadataSource: input.metadataSource,
     onProgress: progress?.handle,
     outputDir: input.outputDir,
     transcriptSource: new PythonYoutubeTranscriptSource(),

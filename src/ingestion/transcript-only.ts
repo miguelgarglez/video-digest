@@ -6,9 +6,14 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import { scoreTranscriptQuality } from "../transcript/transcript-quality";
 import type { TranscriptSource } from "../transcript/transcript-source";
 import type { YouTubeVideo } from "../video/youtube-url";
+import {
+  fetchVideoMetadataBestEffort,
+  type VideoMetadataSource,
+} from "../video/video-metadata-source";
 import type { IngestionProgressEvent } from "./ingest-video";
 
 export type FetchTranscriptOnlyInput = {
+  metadataSource?: VideoMetadataSource;
   onProgress?: (event: IngestionProgressEvent) => void;
   outputDir: string;
   transcriptSource: TranscriptSource;
@@ -27,12 +32,14 @@ export async function fetchTranscriptOnly(
 ): Promise<FetchTranscriptOnlyResult> {
   emitProgress(input, "fetching-transcript");
   const transcript = await input.transcriptSource.fetch(input.video);
+  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video);
 
   emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);
 
   emitProgress(input, "writing-outputs");
   const paths = await writeTranscriptOnlyOutputs({
+    metadata,
     outputDir: input.outputDir,
     transcript,
     transcriptQuality,

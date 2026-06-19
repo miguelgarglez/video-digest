@@ -91,6 +91,83 @@ describe("ingestVideo", () => {
       });
     }
   });
+
+  test("persists enriched metadata for completed ingestion", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+    let metadataCalls = 0;
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          metadataCalls += 1;
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    expect(metadataCalls).toBe(1);
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: "A channel", videoTitle: "A title" },
+      });
+      expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("# A title");
+    }
+  });
+
+  test("persists enriched metadata for unusable transcripts without generating a digest", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource({ ...usableTranscript(), segments: [] }),
+      video,
+    });
+
+    expect(result.status).toBe("unusable-transcript");
+    if (result.status === "unusable-transcript") {
+      expect(JSON.parse(await readFile(result.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: "A channel", videoTitle: "A title" },
+      });
+    }
+  });
+
+  test("continues digest creation when metadata lookup fails", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          throw new Error("offline");
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: null, videoTitle: null },
+      });
+    }
+  });
 });
 
 const video: YouTubeVideo = {

@@ -44,7 +44,58 @@ describe("fetchTranscriptOnly", () => {
       "This is a substantial transcript segment with useful content.",
     );
   });
+
+  test("persists one best-effort metadata lookup in JSON and Markdown", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
+    let metadataCalls = 0;
+
+    const result = await fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          metadataCalls += 1;
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    expect(metadataCalls).toBe(1);
+    expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+      video: { channel: "A channel", videoTitle: "A title" },
+    });
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain(
+      "# A title\n\nURL: https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+    );
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("Channel: A channel");
+  });
+
+  test("continues with null metadata when lookup fails", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
+
+    const result = await fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          throw new Error("offline");
+        },
+      },
+      outputDir,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+      video: { channel: null, videoTitle: null },
+    });
+  });
 });
+
+const video = {
+  canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+  videoId: "1ZgUcrR0K7I",
+};
 
 const transcript: Transcript = {
   language: "en",

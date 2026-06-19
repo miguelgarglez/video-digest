@@ -5,6 +5,7 @@ import type { Digest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
+import type { VideoMetadata } from "../video/video-metadata-source";
 import { renderTranscriptMarkdown, renderTranscriptText } from "./transcript-renderer";
 import { withProcessLock } from "../storage/process-lock";
 
@@ -13,6 +14,7 @@ const TRANSACTION_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89
 export type IngestionOutputInput = {
   digest: Digest;
   emailPreview: boolean;
+  metadata?: VideoMetadata;
   outputDir: string;
   transcript: Transcript;
   transcriptQuality: TranscriptQuality;
@@ -29,6 +31,7 @@ export type IngestionOutputPaths = {
 };
 
 export type TranscriptOnlyOutputInput = {
+  metadata?: VideoMetadata;
   outputDir: string;
   transcript: Transcript;
   transcriptQuality: TranscriptQuality;
@@ -89,6 +92,7 @@ export type FailedIngestionMetadataInput = {
     message: string;
   };
   outputDir: string;
+  metadata?: VideoMetadata;
   transcriptQuality: TranscriptQuality;
   video: YouTubeVideo;
 };
@@ -214,7 +218,7 @@ async function writeFailedIngestionMetadataLocked(
             metadataSchemaVersion: "metadata.v0",
             processedAt: new Date().toISOString(),
             transcriptQuality: input.transcriptQuality,
-            video: buildVideoMetadata(input.video, input.transcriptQuality),
+            video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
           },
           null,
           2,
@@ -241,17 +245,21 @@ function buildTranscriptOnlyMetadata(input: TranscriptOnlyOutputInput) {
     mode: "transcript-only",
     processedAt: new Date().toISOString(),
     transcriptQuality: input.transcriptQuality,
-    video: buildVideoMetadata(input.video, input.transcriptQuality),
+    video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
   };
 }
 
-function buildVideoMetadata(video: YouTubeVideo, transcriptQuality: TranscriptQuality) {
+function buildVideoMetadata(
+  video: YouTubeVideo,
+  transcriptQuality: TranscriptQuality,
+  metadata?: VideoMetadata,
+) {
   return {
     canonicalUrl: video.canonicalUrl,
-    channel: null,
+    channel: metadata?.channel ?? null,
     durationSeconds: transcriptQuality.durationSeconds,
     videoId: video.videoId,
-    videoTitle: null,
+    videoTitle: metadata?.title ?? null,
   };
 }
 
@@ -744,7 +752,7 @@ function buildMetadata(input: IngestionOutputInput) {
     metadataSchemaVersion: "metadata.v0",
     processedAt: new Date().toISOString(),
     transcriptQuality: input.transcriptQuality,
-    video: buildVideoMetadata(input.video, input.transcriptQuality),
+    video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
   };
 }
 
