@@ -122,7 +122,7 @@ describe("writeIngestionOutputs", () => {
       },
     );
 
-    expect(renamedDestinations.at(-1)).toBe(
+    expect(renamedDestinations.filter((path) => !path.includes("/.transactions/")).at(-1)).toBe(
       join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
     );
   });
@@ -161,6 +161,7 @@ describe("writeIngestionOutputs", () => {
         }),
       ]),
       schemaVersion: "output-transaction.v0",
+      state: "prepared",
       videoId: video.videoId,
     });
   });
@@ -353,6 +354,42 @@ describe("writeIngestionOutputs", () => {
     );
     expect(leftovers).toEqual([unrestoredBackupPath.slice(outputDir.length + 1)]);
   });
+
+  test("restores old artifacts when the committed manifest rewrite is interrupted", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-commit-rewrite-"));
+    const oldArtifacts = artifactContents(outputDir);
+    await seedArtifacts(oldArtifacts);
+
+    await expect(
+      writeIngestionOutputs(
+        {
+          digest,
+          emailPreview: true,
+          outputDir,
+          transcript,
+          transcriptQuality: usableQuality,
+          video,
+        },
+        {
+          rename: async (from, to) => {
+            if (from.includes("/.transactions/") && from.endsWith(".commit.tmp")) {
+              throw new Error("simulated commit manifest interruption");
+            }
+            await rename(from, to);
+          },
+        },
+      ),
+    ).rejects.toThrow("simulated commit manifest interruption");
+
+    for (const [path, contents] of oldArtifacts) {
+      expect(await readFile(path, "utf8")).toBe(contents);
+    }
+    expect(
+      (await readdir(outputDir, { recursive: true })).filter(
+        (path) => path.endsWith(".tmp") || path.endsWith(".backup") || path.endsWith(".json.tmp"),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("recoverPendingOutputTransactions", () => {
@@ -407,6 +444,7 @@ describe("recoverPendingOutputTransactions", () => {
             },
           ],
           schemaVersion: "output-transaction.v0",
+          state: "prepared",
           token,
           videoId: video.videoId,
         }, null, 2)}\n`,
@@ -451,6 +489,7 @@ describe("recoverPendingOutputTransactions", () => {
           tempPath: `${unrelatedPath}.${token}.tmp`,
         }],
         schemaVersion: "output-transaction.v0",
+        state: "prepared",
         token,
         videoId: video.videoId,
       })}\n`,
@@ -482,6 +521,58 @@ describe("recoverPendingOutputTransactions", () => {
     );
     expect(await readFile(targetPath, "utf8")).toBe("keep target\n");
     expect(await readFile(manifestPath, "utf8")).toContain("output-transaction.v99");
+  });
+
+  test("finishes a committed transaction without restoring partially deleted backups", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-committed-"));
+    const token = "44444444-4444-4444-8444-444444444444";
+    const transactionDir = join(outputDir, ".transactions");
+    const manifestPath = join(transactionDir, `${token}.json`);
+    const jsonPath = join(outputDir, "transcripts", `${video.videoId}.json`);
+    const textPath = join(outputDir, "transcripts", `${video.videoId}.txt`);
+    const jsonBackupPath = `${jsonPath}.${token}.backup`;
+    const jsonTempPath = `${jsonPath}.${token}.tmp`;
+    const textBackupPath = `${textPath}.${token}.backup`;
+    const textTempPath = `${textPath}.${token}.tmp`;
+    await Promise.all([
+      mkdir(transactionDir, { recursive: true }),
+      mkdir(dirname(jsonPath), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(jsonPath, "new json\n"),
+      writeFile(textPath, "new text\n"),
+      writeFile(jsonBackupPath, "old json\n"),
+      writeFile(jsonTempPath, "staged json\n"),
+      writeFile(textTempPath, "staged text\n"),
+      writeFile(manifestPath, `${JSON.stringify({
+        artifacts: [
+          {
+            backupPath: jsonBackupPath,
+            hadOriginal: true,
+            targetPath: jsonPath,
+            tempPath: jsonTempPath,
+          },
+          {
+            backupPath: textBackupPath,
+            hadOriginal: true,
+            targetPath: textPath,
+            tempPath: textTempPath,
+          },
+        ],
+        schemaVersion: "output-transaction.v0",
+        state: "committed",
+        token,
+        videoId: video.videoId,
+      }, null, 2)}\n`),
+    ]);
+
+    await recoverPendingOutputTransactions(outputDir);
+
+    expect(await readFile(jsonPath, "utf8")).toBe("new json\n");
+    expect(await readFile(textPath, "utf8")).toBe("new text\n");
+    for (const ownedPath of [jsonBackupPath, jsonTempPath, textBackupPath, textTempPath, manifestPath]) {
+      await expect(readFile(ownedPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 });
 

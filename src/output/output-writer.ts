@@ -236,6 +236,7 @@ type OutputTransactionArtifact = {
 type OutputTransactionManifest = {
   artifacts: OutputTransactionArtifact[];
   schemaVersion: "output-transaction.v0";
+  state: "committed" | "prepared";
   token: string;
   videoId: string;
 };
@@ -281,13 +282,17 @@ export async function recoverPendingOutputTransactions(
     let recoveryFailed = false;
     for (const artifact of manifest.artifacts) {
       try {
-        if (artifact.hadOriginal) {
-          if (await fileOperations.pathExists(artifact.backupPath)) {
-            await unlinkIfPresent(artifact.targetPath, fileOperations);
-            await fileOperations.rename(artifact.backupPath, artifact.targetPath);
-          }
+        if (manifest.state === "committed") {
+          await unlinkIfPresent(artifact.backupPath, fileOperations);
         } else {
-          await unlinkIfPresent(artifact.targetPath, fileOperations);
+          if (artifact.hadOriginal) {
+            if (await fileOperations.pathExists(artifact.backupPath)) {
+              await unlinkIfPresent(artifact.targetPath, fileOperations);
+              await fileOperations.rename(artifact.backupPath, artifact.targetPath);
+            }
+          } else {
+            await unlinkIfPresent(artifact.targetPath, fileOperations);
+          }
         }
       } catch (error) {
         recoveryFailed = true;
@@ -302,6 +307,7 @@ export async function recoverPendingOutputTransactions(
     if (recoveryFailed) {
       throw new OutputRecoveryError(recoveryFailures, new Error("Output recovery incomplete"));
     }
+    await unlinkIfPresent(`${manifestPath}.commit.tmp`, fileOperations);
     await fileOperations.unlink(manifestPath);
   }
 }
@@ -324,6 +330,7 @@ async function replaceArtifactsTransactionally(
   const transactionDir = join(outputDir, ".transactions");
   const manifestPath = join(transactionDir, `${operationId}.json`);
   const manifestTempPath = `${manifestPath}.tmp`;
+  const committedManifestTempPath = `${manifestPath}.commit.tmp`;
   let manifestPublished = false;
 
   try {
@@ -345,6 +352,7 @@ async function replaceArtifactsTransactionally(
         })),
       ),
       schemaVersion: "output-transaction.v0",
+      state: "prepared",
       token: operationId,
       videoId,
     };
@@ -362,6 +370,16 @@ async function replaceArtifactsTransactionally(
     for (const entry of temporaryEntries) {
       await fileOperations.rename(entry.temporaryPath, entry.path);
     }
+
+    const committedManifest: OutputTransactionManifest = {
+      ...manifest,
+      state: "committed",
+    };
+    await fileOperations.writeFile(
+      committedManifestTempPath,
+      `${JSON.stringify(committedManifest, null, 2)}\n`,
+    );
+    await fileOperations.rename(committedManifestTempPath, manifestPath);
 
     const cleanupResults = await Promise.allSettled(
       backups.map(({ backupPath }) => fileOperations.unlink(backupPath)),
@@ -392,6 +410,7 @@ async function replaceArtifactsTransactionally(
       [
         ...temporaryEntries.map((entry) => fileOperations.unlink(entry.temporaryPath)),
         fileOperations.unlink(manifestTempPath),
+        fileOperations.unlink(committedManifestTempPath),
       ],
     );
     throw error;
@@ -404,8 +423,9 @@ function validateManifest(
   manifestName: string,
 ): OutputTransactionManifest {
   if (!isRecord(value)
-    || !hasExactKeys(value, ["artifacts", "schemaVersion", "token", "videoId"])
+    || !hasExactKeys(value, ["artifacts", "schemaVersion", "state", "token", "videoId"])
     || value.schemaVersion !== "output-transaction.v0"
+    || (value.state !== "prepared" && value.state !== "committed")
     || typeof value.token !== "string"
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.token)
     || manifestName !== `${value.token}.json`
