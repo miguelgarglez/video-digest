@@ -18,10 +18,8 @@ export type RuntimeCommandRunner = (
 export type PrepareRuntimeInput = {
   clock?: () => Date;
   filesystem?: RuntimeFilesystem;
+  getProcessIdentity?: (pid: number) => Promise<string | null>;
   idFactory?: () => string;
-  heartbeatFactory?: HeartbeatFactory;
-  heartbeatIntervalMs?: number;
-  leaseDurationMs?: number;
   lockContents: string;
   pythonDir: string;
   pid?: number;
@@ -30,8 +28,6 @@ export type PrepareRuntimeInput = {
   uvPath: string;
 };
 
-export type HeartbeatFactory = (renew: () => Promise<void>, intervalMs: number) => { stop: () => Promise<void> };
-
 export class RuntimeSetupError extends Error {
   constructor(public readonly code: "already-running" | "recovery-required", message: string) {
     super(message);
@@ -39,7 +35,7 @@ export class RuntimeSetupError extends Error {
   }
 }
 
-type SetupLockOwner = { schemaVersion: "runtime-setup-lock.v1"; pid: number; token: string; stagingDir: string; backupDir: string; createdAt: string; leaseExpiresAt: string };
+type SetupLockOwner = { schemaVersion: "runtime-setup-lock.v2"; pid: number; processIdentity: string; token: string; stagingDir: string; backupDir: string; createdAt: string };
 
 export type RuntimeFilesystem = {
   access: typeof access;
@@ -60,18 +56,15 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
   const filesystem = input.filesystem ?? defaultRuntimeFilesystem;
   const clock = input.clock ?? (() => new Date());
   const pid = input.pid ?? process.pid;
-  const leaseDurationMs = input.leaseDurationMs ?? 60_000;
+  const getProcessIdentity = input.getProcessIdentity ?? defaultProcessIdentity;
   const claimDir = `${lockDir}.claim-${id}`;
 
   await filesystem.mkdir(dirname(input.runtimeDir), { recursive: true });
   const createdAt = clock().toISOString();
-  let owner: SetupLockOwner = { schemaVersion: "runtime-setup-lock.v1", pid, token: id, stagingDir, backupDir, createdAt, leaseExpiresAt: new Date(clock().getTime() + leaseDurationMs).toISOString() };
-  await acquireSetupLock({ claimDir, clock, filesystem, lockDir, lockContents: input.lockContents, owner, runtimeDir: input.runtimeDir });
-  const renew = async () => {
-    owner = { ...owner, leaseExpiresAt: new Date(clock().getTime() + leaseDurationMs).toISOString() };
-    await publishOwner(filesystem, lockDir, owner);
-  };
-  const heartbeat = (input.heartbeatFactory ?? defaultHeartbeatFactory)(renew, input.heartbeatIntervalMs ?? 20_000);
+  const processIdentity = await getProcessIdentity(pid);
+  if (!processIdentity) throw new RuntimeSetupError("recovery-required", "Could not establish setup process identity safely.");
+  const owner: SetupLockOwner = { schemaVersion: "runtime-setup-lock.v2", pid, processIdentity, token: id, stagingDir, backupDir, createdAt };
+  await acquireSetupLock({ claimDir, clock, filesystem, getProcessIdentity, lockDir, lockContents: input.lockContents, owner, runtimeDir: input.runtimeDir });
 
   let backupCreated = false;
   let backupConsumed = false;
@@ -88,16 +81,19 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
     if ((await inspectRuntime(stagingDir, input.lockContents)).status !== "ready") {
       throw new Error("Prepared Python runtime is not ready.");
     }
+    await assertLockOwnership(lockDir, owner);
     const hadRuntime = await pathExists(input.runtimeDir, filesystem.access);
     if (hadRuntime) {
       await filesystem.rename(input.runtimeDir, backupDir);
       backupCreated = true;
     }
     try {
+      await assertLockOwnership(lockDir, owner);
       await filesystem.rename(stagingDir, input.runtimeDir);
     } catch (error) {
       if (hadRuntime) {
         try {
+          await assertLockOwnership(lockDir, owner);
           await filesystem.rename(backupDir, input.runtimeDir);
           backupConsumed = true;
         } catch {
@@ -107,9 +103,11 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
       throw error;
     }
     if ((await inspectRuntime(input.runtimeDir, input.lockContents)).status !== "ready") {
+      await assertLockOwnership(lockDir, owner);
       await filesystem.rm(input.runtimeDir, { force: true, recursive: true });
       if (hadRuntime) {
         try {
+          await assertLockOwnership(lockDir, owner);
           await filesystem.rename(backupDir, input.runtimeDir);
           backupConsumed = true;
         } catch {
@@ -121,14 +119,13 @@ export async function prepareRuntime(input: PrepareRuntimeInput): Promise<void> 
     await filesystem.rm(backupDir, { force: true, recursive: true });
     backupConsumed = true;
   } finally {
-    await heartbeat.stop();
     await filesystem.rm(stagingDir, { force: true, recursive: true });
     if (!backupCreated || backupConsumed) await filesystem.rm(backupDir, { force: true, recursive: true });
-    await filesystem.rm(lockDir, { force: true, recursive: true });
+    await releaseOwnedLock(filesystem, lockDir, owner);
   }
 }
 
-async function acquireSetupLock(input: { claimDir: string; clock: () => Date; filesystem: RuntimeFilesystem; lockDir: string; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
+async function acquireSetupLock(input: { claimDir: string; clock: () => Date; filesystem: RuntimeFilesystem; getProcessIdentity: (pid: number) => Promise<string | null>; lockDir: string; lockContents: string; owner: SetupLockOwner; runtimeDir: string }): Promise<void> {
   while (true) {
     try {
       await input.filesystem.mkdir(input.lockDir);
@@ -151,8 +148,11 @@ async function acquireSetupLock(input: { claimDir: string; clock: () => Date; fi
         throw new RuntimeSetupError("recovery-required", `Runtime setup recovery is required. Preserved malformed lock at ${input.claimDir}`);
       }
     }
-    if (owner && new Date(owner.leaseExpiresAt).getTime() > input.clock().getTime()) {
-      throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
+    if (owner) {
+      let currentIdentity: string | null;
+      try { currentIdentity = await input.getProcessIdentity(owner.pid); }
+      catch { throw new RuntimeSetupError("already-running", "Runtime setup is already in progress; owner identity could not be verified safely."); }
+      if (currentIdentity === owner.processIdentity) throw new RuntimeSetupError("already-running", "Runtime setup is already in progress.");
     }
     if (missing) {
       const age = input.clock().getTime() - (await stat(input.lockDir)).mtimeMs;
@@ -185,9 +185,9 @@ async function claimLock(filesystem: RuntimeFilesystem, lockDir: string, claimDi
 function isValidOwner(value: unknown, runtimeDir: string): value is SetupLockOwner {
   if (typeof value !== "object" || value === null) return false;
   const owner = value as Partial<SetupLockOwner>;
-  return owner.schemaVersion === "runtime-setup-lock.v1" && Number.isInteger(owner.pid) && typeof owner.token === "string"
+  return owner.schemaVersion === "runtime-setup-lock.v2" && Number.isInteger(owner.pid) && typeof owner.processIdentity === "string" && typeof owner.token === "string"
     && owner.stagingDir === `${runtimeDir}.staging-${owner.token}` && owner.backupDir === `${runtimeDir}.backup-${owner.token}`
-    && typeof owner.createdAt === "string" && typeof owner.leaseExpiresAt === "string" && Number.isFinite(new Date(owner.leaseExpiresAt).getTime());
+    && typeof owner.createdAt === "string";
 }
 
 async function publishOwner(filesystem: RuntimeFilesystem, lockDir: string, owner: SetupLockOwner): Promise<void> {
@@ -196,10 +196,39 @@ async function publishOwner(filesystem: RuntimeFilesystem, lockDir: string, owne
   await filesystem.rename(temp, join(lockDir, "owner.json"));
 }
 
-const defaultHeartbeatFactory: HeartbeatFactory = (renew, intervalMs) => {
-  let pending = Promise.resolve();
-  const timer = setInterval(() => { pending = pending.then(renew); }, intervalMs);
-  return { stop: async () => { clearInterval(timer); await pending; } };
+async function assertLockOwnership(lockDir: string, owner: SetupLockOwner): Promise<void> {
+  try {
+    const current = JSON.parse(await readFile(join(lockDir, "owner.json"), "utf8")) as Partial<SetupLockOwner>;
+    if (current.token === owner.token && current.processIdentity === owner.processIdentity) return;
+  } catch {}
+  throw new RuntimeSetupError("recovery-required", `Runtime setup lock ownership was lost. Inspect ${lockDir}`);
+}
+
+async function releaseOwnedLock(filesystem: RuntimeFilesystem, lockDir: string, owner: SetupLockOwner): Promise<void> {
+  await assertLockOwnership(lockDir, owner);
+  const releaseDir = `${lockDir}.release-${owner.token}`;
+  try { await filesystem.rename(lockDir, releaseDir); }
+  catch { throw new RuntimeSetupError("recovery-required", `Runtime setup lock ownership was lost. Inspect ${lockDir}`); }
+  try {
+    await assertLockOwnership(releaseDir, owner);
+  } catch {
+    try { await filesystem.rename(releaseDir, lockDir); } catch {}
+    throw new RuntimeSetupError("recovery-required", `Runtime setup lock changed during release. Inspect ${releaseDir}`);
+  }
+  await filesystem.rm(releaseDir, { force: true, recursive: true });
+}
+
+async function defaultProcessIdentity(pid: number): Promise<string | null> {
+  const env: Record<string, string> = {};
+  for (const key of ["PATH", "LANG", "LC_ALL"] as const) if (process.env[key]) env[key] = process.env[key]!;
+  const child = Bun.spawn(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
+    env,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  const identity = stdout.trim();
+  return exitCode === 0 && identity ? `${pid}:${identity}` : null;
 }
 
 export function expectedRuntimeMarker(lockContents: string): string {

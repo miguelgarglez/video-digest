@@ -86,11 +86,11 @@ describe("prepareRuntime", () => {
     const runtimeDir = join(root, "python"); let release!: () => void; let markStarted!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { markStarted = resolve; });
-    const first = prepareRuntime({ idFactory: () => "first", pid: 111, clock: () => new Date("2026-01-01T00:00:00Z"), lockContents: "lock", pythonDir: root, runtimeDir,
+    const first = prepareRuntime({ idFactory: () => "first", pid: 111, getProcessIdentity: async () => "111:start", clock: () => new Date("2026-01-01T00:00:00Z"), lockContents: "lock", pythonDir: root, runtimeDir,
       runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); markStarted(); await blocked; return { exitCode: 0, stderr: "", stdout: "" }; }, uvPath: "uv" });
     await started;
-    expect(JSON.parse(await readFile(join(`${runtimeDir}.setup-lock`, "owner.json"), "utf8"))).toEqual({ schemaVersion: "runtime-setup-lock.v1", pid: 111, token: "first", stagingDir: `${runtimeDir}.staging-first`, backupDir: `${runtimeDir}.backup-first`, createdAt: "2026-01-01T00:00:00.000Z", leaseExpiresAt: "2026-01-01T00:01:00.000Z" });
-    await expect(prepareRuntime({ idFactory: () => "second", clock: () => new Date("2026-01-01T00:00:30Z"), lockContents: "lock", pythonDir: root, runtimeDir,
+    expect(JSON.parse(await readFile(join(`${runtimeDir}.setup-lock`, "owner.json"), "utf8"))).toEqual({ schemaVersion: "runtime-setup-lock.v2", pid: 111, processIdentity: "111:start", token: "first", stagingDir: `${runtimeDir}.staging-first`, backupDir: `${runtimeDir}.backup-first`, createdAt: "2026-01-01T00:00:00.000Z" });
+    await expect(prepareRuntime({ idFactory: () => "second", getProcessIdentity: async () => "111:start", clock: () => new Date("2036-01-01T00:00:30Z"), lockContents: "lock", pythonDir: root, runtimeDir,
       runner: async () => { throw new Error("must not run"); }, uvPath: "uv" })).rejects.toThrow("already in progress");
     expect(await readFile(join(`${runtimeDir}.staging-first`, "bin/python"), "utf8")).toBe("");
     release(); await first;
@@ -160,8 +160,8 @@ describe("prepareRuntime", () => {
     const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`;
     const stagingDir = `${runtimeDir}.staging-dead`; const backupDir = `${runtimeDir}.backup-dead`;
     await mkdir(lockDir); await mkdir(stagingDir); await mkdir(backupDir); await writeFile(join(backupDir, "sentinel"), "recovered");
-    await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v1", pid: 123, token: "dead", stagingDir, backupDir, createdAt: "2020-01-01T00:00:00.000Z", leaseExpiresAt: "2020-01-01T00:01:00.000Z" }));
-    await expect(prepareRuntime({ idFactory: () => "new", pid: 456, clock: () => new Date("2026-01-01"), lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => ({ exitCode: 1, stderr: "stop", stdout: "" }) })).rejects.toThrow("stop");
+    await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v2", pid: 123, processIdentity: "123:old", token: "dead", stagingDir, backupDir, createdAt: "2020-01-01T00:00:00.000Z" }));
+    await expect(prepareRuntime({ idFactory: () => "new", pid: 456, getProcessIdentity: async (pid) => pid === 123 ? "123:reused" : "456:new", clock: () => new Date("2026-01-01"), lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async () => ({ exitCode: 1, stderr: "stop", stdout: "" }) })).rejects.toThrow("stop");
     expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("recovered");
     await expect(access(stagingDir)).rejects.toThrow();
   });
@@ -175,9 +175,9 @@ describe("prepareRuntime", () => {
 
   test("two stale recoverers yield one live owner and never delete its lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`;
-    await mkdir(lockDir); await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v1", pid: 1, token: "old", stagingDir: `${runtimeDir}.staging-old`, backupDir: `${runtimeDir}.backup-old`, createdAt: "2020-01-01T00:00:00.000Z", leaseExpiresAt: "2020-01-01T00:01:00.000Z" }));
+    await mkdir(lockDir); await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v2", pid: 1, processIdentity: "1:dead", token: "old", stagingDir: `${runtimeDir}.staging-old`, backupDir: `${runtimeDir}.backup-old`, createdAt: "2020-01-01T00:00:00.000Z" }));
     let release!: () => void; const blocked = new Promise<void>((resolve) => { release = resolve; }); let runningToken = "";
-    const launch = (token: string) => prepareRuntime({ idFactory: () => token, clock: () => new Date("2026-01-01"), lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { runningToken = token; await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await blocked; return { exitCode: 0, stderr: "", stdout: "" }; } });
+    const launch = (token: string) => prepareRuntime({ idFactory: () => token, getProcessIdentity: async (pid) => pid === 1 ? null : `${pid}:current`, clock: () => new Date("2026-01-01"), lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { runningToken = token; await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await blocked; return { exitCode: 0, stderr: "", stdout: "" }; } });
     const attempts = [launch("a"), launch("b")];
     const loser = await Promise.race(attempts.map((attempt) => attempt.then(() => null, (error) => error)));
     expect(loser).toBeInstanceOf(RuntimeSetupError); expect(loser.code).toBe("already-running");
@@ -195,14 +195,10 @@ describe("prepareRuntime", () => {
     expect(await readFile(join(`${lockDir}.claim-claim`, "owner.json"), "utf8")).toBe("{broken");
   });
 
-  test("renews the published lease through the heartbeat and stops it before unlock", async () => {
-    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); let now = new Date("2026-01-01T00:00:00Z"); let renew!: () => Promise<void>; let stopped = false; let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
-    const setup = prepareRuntime({ idFactory: () => "beat", clock: () => now, heartbeatFactory: (callback) => { renew = callback; return { stop: async () => { stopped = true; } }; }, lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await blocked; return { exitCode: 0, stderr: "", stdout: "" }; } });
-    while (!renew) await new Promise((resolve) => setTimeout(resolve, 0));
-    now = new Date("2026-01-01T00:00:30Z"); await renew();
-    expect(JSON.parse(await readFile(join(`${runtimeDir}.setup-lock`, "owner.json"), "utf8")).leaseExpiresAt).toBe("2026-01-01T00:01:30.000Z");
-    release(); await setup; expect(stopped).toBe(true);
+  test("aborts before swap when canonical lock ownership was replaced", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-prepare-")); roots.push(root); const runtimeDir = join(root, "python"); const lockDir = `${runtimeDir}.setup-lock`; await mkdir(runtimeDir); await writeFile(join(runtimeDir, "sentinel"), "old");
+    const error = await prepareRuntime({ idFactory: () => "old", getProcessIdentity: async () => "self", lockContents: "lock", pythonDir: root, runtimeDir, uvPath: "uv", runner: async (_command, options) => { await mkdir(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin"), { recursive: true }); await writeFile(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), ""); await chmod(join(options.env.UV_PROJECT_ENVIRONMENT!, "bin/python"), 0o755); await rename(lockDir, `${lockDir}.stolen`); await mkdir(lockDir); await writeFile(join(lockDir, "owner.json"), JSON.stringify({ schemaVersion: "runtime-setup-lock.v2", pid: 999, processIdentity: "replacement", token: "new", stagingDir: `${runtimeDir}.staging-new`, backupDir: `${runtimeDir}.backup-new`, createdAt: new Date().toISOString() })); return { exitCode: 0, stderr: "", stdout: "" }; } }).catch((value) => value);
+    expect(error).toBeInstanceOf(RuntimeSetupError); expect(await readFile(join(runtimeDir, "sentinel"), "utf8")).toBe("old"); expect(JSON.parse(await readFile(join(lockDir, "owner.json"), "utf8")).token).toBe("new");
   });
 });
 
