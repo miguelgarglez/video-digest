@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -669,6 +669,45 @@ describe("recoverPendingOutputTransactions", () => {
     expect(await readFile(join(outsideDir, `${video.videoId}.json`), "utf8")).toBe("victim\n");
     expect(await readFile(join(outsideDir, `${video.videoId}.json.${token}.backup`), "utf8"))
       .toBe("backup\n");
+  });
+
+  test("fails closed when an artifact parent identity changes before mutation", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-parent-race-"));
+    const token = "88888888-8888-4888-8888-888888888888";
+    const transactionDir = join(outputDir, ".transactions");
+    const transcriptDir = join(outputDir, "transcripts");
+    const targetPath = join(transcriptDir, `${video.videoId}.json`);
+    const backupPath = `${targetPath}.${token}.backup`;
+    const tempPath = `${targetPath}.${token}.tmp`;
+    await Promise.all([
+      mkdir(transactionDir, { recursive: true }),
+      mkdir(transcriptDir, { recursive: true }),
+    ]);
+    await Promise.all([writeFile(targetPath, "new\n"), writeFile(backupPath, "old\n")]);
+    await writeFile(join(transactionDir, `${token}.json`), `${JSON.stringify({
+      artifacts: [{ backupPath, hadOriginal: true, targetPath, tempPath }],
+      schemaVersion: "output-transaction.v0",
+      state: "prepared",
+      token,
+      videoId: video.videoId,
+    })}\n`);
+    let transcriptParentChecks = 0;
+
+    await expect(recoverPendingOutputTransactions(outputDir, {
+      lstat: async (path) => {
+        const stats = await lstat(path);
+        if (path !== transcriptDir) return stats;
+        transcriptParentChecks += 1;
+        return {
+          dev: stats.dev,
+          ino: stats.ino + (transcriptParentChecks >= 5 ? 1 : 0),
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+        };
+      },
+    })).rejects.toBeInstanceOf(OutputRecoveryError);
+    expect(await readFile(targetPath, "utf8")).toBe("new\n");
+    expect(await readFile(backupPath, "utf8")).toBe("old\n");
   });
 
   test("removes only owned orphan manifest temp files", async () => {

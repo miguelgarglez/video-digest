@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { access, lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Digest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
@@ -43,7 +43,7 @@ export type TranscriptOnlyOutputPaths = {
 };
 
 export type OutputFileOperations = {
-  lstat(path: string): Promise<{ isSymbolicLink(): boolean }>;
+  lstat(path: string): Promise<{ dev: number; ino: number; isDirectory(): boolean; isSymbolicLink(): boolean }>;
   pathExists(path: string): Promise<boolean>;
   realpath(path: string): Promise<string>;
   readDirectory(path: string): Promise<string[]>;
@@ -334,7 +334,11 @@ async function recoverPendingOutputTransactionsLocked(
     }),
   );
 
-  await validateRecoveryPathsSafe(outputDir, manifests.map(({ manifest }) => manifest), fileOperations);
+  const safeParents = await validateRecoveryPathsSafe(
+    outputDir,
+    manifests.map(({ manifest }) => manifest),
+    fileOperations,
+  );
   const manifestNameSet = new Set(manifestNames);
   for (const name of directoryNames) {
     const match = name.match(/^([0-9a-f-]{36})\.json(?:\.commit)?\.tmp$/i);
@@ -350,15 +354,15 @@ async function recoverPendingOutputTransactionsLocked(
     for (const artifact of manifest.artifacts) {
       try {
         if (manifest.state === "committed") {
-          await unlinkIfPresent(artifact.backupPath, fileOperations);
+            await safeUnlinkIfPresent(artifact.backupPath, safeParents, fileOperations);
         } else {
           if (artifact.hadOriginal) {
             if (await fileOperations.pathExists(artifact.backupPath)) {
-              await unlinkIfPresent(artifact.targetPath, fileOperations);
-              await fileOperations.rename(artifact.backupPath, artifact.targetPath);
+              await safeUnlinkIfPresent(artifact.targetPath, safeParents, fileOperations);
+              await safeRename(artifact.backupPath, artifact.targetPath, safeParents, fileOperations);
             }
           } else {
-            await unlinkIfPresent(artifact.targetPath, fileOperations);
+            await safeUnlinkIfPresent(artifact.targetPath, safeParents, fileOperations);
           }
         }
       } catch (error) {
@@ -368,7 +372,7 @@ async function recoverPendingOutputTransactionsLocked(
           : [];
         recoveryFailures.push(...preserved);
       } finally {
-        await unlinkIfPresent(artifact.tempPath, fileOperations);
+        await safeUnlinkIfPresent(artifact.tempPath, safeParents, fileOperations);
       }
     }
     if (recoveryFailed) {
@@ -401,7 +405,7 @@ async function replaceArtifactsTransactionally(
   let manifestPublished = false;
 
   try {
-    await validateRecoveryPathsSafe(
+    const safeParents = await validateRecoveryPathsSafe(
       outputDir,
       [{
         artifacts: destinations.map((targetPath) => ({
@@ -418,7 +422,12 @@ async function replaceArtifactsTransactionally(
       fileOperations,
     );
     const writeResults = await Promise.allSettled(
-      temporaryEntries.map((entry) => fileOperations.writeFile(entry.temporaryPath, entry.contents)),
+      temporaryEntries.map((entry) => safeWriteFile(
+        entry.temporaryPath,
+        entry.contents,
+        safeParents,
+        fileOperations,
+      )),
     );
     const failedWrite = writeResults.find((result) => result.status === "rejected");
     if (failedWrite?.status === "rejected") {
@@ -446,12 +455,12 @@ async function replaceArtifactsTransactionally(
 
     for (const artifact of manifest.artifacts) {
       if (!artifact.hadOriginal) continue;
-      await fileOperations.rename(artifact.targetPath, artifact.backupPath);
+      await safeRename(artifact.targetPath, artifact.backupPath, safeParents, fileOperations);
       backups.push({ backupPath: artifact.backupPath, path: artifact.targetPath });
     }
 
     for (const entry of temporaryEntries) {
-      await fileOperations.rename(entry.temporaryPath, entry.path);
+      await safeRename(entry.temporaryPath, entry.path, safeParents, fileOperations);
     }
 
     const committedManifest: OutputTransactionManifest = {
@@ -465,7 +474,7 @@ async function replaceArtifactsTransactionally(
     await fileOperations.rename(committedManifestTempPath, manifestPath);
 
     const cleanupResults = await Promise.allSettled(
-      backups.map(({ backupPath }) => fileOperations.unlink(backupPath)),
+      backups.map(({ backupPath }) => safeUnlinkIfPresent(backupPath, safeParents, fileOperations)),
     );
     const preservedBackupPaths = backups
       .filter((_, index) => cleanupResults[index]?.status === "rejected")
@@ -474,7 +483,7 @@ async function replaceArtifactsTransactionally(
       throw new OutputRecoveryError(preservedBackupPaths, cleanupResults);
     }
     await Promise.allSettled(
-      temporaryEntries.map((entry) => fileOperations.unlink(entry.temporaryPath)),
+      temporaryEntries.map((entry) => safeUnlinkIfPresent(entry.temporaryPath, safeParents, fileOperations)),
     );
     await fileOperations.unlink(manifestPath);
   } catch (error) {
@@ -576,14 +585,16 @@ async function validateRecoveryPathsSafe(
   outputDir: string,
   manifests: OutputTransactionManifest[],
   fileOperations: OutputFileOperations,
-): Promise<void> {
+): Promise<Map<string, { dev: number; ino: number }>> {
   const canonicalRoot = await fileOperations.realpath(outputDir);
+  const safeParents = new Map<string, { dev: number; ino: number }>();
   for (const manifest of manifests) {
     for (const artifact of manifest.artifacts) {
       for (const path of [artifact.targetPath, artifact.backupPath, artifact.tempPath]) {
-        const parent = join(path, "..");
+        const parent = dirname(path);
         try {
-          if ((await fileOperations.lstat(parent)).isSymbolicLink()) {
+          const stats = await fileOperations.lstat(parent);
+          if (stats.isSymbolicLink() || !stats.isDirectory()) {
             throw new Error(`Symlinked artifact parent: ${parent}`);
           }
           const canonicalParent = await fileOperations.realpath(parent);
@@ -591,6 +602,7 @@ async function validateRecoveryPathsSafe(
           if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
             throw new Error(`Artifact parent escapes output root: ${parent}`);
           }
+          safeParents.set(parent, { dev: stats.dev, ino: stats.ino });
         } catch (error) {
           if (isMissingPathError(error)) continue;
           throw new OutputRecoveryError(
@@ -602,6 +614,56 @@ async function validateRecoveryPathsSafe(
       }
     }
   }
+  return safeParents;
+}
+
+// Node/Bun expose no unlinkat/renameat. We bind validation to mutation by checking the
+// opened path's parent inode immediately before each syscall. Same-user swaps in the
+// remaining syscall-sized window are outside this local-first application's threat model.
+async function assertStableParent(
+  path: string,
+  safeParents: Map<string, { dev: number; ino: number }>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  const parent = dirname(path);
+  const expected = safeParents.get(parent);
+  if (!expected) return;
+  const current = await fileOperations.lstat(parent);
+  if (current.isSymbolicLink() || !current.isDirectory()
+    || current.dev !== expected.dev || current.ino !== expected.ino
+  ) {
+    throw new OutputRecoveryError([], new Error(`Artifact parent changed: ${parent}`));
+  }
+}
+
+async function safeRename(
+  from: string,
+  to: string,
+  safeParents: Map<string, { dev: number; ino: number }>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  await assertStableParent(from, safeParents, fileOperations);
+  await assertStableParent(to, safeParents, fileOperations);
+  await fileOperations.rename(from, to);
+}
+
+async function safeWriteFile(
+  path: string,
+  contents: string,
+  safeParents: Map<string, { dev: number; ino: number }>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  await assertStableParent(path, safeParents, fileOperations);
+  await fileOperations.writeFile(path, contents);
+}
+
+async function safeUnlinkIfPresent(
+  path: string,
+  safeParents: Map<string, { dev: number; ino: number }>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  await assertStableParent(path, safeParents, fileOperations);
+  await unlinkIfPresent(path, fileOperations);
 }
 
 async function cleanupOrphanArtifactTemps(
@@ -619,14 +681,17 @@ async function cleanupOrphanArtifactTemps(
   for (const layout of layouts) {
     const directoryPath = join(outputDir, layout.directory);
     let names: string[];
+    let directoryIdentity: { dev: number; ino: number };
     try {
-      if ((await fileOperations.lstat(directoryPath)).isSymbolicLink()) {
+      const directoryStats = await fileOperations.lstat(directoryPath);
+      if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
         throw new OutputRecoveryError([], new Error(`Symlinked artifact directory: ${directoryPath}`));
       }
       const fromRoot = relative(canonicalRoot, await fileOperations.realpath(directoryPath));
       if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
         throw new OutputRecoveryError([], new Error(`Artifact directory escapes root: ${directoryPath}`));
       }
+      directoryIdentity = { dev: directoryStats.dev, ino: directoryStats.ino };
       names = await fileOperations.readDirectory(directoryPath);
     } catch (error) {
       if (isMissingPathError(error)) continue;
@@ -636,6 +701,12 @@ async function cleanupOrphanArtifactTemps(
       const match = name.match(layout.pattern);
       const token = match?.[2];
       if (!token || !TRANSACTION_TOKEN_PATTERN.test(token) || activeTokens.has(token)) continue;
+      const current = await fileOperations.lstat(directoryPath);
+      if (current.isSymbolicLink() || current.dev !== directoryIdentity.dev
+        || current.ino !== directoryIdentity.ino
+      ) {
+        throw new OutputRecoveryError([], new Error(`Artifact directory changed: ${directoryPath}`));
+      }
       await unlinkIfPresent(join(directoryPath, name), fileOperations);
     }
   }

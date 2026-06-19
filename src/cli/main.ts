@@ -140,9 +140,16 @@ export async function runCli(
 
     if (result.value.command === "open") {
       const target = result.value.target;
+      const json = result.value.json;
       const openResult = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
         artifactLibrary.path,
-        () => resolveOpenTarget(artifactLibrary.path, target),
+        async () => {
+          const resolved = await resolveOpenTarget(artifactLibrary.path, target);
+          if (resolved.ok && !json) {
+            await (dependencies.openPath ?? openWithSystem)(resolved.item.digestPath);
+          }
+          return resolved;
+        },
       );
 
       if (!openResult.ok) {
@@ -166,7 +173,6 @@ export async function runCli(
       if (result.value.json) {
         io.log(JSON.stringify({ schemaVersion: "open-result.v0", ...openResult.item }));
       } else {
-        await (dependencies.openPath ?? openWithSystem)(openResult.item.digestPath);
         io.log(`Opened digest: ${openResult.item.digestPath}`);
       }
 

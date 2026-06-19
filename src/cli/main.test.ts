@@ -887,6 +887,29 @@ describe("runCli", () => {
     });
   });
 
+  test("keeps the library lock while human openPath is running", async () => {
+    const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
+    const events: string[] = [];
+
+    const exitCode = await runCli(
+      ["open", "latest"],
+      { error: () => {}, log: () => {} },
+      {
+        openPath: async () => { events.push("open"); },
+        outputDir,
+        withRecoveredOutputLibrary: async (_path, operation) => {
+          events.push("lock-enter");
+          const result = await operation();
+          events.push("lock-exit");
+          return result;
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual(["lock-enter", "open", "lock-exit"]);
+  });
+
   test("prints ingestion progress events", async () => {
     const logs: string[] = [];
 

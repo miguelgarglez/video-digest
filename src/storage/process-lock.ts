@@ -131,6 +131,7 @@ async function acquireLock(
   await publishOwner(claimDir, owner, filesystem);
 
   try {
+    await validateLockPathIfPresent(lockDir, filesystem);
     const snapshot = await readOwner(lockDir, filesystem);
     if (snapshot.token !== current.token || snapshot.processIdentity !== current.processIdentity) {
       throw new ProcessLockError("already-running", `Artifact Library lock changed: ${lockDir}`);
@@ -180,6 +181,7 @@ async function claimAndReplaceEmptyLock(
   }
   await publishOwner(claimDir, owner, filesystem);
   try {
+    await validateLockPathIfPresent(lockDir, filesystem);
     if (await tryReadOwner(lockDir, filesystem)) {
       throw new ProcessLockError("already-running", `Artifact Library lock changed: ${lockDir}`);
     }
@@ -210,6 +212,7 @@ async function releaseLock(
 ): Promise<void> {
   await assertOwnership(lockDir, owner, filesystem);
   const releaseDir = `${lockDir}.release-${owner.token}`;
+  await validateLockPathIfPresent(lockDir, filesystem);
   await filesystem.rename(lockDir, releaseDir);
   try {
     await assertOwnership(releaseDir, owner, filesystem);
