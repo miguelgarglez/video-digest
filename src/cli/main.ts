@@ -34,17 +34,21 @@ import { SummarizerError, type Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { TranscriptSourceError } from "../transcript/transcript-source";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, prepareRuntime, resolveUvExecutable, RuntimeSetupError, type RuntimeReadiness } from "./runtime-manager";
 import { withRecoveredOutputLibrary } from "../output/output-writer";
 import type { VideoMetadataSource } from "../video/video-metadata-source";
 import { YouTubeOEmbedMetadataSource } from "../video/youtube-oembed-metadata-source";
+import { createMacOSSystemActions, SystemActionError, type SystemActions } from "./system-actions";
 
 export type CliIO = {
   error: (message: string) => void;
   isTTY?: boolean;
   log: (message: string) => void;
   prompt?: (question: string) => Promise<string>;
+  supportsHyperlinks?: boolean;
   write?: (message: string) => void;
 };
 
@@ -61,6 +65,8 @@ export type CliDependencies = {
   metadataSource?: VideoMetadataSource;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
+  readTextFile?: (path: string) => Promise<string>;
+  systemActions?: SystemActions;
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
@@ -97,7 +103,15 @@ export async function runCli(
     }
 
     if (result.value.command === "help") {
-      printHelp(io);
+      printHelp(io, result.value.topic);
+      return 0;
+    }
+
+    if (result.value.command === "version") {
+      const resources = resolvePackageResources(import.meta.url);
+      const metadata = JSON.parse(await readFile(resources.packageJson, "utf8")) as { version?: unknown };
+      if (typeof metadata.version !== "string") throw new Error("Package version is unavailable.");
+      io.log(`video-digest ${metadata.version}`);
       return 0;
     }
 
@@ -192,7 +206,7 @@ export async function runCli(
           schemaVersion: "open-result.v0",
         }));
       } else {
-        io.log(`Opened: ${openResult.openPath}`);
+        io.log(`Opened: ${formatTerminalPath(openResult.openPath, io)}`);
       }
 
       return 0;
@@ -201,7 +215,7 @@ export async function runCli(
     if (result.value.command === "transcript") {
       const readinessExitCode = await requireReadyRuntime(runtimeManager, result.value.json, io);
       if (readinessExitCode !== null) return readinessExitCode;
-      const { json, video } = result.value;
+      const { copy, json, open, stdout: stdoutMode, video } = result.value;
       const fetchTranscript = dependencies.fetchTranscriptOnly ?? fetchTranscriptOnly;
       return await runTranscriptCommand({
         fetchTranscript,
@@ -209,7 +223,10 @@ export async function runCli(
         json,
         metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
         outputDir: artifactLibrary.path,
+        presentation: { copy, open, stdout: stdoutMode },
+        readTextFile: dependencies.readTextFile ?? ((path) => readFile(path, "utf8")),
         spinnerIntervalMs: dependencies.spinnerIntervalMs,
+        systemActions: dependencies.systemActions ?? createMacOSSystemActions(),
         video,
       });
     }
@@ -341,6 +358,10 @@ function formatCliError(
     };
   }
 
+  if (error instanceof SystemActionError) {
+    return { code: error.code, exitCode: 1, message: error.message };
+  }
+
   if (error instanceof Error) {
     return {
       code: "unexpected-error",
@@ -387,6 +408,9 @@ const HELP_TEXT = [
   "",
   "Options:",
   "  --email-preview  Also write a Markdown email preview under <Artifact Library>/emails/.",
+  "  --copy           Copy clean transcript text after writing artifacts.",
+  "  --open           Open the transcript Markdown after writing artifacts.",
+  "  --stdout         Emit only clean transcript text to stdout.",
   "  --json           Write one machine-readable JSON object.",
   "  --yes            Confirm setup without an interactive prompt.",
   "  --output-dir     Override the Artifact Library for this command.",
@@ -407,11 +431,51 @@ const HELP_TEXT = [
   "  video-digest config set opencode-api-key stores the key in macOS Keychain.",
 ].join("\n");
 
+const TRANSCRIPT_HELP_TEXT = [
+  "Video Digest — Transcript",
+  "",
+  "Usage:",
+  "  video-digest transcript <youtube-url> [options]",
+  "",
+  "Options:",
+  "  --copy               Copy clean text to the macOS clipboard.",
+  "  --open               Open the human-readable Markdown transcript.",
+  "  --stdout             Emit only clean text for shell pipelines.",
+  "  --json               Emit one versioned JSON result (incompatible with --stdout).",
+  "  --output-dir <path>  Override the Artifact Library.",
+  "  --help, -h           Show this command help.",
+].join("\n");
+
+const COMMAND_HELP_TEXT: Record<string, string> = {
+  config: [
+    "Video Digest — Configuration",
+    "",
+    "Usage:",
+    "  video-digest config get [--json]",
+    "  video-digest config set opencode-api-key",
+    "  video-digest config unset opencode-api-key [--json]",
+    "  video-digest config set output-dir <path> [--json]",
+  ].join("\n"),
+  doctor: "Usage: video-digest doctor [--json]",
+  ingest: [
+    "Usage: video-digest ingest <youtube-url> [options]",
+    "",
+    "Options: --email-preview, --json, --output-dir <path>",
+  ].join("\n"),
+  list: "Usage: video-digest list [--json] [--output-dir <path>]",
+  open: "Usage: video-digest open <latest|video-id> [--json] [--output-dir <path>]",
+  setup: "Usage: video-digest setup [--yes] [--json]",
+  transcript: TRANSCRIPT_HELP_TEXT,
+};
+
 const defaultCliIO: CliIO = {
   error: (message) => console.error(message),
   isTTY: stdout.isTTY,
   log: (message) => console.log(message),
   prompt: promptFromTerminal,
+  supportsHyperlinks: Boolean(stdout.isTTY && (
+    process.env.TERM_PROGRAM || process.env.VTE_VERSION || process.env.WT_SESSION
+  )),
   write: (message) => stdout.write(message),
 };
 
@@ -479,9 +543,9 @@ async function runConfigCommand(
       io.log(configured
         ? `OpenCode API key: configured via ${sourceLabel}`
         : "OpenCode API key: not configured");
-      io.log(`Artifact Library: ${artifactLibrary.path} (${artifactLibrary.source})`);
+      io.log(`Artifact Library: ${formatTerminalPath(artifactLibrary.path, io)} (${artifactLibrary.source})`);
       if (configuredArtifactLibrary !== null && configuredArtifactLibrary !== artifactLibrary.path) {
-        io.log(`Saved Artifact Library: ${configuredArtifactLibrary}`);
+        io.log(`Saved Artifact Library: ${formatTerminalPath(configuredArtifactLibrary, io)}`);
       }
     }
     return 0;
@@ -497,7 +561,7 @@ async function runConfigCommand(
       if (command.json) {
         io.log(JSON.stringify({ artifactLibrary: config.artifactLibrary, schemaVersion: "config-result.v0", status: "saved" }));
       } else {
-        io.log(`Artifact Library saved: ${config.artifactLibrary}`);
+        io.log(`Artifact Library saved: ${formatTerminalPath(config.artifactLibrary, io)}`);
       }
       return 0;
     }
@@ -569,8 +633,9 @@ function isNegative(answer: string): boolean {
   return ["n", "no"].includes(answer.trim().toLowerCase());
 }
 
-function printHelp(io: CliIO): void {
-  for (const line of HELP_TEXT.split("\n")) {
+function printHelp(io: CliIO, topic?: string): void {
+  const text = topic ? COMMAND_HELP_TEXT[topic] ?? HELP_TEXT : HELP_TEXT;
+  for (const line of text.split("\n")) {
     io.log(line);
   }
 }
@@ -581,10 +646,14 @@ async function runTranscriptCommand(input: {
   json: boolean;
   metadataSource: VideoMetadataSource;
   outputDir: string;
+  presentation?: { copy: boolean; open: boolean; stdout: boolean };
+  readTextFile?: (path: string) => Promise<string>;
   spinnerIntervalMs?: number;
+  systemActions?: SystemActions;
   video: { canonicalUrl: string; videoId: string };
 }): Promise<number> {
-  const progress = input.json ? null : createProgressRenderer(input.io, {
+  const presentation = input.presentation ?? { copy: false, open: false, stdout: false };
+  const progress = input.json || presentation.stdout ? null : createProgressRenderer(input.io, {
     intervalMs: input.spinnerIntervalMs,
   });
 
@@ -596,12 +665,37 @@ async function runTranscriptCommand(input: {
     video: input.video,
   }).finally(() => progress?.stop());
 
+  const cleanText = presentation.stdout || presentation.copy
+    ? await input.readTextFile!(transcriptResult.paths.transcriptTextPath)
+    : null;
+
   if (input.json) {
     printTranscriptJson(input.video.canonicalUrl, input.video.videoId, transcriptResult, input.io);
+  } else if (presentation.stdout) {
+    writeExact(input.io, cleanText!);
   } else {
     printTranscriptResult(input.video.videoId, transcriptResult, input.io);
   }
+
+  if (!input.json) {
+    if (presentation.copy) {
+      await input.systemActions!.copy(cleanText!);
+      if (!presentation.stdout) input.io.log("Copied transcript text to the clipboard.");
+    }
+    if (presentation.open) {
+      await input.systemActions!.open(transcriptResult.paths.transcriptMarkdownPath);
+      if (!presentation.stdout) input.io.log("Opened transcript Markdown.");
+    }
+  }
   return transcriptResult.exitCode;
+}
+
+function writeExact(io: CliIO, text: string): void {
+  if (io.write) {
+    io.write(text);
+    return;
+  }
+  io.log(text.endsWith("\n") ? text.slice(0, -1) : text);
 }
 
 async function promptForOpenCodeApiKey(
@@ -647,20 +741,20 @@ async function promptForOpenCodeApiKey(
 function printIngestionResult(videoId: string, result: IngestVideoResult, io: CliIO): void {
   if (result.status === "unusable-transcript") {
     io.error(`Transcript quality: ${result.transcriptQuality.status}`);
-    io.error(`Metadata: ${result.metadataPath}`);
+    io.error(`Metadata: ${formatTerminalPath(result.metadataPath, io)}`);
     return;
   }
 
   io.log(`Ingested video ${videoId}`);
   io.log(`Transcript quality: ${result.transcriptQuality.status}`);
-  io.log(`Transcript JSON: ${result.paths.transcriptJsonPath}`);
-  io.log(`Transcript Markdown: ${result.paths.transcriptMarkdownPath}`);
-  io.log(`Transcript text: ${result.paths.transcriptTextPath}`);
-  io.log(`Digest: ${result.paths.digestPath}`);
-  io.log(`Metadata: ${result.paths.metadataPath}`);
+  io.log(`Transcript JSON: ${formatTerminalPath(result.paths.transcriptJsonPath, io)}`);
+  io.log(`Transcript Markdown: ${formatTerminalPath(result.paths.transcriptMarkdownPath, io)}`);
+  io.log(`Transcript text: ${formatTerminalPath(result.paths.transcriptTextPath, io)}`);
+  io.log(`Digest: ${formatTerminalPath(result.paths.digestPath, io)}`);
+  io.log(`Metadata: ${formatTerminalPath(result.paths.metadataPath, io)}`);
 
   if (result.paths.emailPreviewPath) {
-    io.log(`Email preview: ${result.paths.emailPreviewPath}`);
+    io.log(`Email preview: ${formatTerminalPath(result.paths.emailPreviewPath, io)}`);
   }
 }
 
@@ -698,10 +792,15 @@ function printTranscriptResult(
 ): void {
   io.log(`Fetched transcript for ${videoId}`);
   io.log(`Transcript quality: ${result.transcriptQuality.status}`);
-  io.log(`Transcript JSON: ${result.paths.transcriptJsonPath}`);
-  io.log(`Transcript Markdown: ${result.paths.transcriptMarkdownPath}`);
-  io.log(`Transcript text: ${result.paths.transcriptTextPath}`);
-  io.log(`Metadata: ${result.paths.metadataPath}`);
+  io.log(`Transcript JSON: ${formatTerminalPath(result.paths.transcriptJsonPath, io)}`);
+  io.log(`Transcript Markdown: ${formatTerminalPath(result.paths.transcriptMarkdownPath, io)}`);
+  io.log(`Transcript text: ${formatTerminalPath(result.paths.transcriptTextPath, io)}`);
+  io.log(`Metadata: ${formatTerminalPath(result.paths.metadataPath, io)}`);
+}
+
+function formatTerminalPath(path: string, io: CliIO): string {
+  if (io.supportsHyperlinks !== true) return path;
+  return `\u001b]8;;${pathToFileURL(resolve(path)).href}\u0007${path}\u001b]8;;\u0007`;
 }
 
 function printTranscriptJson(
@@ -741,7 +840,7 @@ function printLibraryEntries(items: LibraryEntry[], io: CliIO): void {
   for (const item of items) {
     const label = item.title ?? item.videoId;
     const path = item.paths.digestPath ?? item.paths.transcriptMarkdownPath ?? item.paths.metadataPath;
-    io.log(`${item.videoId}  ${label}  ${path}`);
+    io.log(`${item.videoId}  ${label}  ${formatTerminalPath(path, io)}`);
   }
 }
 

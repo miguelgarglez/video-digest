@@ -62,13 +62,67 @@ describe("parseCliArgs", () => {
       ok: true,
       value: {
         command: "transcript",
+        copy: false,
         json: true,
+        open: false,
+        stdout: false,
         video: {
           canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
           videoId: "1ZgUcrR0K7I",
         },
       },
     });
+  });
+
+  test("parses transcript presentation actions", () => {
+    expect(parseCliArgs(["transcript", "https://youtu.be/1ZgUcrR0K7I", "--copy", "--open", "--stdout"])).toMatchObject({
+      ok: true,
+      value: { command: "transcript", copy: true, open: true, stdout: true },
+    });
+  });
+
+  test("rejects stdout with json", () => {
+    expect(parseCliArgs(["transcript", "https://youtu.be/1ZgUcrR0K7I", "--json", "--stdout"])).toMatchObject({
+      ok: false,
+      error: { code: "conflicting-options" },
+    });
+  });
+
+  test.each(["--copy", "--open", "--stdout"])("rejects transcript action %s on ingest", (flag) => {
+    expect(parseCliArgs(["ingest", "https://youtu.be/1ZgUcrR0K7I", flag])).toMatchObject({
+      ok: false,
+      error: { code: "unsupported-option" },
+    });
+  });
+
+  test("rejects duplicate options", () => {
+    expect(parseCliArgs(["transcript", "https://youtu.be/1ZgUcrR0K7I", "--copy", "--copy"])).toMatchObject({
+      ok: false,
+      error: { code: "duplicate-option" },
+    });
+  });
+
+  test.each([
+    [["doctor", "--bogus"]],
+    [["list", "--copy"]],
+    [["transcript", "https://youtu.be/1ZgUcrR0K7I", "--email-preview"]],
+  ])("rejects unsupported command flags: %j", (args) => {
+    expect(parseCliArgs(args)).toMatchObject({ ok: false, error: { code: "unsupported-option" } });
+  });
+
+  test.each([
+    [["doctor", "extra"]],
+    [["list", "extra"]],
+    [["open", "latest", "extra"]],
+    [["transcript", "https://youtu.be/1ZgUcrR0K7I", "extra"]],
+    [["config", "get", "extra"]],
+  ])("rejects extra command arguments: %j", (args) => {
+    expect(parseCliArgs(args)).toMatchObject({ ok: false, error: { code: "unsupported-command" } });
+  });
+
+  test("parses command-scoped help and version", () => {
+    expect(parseCliArgs(["transcript", "--help"])).toEqual({ ok: true, value: { command: "help", topic: "transcript" } });
+    expect(parseCliArgs(["--version"])).toEqual({ ok: true, value: { command: "version" } });
   });
 
   test.each([

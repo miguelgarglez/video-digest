@@ -30,6 +30,97 @@ async function runCli(args: string[], io: CliIO, dependencies: CliDependencies =
 }
 
 describe("runCli", () => {
+  test("transcript --stdout writes artifacts and emits exact clean text only", async () => {
+    const logs: string[] = [];
+    const writes: string[] = [];
+    const errors: string[] = [];
+    let fetchCalls = 0;
+    const exitCode = await runCli(
+      ["transcript", "https://youtu.be/1ZgUcrR0K7I", "--stdout"],
+      { error: (message) => errors.push(message), log: (message) => logs.push(message), write: (message) => writes.push(message) },
+      {
+        fetchTranscriptOnly: async () => { fetchCalls += 1; return completedTranscriptOnly(); },
+        readTextFile: async (path) => {
+          expect(path).toBe("outputs/transcripts/1ZgUcrR0K7I.txt");
+          return "First paragraph.\n\nSecond paragraph.\n";
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(fetchCalls).toBe(1);
+    expect(logs).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(writes.join("")).toBe("First paragraph.\n\nSecond paragraph.\n");
+  });
+
+  test("transcript actions copy clean text and open Markdown after writing artifacts", async () => {
+    const calls: string[] = [];
+    const exitCode = await runCli(
+      ["transcript", "https://youtu.be/1ZgUcrR0K7I", "--copy", "--open"],
+      { error: () => {}, log: () => {} },
+      {
+        fetchTranscriptOnly: async () => { calls.push("write"); return completedTranscriptOnly(); },
+        readTextFile: async () => "exact text\n",
+        systemActions: {
+          copy: async (text) => { calls.push(`copy:${text}`); },
+          open: async (path) => { calls.push(`open:${path}`); },
+          reveal: async () => {},
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([
+      "write",
+      "copy:exact text\n",
+      "open:outputs/transcripts/1ZgUcrR0K7I.md",
+    ]);
+  });
+
+  test("json mode never performs system actions", async () => {
+    let actions = 0;
+    await runCli(
+      ["transcript", "https://youtu.be/1ZgUcrR0K7I", "--json"],
+      { error: () => {}, log: () => {} },
+      {
+        fetchTranscriptOnly: async () => completedTranscriptOnly(),
+        systemActions: {
+          copy: async () => { actions += 1; },
+          open: async () => { actions += 1; },
+          reveal: async () => { actions += 1; },
+        },
+      },
+    );
+    expect(actions).toBe(0);
+  });
+
+  test("prints package-backed version without loading application state", async () => {
+    const logs: string[] = [];
+    const exitCode = await runCli(["--version"], { error: () => {}, log: (message) => logs.push(message) }, {
+      configStore: { load: async () => { throw new Error("must not load"); }, save: async () => {} },
+    });
+    expect(exitCode).toBe(0);
+    expect(logs).toEqual(["video-digest 0.1.0"]);
+  });
+
+  test("prints command-scoped transcript help", async () => {
+    const logs: string[] = [];
+    await runCli(["transcript", "--help"], { error: () => {}, log: (message) => logs.push(message) });
+    expect(logs.join("\n")).toContain("video-digest transcript <youtube-url>");
+    expect(logs.join("\n")).toContain("--copy");
+    expect(logs.join("\n")).not.toContain("video-digest setup");
+  });
+
+  test("renders OSC 8 artifact paths only when capability is explicit", async () => {
+    const linked: string[] = [];
+    const plain: string[] = [];
+    const deps = { fetchTranscriptOnly: async () => completedTranscriptOnly() };
+    await runCli(["transcript", "https://youtu.be/1ZgUcrR0K7I"], { error: () => {}, log: (message) => linked.push(message), supportsHyperlinks: true }, deps);
+    await runCli(["transcript", "https://youtu.be/1ZgUcrR0K7I"], { error: () => {}, log: (message) => plain.push(message), supportsHyperlinks: false }, deps);
+    expect(linked.join("\n")).toContain("\u001b]8;;file://");
+    expect(linked.join("\n")).toContain("outputs/transcripts/1ZgUcrR0K7I.md\u001b]8;;\u0007");
+    expect(plain.join("\n")).not.toContain("\u001b]8;;");
+  });
+
   test("setup requires explicit consent before preparing the isolated runtime", async () => {
     let prepareCalls = 0;
     const errors: string[] = [];

@@ -3,6 +3,10 @@ import { parseYouTubeVideoUrl, type YouTubeVideo } from "../video/youtube-url";
 export type CliOptions =
   | {
       command: "help";
+      topic?: string;
+    }
+  | {
+      command: "version";
     }
   | {
       command: "ingest";
@@ -13,8 +17,11 @@ export type CliOptions =
     }
   | {
       command: "transcript";
+      copy: boolean;
       json: boolean;
+      open: boolean;
       outputDir?: string;
+      stdout: boolean;
       video: YouTubeVideo;
     }
   | {
@@ -46,7 +53,7 @@ export type CliOptions =
     };
 
 export type CliError = {
-  code: "missing-url" | "invalid-url" | "missing-option-value" | "unsupported-command" | "unsupported-option";
+  code: "conflicting-options" | "duplicate-option" | "missing-url" | "invalid-url" | "missing-option-value" | "unsupported-command" | "unsupported-option";
   message: string;
 };
 
@@ -66,13 +73,43 @@ export const LEGACY_USAGE = "Usage: bun run video-digest <youtube-url> [--email-
 const COMMANDS = new Set(["ingest", "transcript", "doctor", "setup", "list", "open", "config"]);
 
 export function parseCliArgs(args: string[]): CliArgsResult {
+  const duplicate = args.find((argument, index) => argument.startsWith("-") && args.indexOf(argument) !== index);
+  if (duplicate) {
+    return failure("duplicate-option", `Option may only be specified once: ${duplicate}`);
+  }
+
+  if (args[0] === "--version") {
+    return args.length === 1
+      ? { ok: true, value: { command: "version" } }
+      : failure("unsupported-option", "--version cannot be combined with other arguments.");
+  }
+
   if (args.includes("--help") || args.includes("-h")) {
+    const topic = args[0] && !args[0].startsWith("-") ? args[0] : undefined;
+    if (topic && !COMMANDS.has(topic)) return failure("unsupported-command", `Unsupported command: ${topic}\n\n${USAGE}`);
+    const unexpected = args.find((argument, index) => index > 0 && argument !== "--help" && argument !== "-h");
+    if (unexpected) return failure("unsupported-option", `Command help cannot be combined with: ${unexpected}`);
     return {
       ok: true,
       value: {
         command: "help",
+        ...(topic ? { topic } : {}),
       },
     };
+  }
+
+  const command = findCommand(args);
+  const allowedOptions = allowedOptionsFor(command);
+  const unsupportedOption = args.find((argument) => argument.startsWith("-") && argument !== "--output-dir" && !allowedOptions.has(argument));
+  if (unsupportedOption && command !== "setup") {
+    return failure("unsupported-option", `Unsupported ${command ?? "CLI"} option: ${unsupportedOption}`);
+  }
+  const unsupportedAction = ["--copy", "--open", "--stdout"].find((flag) => args.includes(flag) && command !== "transcript");
+  if (unsupportedAction) {
+    return failure("unsupported-option", `${unsupportedAction} is only supported for transcript.`);
+  }
+  if (command === "transcript" && args.includes("--json") && args.includes("--stdout")) {
+    return failure("conflicting-options", "--stdout cannot be combined with --json. Remove one of these options.");
   }
 
   if (args.includes("--output-dir") && !supportsOutputDir(findCommand(args))) {
@@ -91,6 +128,17 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   }
   const positional = parsedOutputDir.args.filter((arg) => !arg.startsWith("--"));
   const firstArg = positional[0];
+
+  const maximumPositionals = firstArg === "open" ? 2
+    : firstArg === "doctor" || firstArg === "list" ? 1
+    : firstArg === "ingest" || firstArg === "transcript" ? 2
+    : undefined;
+  if (maximumPositionals !== undefined && positional.length > maximumPositionals) {
+    return unexpectedArgument(firstArg!, positional[maximumPositionals]!);
+  }
+  if (firstArg && !COMMANDS.has(firstArg) && positional.length > 1) {
+    return unexpectedArgument("ingest", positional[1]!);
+  }
 
   if (parsedOutputDir.outputDir !== undefined && !supportsOutputDir(firstArg)) {
     return {
@@ -183,6 +231,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
     const key = positional[2];
 
     if (subcommand === "get") {
+      if (positional.length > 2) return unexpectedArgument("config", positional[2]!);
       return {
         ok: true,
         value: {
@@ -194,6 +243,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
     }
 
     if ((subcommand === "set" || subcommand === "unset") && key === "opencode-api-key") {
+      if (positional.length > 3) return unexpectedArgument("config", positional[3]!);
       return {
         ok: true,
         value: {
@@ -206,6 +256,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
     }
 
     if (subcommand === "set" && key === "output-dir" && positional[3]) {
+      if (positional.length > 4) return unexpectedArgument("config", positional[4]!);
       return {
         ok: true,
         value: {
@@ -276,8 +327,11 @@ export function parseCliArgs(args: string[]): CliArgsResult {
         ok: true,
         value: {
           command: "transcript",
+          copy: args.includes("--copy"),
           json: args.includes("--json"),
+          open: args.includes("--open"),
           outputDir: parsedOutputDir.outputDir,
+          stdout: args.includes("--stdout"),
           video,
         },
       };
@@ -304,6 +358,14 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   }
 }
 
+function failure(code: CliError["code"], message: string): CliArgsResult {
+  return { ok: false, error: { code, message } };
+}
+
+function unexpectedArgument(command: string, argument: string): CliArgsResult {
+  return failure("unsupported-command", `Unexpected ${command} argument: ${argument}\n\n${USAGE}`);
+}
+
 function supportsOutputDir(firstArg: string | undefined): boolean {
   return firstArg === "ingest"
     || firstArg === "transcript"
@@ -314,6 +376,21 @@ function supportsOutputDir(firstArg: string | undefined): boolean {
       || firstArg.includes("youtube.com")
       || firstArg.includes("youtu.be")
     ));
+}
+
+function allowedOptionsFor(command: string | undefined): Set<string> {
+  const common = ["--json"];
+  switch (command) {
+    case "transcript": return new Set([...common, "--copy", "--open", "--stdout", "--output-dir"]);
+    case "ingest": return new Set([...common, "--email-preview", "--output-dir"]);
+    case "list":
+    case "open": return new Set([...common, "--output-dir"]);
+    case "setup": return new Set([...common, "--yes"]);
+    case "doctor":
+    case "config": return new Set(common);
+    default:
+      return new Set([...common, "--email-preview", "--output-dir"]);
+  }
 }
 
 function findCommand(args: string[]): string | undefined {
