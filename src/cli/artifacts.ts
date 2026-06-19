@@ -49,12 +49,17 @@ export type LibraryEntry = {
   videoId: string;
 };
 
+export type LibraryRootIdentity = FileIdentity & {
+  canonicalPath: string;
+  path: string;
+};
+
 export type LibraryOpenTarget = {
   fileIdentity: FileIdentity;
   parentIdentity: FileIdentity;
   parentPath: string;
   path: string;
-  rootPath: string;
+  root: LibraryRootIdentity;
 };
 
 export type ResolvedLibraryEntry = {
@@ -97,12 +102,13 @@ export async function listLibraryEntries(
   fileOperations: Partial<LibraryFileOperations> = {},
 ): Promise<LibraryEntry[]> {
   const operations = { ...defaultFileOperations, ...fileOperations };
-  const rootPath = await realpathIfPresent(outputDir, operations);
-  if (!rootPath) return [];
+  const root = await captureLibraryRoot(outputDir, operations);
+  if (!root) return [];
 
   const metadataDir = join(outputDir, "metadata");
-  const metadataParent = await captureDirectoryIfPresent(metadataDir, rootPath, operations);
+  const metadataParent = await captureDirectoryIfPresent(metadataDir, root, operations);
   if (!metadataParent) return [];
+  await assertLibraryRootIdentity(root, operations);
 
   let files: string[];
   try {
@@ -115,13 +121,15 @@ export async function listLibraryEntries(
   const candidates = await Promise.all(
     files
       .filter((file) => extname(file) === ".json" && VIDEO_ID_PATTERN.test(basename(file, ".json")))
-      .map((file) => readLibraryEntry(outputDir, rootPath, metadataParent, file, operations)),
+      .map((file) => readLibraryEntry(outputDir, root, metadataParent, file, operations)),
   );
 
-  return candidates
+  const entries = candidates
     .filter((entry): entry is LibraryEntry => entry !== null)
     .sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt) || left.videoId.localeCompare(right.videoId));
+  await assertLibraryRootIdentity(root, operations);
+  return entries;
 }
 
 export async function resolveLibraryEntry(
@@ -166,24 +174,26 @@ export async function revalidateLibraryOpenTarget(
   fileOperations: Partial<LibraryFileOperations> = {},
 ): Promise<void> {
   const operations = { ...defaultFileOperations, ...fileOperations };
-  await assertDirectoryIdentity(target.parentPath, target.rootPath, target.parentIdentity, operations);
-  await assertFileIdentity(target.path, target.rootPath, target.fileIdentity, operations);
+  await assertDirectoryIdentity(target.parentPath, target.root, target.parentIdentity, operations);
+  await assertFileIdentity(target.path, target.root, target.fileIdentity, operations);
   await inspectOpenFile(target.path, target.fileIdentity, operations, async () => undefined);
+  await assertLibraryRootIdentity(target.root, operations);
 }
 
 async function readLibraryEntry(
   outputDir: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   metadataParent: LibraryOpenTarget["parentIdentity"],
   metadataFile: string,
   operations: LibraryFileOperations,
 ): Promise<LibraryEntry | null> {
   const videoId = basename(metadataFile, ".json");
   const metadataPath = join(outputDir, "metadata", metadataFile);
-  const metadataIdentity = await captureFileIfPresent(metadataPath, rootPath, operations);
+  const metadataIdentity = await captureFileIfPresent(metadataPath, root, operations);
   if (!metadataIdentity) return null;
 
-  await assertDirectoryIdentity(dirname(metadataPath), rootPath, metadataParent, operations);
+  await assertDirectoryIdentity(dirname(metadataPath), root, metadataParent, operations);
+  await assertLibraryRootIdentity(root, operations);
   const contents = await inspectOpenFile(
     metadataPath,
     metadataIdentity,
@@ -202,11 +212,11 @@ async function readLibraryEntry(
   if (!metadata) return null;
 
   const artifacts = await Promise.all([
-    availableArtifact(outputDir, rootPath, "digests", `${videoId}.md`, operations),
-    availableArtifact(outputDir, rootPath, "emails", `${videoId}.md`, operations),
-    availableArtifact(outputDir, rootPath, "transcripts", `${videoId}.json`, operations),
-    availableArtifact(outputDir, rootPath, "transcripts", `${videoId}.md`, operations),
-    availableArtifact(outputDir, rootPath, "transcripts", `${videoId}.txt`, operations),
+    availableArtifact(outputDir, root, "digests", `${videoId}.md`, operations),
+    availableArtifact(outputDir, root, "emails", `${videoId}.md`, operations),
+    availableArtifact(outputDir, root, "transcripts", `${videoId}.json`, operations),
+    availableArtifact(outputDir, root, "transcripts", `${videoId}.md`, operations),
+    availableArtifact(outputDir, root, "transcripts", `${videoId}.txt`, operations),
   ]);
   const [digest, email, transcriptJson, transcriptMarkdown, transcriptText] = artifacts;
 
@@ -229,60 +239,62 @@ async function readLibraryEntry(
       .filter((artifact): artifact is AvailableArtifact => artifact !== null)
       .map((artifact) => [artifact.path, artifact.target]),
   ));
+  await assertLibraryRootIdentity(root, operations);
   return entry;
 }
 
 async function availableArtifact(
   outputDir: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   directory: "digests" | "emails" | "transcripts",
   file: string,
   operations: LibraryFileOperations,
 ): Promise<AvailableArtifact | null> {
   const path = join(outputDir, directory, file);
   const parentPath = dirname(path);
-  const parentIdentity = await captureDirectoryIfPresent(parentPath, rootPath, operations);
+  const parentIdentity = await captureDirectoryIfPresent(parentPath, root, operations);
   if (!parentIdentity) return null;
-  const fileIdentity = await captureFileIfPresent(path, rootPath, operations);
+  const fileIdentity = await captureFileIfPresent(path, root, operations);
   if (!fileIdentity) return null;
 
   // Revalidate immediately before exposing a path gathered from the filesystem.
-  await assertDirectoryIdentity(parentPath, rootPath, parentIdentity, operations);
-  await assertFileIdentity(path, rootPath, fileIdentity, operations);
+  await assertDirectoryIdentity(parentPath, root, parentIdentity, operations);
+  await assertFileIdentity(path, root, fileIdentity, operations);
+  await assertLibraryRootIdentity(root, operations);
   return {
     path,
-    target: { fileIdentity, parentIdentity, parentPath, path, rootPath },
+    target: { fileIdentity, parentIdentity, parentPath, path, root },
   };
 }
 
 async function captureDirectoryIfPresent(
   path: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   operations: LibraryFileOperations,
 ): Promise<FileIdentity | null> {
   const stats = await lstatIfPresent(path, operations);
   if (!stats) return null;
   if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
-  if (!isWithin(rootPath, await operations.realpath(path))) return null;
+  if (!isWithin(root.canonicalPath, await operations.realpath(path))) return null;
   return identityOf(stats);
 }
 
 async function captureFileIfPresent(
   path: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   operations: LibraryFileOperations,
 ): Promise<FileIdentity | null> {
   const stats = await lstatIfPresent(path, operations);
   if (!stats) return null;
   if (!stats.isFile() || stats.isSymbolicLink()) return null;
-  if (!isWithin(rootPath, await operations.realpath(dirname(path)))) return null;
-  if (!isWithin(rootPath, await operations.realpath(path))) return null;
+  if (!isWithin(root.canonicalPath, await operations.realpath(dirname(path)))) return null;
+  if (!isWithin(root.canonicalPath, await operations.realpath(path))) return null;
   return identityOf(stats);
 }
 
 async function assertDirectoryIdentity(
   path: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   expected: FileIdentity,
   operations: LibraryFileOperations,
 ): Promise<void> {
@@ -290,12 +302,12 @@ async function assertDirectoryIdentity(
   if (!stats.isDirectory() || stats.isSymbolicLink() || !sameIdentity(stats, expected)) {
     throw changedDuringValidation(path);
   }
-  if (!isWithin(rootPath, await operations.realpath(path))) throw changedDuringValidation(path);
+  if (!isWithin(root.canonicalPath, await operations.realpath(path))) throw changedDuringValidation(path);
 }
 
 async function assertFileIdentity(
   path: string,
-  rootPath: string,
+  root: LibraryRootIdentity,
   expected: FileIdentity,
   operations: LibraryFileOperations,
 ): Promise<void> {
@@ -303,8 +315,8 @@ async function assertFileIdentity(
   if (!stats.isFile() || stats.isSymbolicLink() || !sameIdentity(stats, expected)) {
     throw changedDuringValidation(path);
   }
-  if (!isWithin(rootPath, await operations.realpath(dirname(path)))) throw changedDuringValidation(path);
-  if (!isWithin(rootPath, await operations.realpath(path))) throw changedDuringValidation(path);
+  if (!isWithin(root.canonicalPath, await operations.realpath(dirname(path)))) throw changedDuringValidation(path);
+  if (!isWithin(root.canonicalPath, await operations.realpath(path))) throw changedDuringValidation(path);
 }
 
 async function inspectOpenFile<T>(
@@ -330,18 +342,52 @@ async function inspectOpenFile<T>(
   }
 }
 
-async function lstatIfPresent(path: string, operations: LibraryFileOperations): Promise<FileStats | null> {
+async function captureLibraryRoot(
+  path: string,
+  operations: LibraryFileOperations,
+): Promise<LibraryRootIdentity | null> {
+  const stats = await lstatIfPresent(path, operations);
+  if (!stats) return null;
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new LibraryIntegrityError(`Artifact Library root must be a non-symlink directory: ${path}`);
+  }
+  return {
+    canonicalPath: await operations.realpath(path),
+    dev: stats.dev,
+    ino: stats.ino,
+    path,
+  };
+}
+
+async function assertLibraryRootIdentity(
+  root: LibraryRootIdentity,
+  operations: LibraryFileOperations,
+): Promise<void> {
+  let stats: FileStats;
+  let canonicalPath: string;
   try {
-    return await operations.lstat(path);
+    stats = await operations.lstat(root.path);
+    canonicalPath = await operations.realpath(root.path);
   } catch (error) {
-    if (isMissingPathError(error)) return null;
+    if (isMissingPathError(error) || isSymlinkRaceError(error)) {
+      throw changedDuringValidation(root.path);
+    }
     throw error;
+  }
+
+  if (
+    !stats.isDirectory()
+    || stats.isSymbolicLink()
+    || !sameIdentity(stats, root)
+    || canonicalPath !== root.canonicalPath
+  ) {
+    throw changedDuringValidation(root.path);
   }
 }
 
-async function realpathIfPresent(path: string, operations: LibraryFileOperations): Promise<string | null> {
+async function lstatIfPresent(path: string, operations: LibraryFileOperations): Promise<FileStats | null> {
   try {
-    return await operations.realpath(path);
+    return await operations.lstat(path);
   } catch (error) {
     if (isMissingPathError(error)) return null;
     throw error;

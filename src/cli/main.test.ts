@@ -1032,6 +1032,46 @@ describe("runCli", () => {
     expect(errors.join("\n")).toContain("changed during validation");
   });
 
+  test("revalidates the Library root after artifact inspection and before human openPath", async () => {
+    const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
+    const digestPath = join(outputDir, "digests", "1ZgUcrR0K7I.md");
+    let rootSwapped = false;
+    let openCalls = 0;
+    const errors: string[] = [];
+    const exitCode = await runCli(
+      ["open", "latest"],
+      { error: (message) => errors.push(message), log: () => {} },
+      {
+        libraryFileOperations: mainLibraryOperations({
+          lstat: async (path) => {
+            const stats = await lstat(path);
+            if (path === outputDir && rootSwapped) {
+              return {
+                dev: stats.dev,
+                ino: stats.ino + 1,
+                isDirectory: () => true,
+                isFile: () => false,
+                isSymbolicLink: () => false,
+              };
+            }
+            return stats;
+          },
+          open: async (path, flags) => {
+            const handle = await open(path, flags);
+            if (path === digestPath) rootSwapped = true;
+            return handle;
+          },
+        }),
+        openPath: async () => { openCalls += 1; },
+        outputDir,
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(openCalls).toBe(0);
+    expect(errors.join("\n")).toContain("changed during validation");
+  });
+
   test("keeps the library lock while human openPath is running", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const events: string[] = [];

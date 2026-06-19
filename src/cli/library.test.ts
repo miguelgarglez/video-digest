@@ -188,6 +188,29 @@ describe("Artifact Library", () => {
 
     await expect(listLibraryEntries(outputDir, operations)).rejects.toThrow("changed during validation");
   });
+
+  test("fails closed before metadata read when the Library root inode is replaced", async () => {
+    const outputDir = await createLibrary();
+    await seedMetadata(outputDir, VIDEO_ID, { processedAt: "2026-06-18T12:00:00.000Z" });
+    let rootLstats = 0;
+    let metadataOpened = false;
+    const operations = libraryOperations({
+      lstat: async (path) => {
+        const stats = await lstat(path);
+        if (path === outputDir && ++rootLstats >= 2) {
+          return directoryStats({ dev: stats.dev, ino: stats.ino + 1 });
+        }
+        return stats;
+      },
+      open: async (path, flags) => {
+        metadataOpened = true;
+        return open(path, flags);
+      },
+    });
+
+    await expect(listLibraryEntries(outputDir, operations)).rejects.toThrow("changed during validation");
+    expect(metadataOpened).toBe(false);
+  });
 });
 
 async function createLibrary(): Promise<string> {
@@ -254,5 +277,14 @@ function fileStats(identity: { dev: number; ino: number }) {
     isFile: () => true,
     isSymbolicLink: () => false,
     mode: constants.S_IFREG,
+  } as never;
+}
+
+function directoryStats(identity: { dev: number; ino: number }) {
+  return {
+    ...identity,
+    isDirectory: () => true,
+    isFile: () => false,
+    isSymbolicLink: () => false,
   } as never;
 }
