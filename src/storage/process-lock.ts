@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 type LockOwner = {
@@ -12,9 +12,11 @@ type LockOwner = {
 export type ProcessLockFilesystem = {
   access(path: string): Promise<void>;
   mkdir(path: string): Promise<unknown>;
+  lstat(path: string): Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean }>;
   readFile(path: string): Promise<string>;
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options: { force: boolean; recursive: boolean }): Promise<void>;
+  stat(path: string): Promise<{ mtimeMs: number }>;
   writeFile(path: string, contents: string): Promise<unknown>;
 };
 
@@ -36,9 +38,11 @@ export class ProcessLockError extends Error {
 const defaultFilesystem: ProcessLockFilesystem = {
   access,
   mkdir,
+  lstat,
   readFile: (path) => readFile(path, "utf8"),
   rename,
   rm,
+  stat,
   writeFile,
 };
 
@@ -61,6 +65,8 @@ export async function withProcessLock<T>(
     schemaVersion: "process-lock.v0",
     token,
   };
+
+  await validateLockPathIfPresent(options.lockDir, filesystem);
 
   await acquireLock(options.lockDir, owner, filesystem, getProcessIdentity);
   try {
@@ -89,13 +95,21 @@ async function acquireLock(
   } catch (error) {
     if (!isAlreadyExistsError(error)) throw error;
   }
+  await validateLockPathIfPresent(lockDir, filesystem);
 
   const claimDir = join(lockDir, "recovery-claim");
   if (await pathExists(claimDir, filesystem)) {
     await reclaimDeadClaim(claimDir, owner, filesystem, getProcessIdentity);
   }
 
-  const current = await readOwner(lockDir, filesystem);
+  const current = await tryReadOwner(lockDir, filesystem);
+  if (!current) {
+    if (Date.now() - (await filesystem.stat(lockDir)).mtimeMs < 5 * 60_000) {
+      throw new ProcessLockError("already-running", `Artifact Library lock is being published: ${lockDir}`);
+    }
+    await claimAndReplaceEmptyLock(lockDir, claimDir, owner, filesystem);
+    return;
+  }
   let currentIdentity: string | null;
   try {
     currentIdentity = await getProcessIdentity(current.pid);
@@ -133,8 +147,11 @@ async function reclaimDeadClaim(
   filesystem: ProcessLockFilesystem,
   getProcessIdentity: (pid: number) => Promise<string | null>,
 ): Promise<void> {
-  const claimOwner = await readOwner(claimDir, filesystem);
-  if (await getProcessIdentity(claimOwner.pid) === claimOwner.processIdentity) {
+  const claimOwner = await tryReadOwner(claimDir, filesystem);
+  if (!claimOwner && Date.now() - (await filesystem.stat(claimDir)).mtimeMs < 5 * 60_000) {
+    throw new ProcessLockError("already-running", `Artifact Library recovery is being published: ${claimDir}`);
+  }
+  if (claimOwner && await getProcessIdentity(claimOwner.pid) === claimOwner.processIdentity) {
     throw new ProcessLockError("already-running", `Artifact Library recovery is busy: ${claimDir}`);
   }
   const abandoned = `${claimDir}.abandoned-${owner.token}`;
@@ -145,6 +162,31 @@ async function reclaimDeadClaim(
     throw error;
   }
   await filesystem.rm(abandoned, { force: true, recursive: true });
+}
+
+async function claimAndReplaceEmptyLock(
+  lockDir: string,
+  claimDir: string,
+  owner: LockOwner,
+  filesystem: ProcessLockFilesystem,
+): Promise<void> {
+  try {
+    await filesystem.mkdir(claimDir);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      throw new ProcessLockError("already-running", `Artifact Library recovery is busy: ${lockDir}`);
+    }
+    throw error;
+  }
+  await publishOwner(claimDir, owner, filesystem);
+  try {
+    if (await tryReadOwner(lockDir, filesystem)) {
+      throw new ProcessLockError("already-running", `Artifact Library lock changed: ${lockDir}`);
+    }
+    await publishOwner(lockDir, owner, filesystem);
+  } finally {
+    await filesystem.rm(claimDir, { force: true, recursive: true });
+  }
 }
 
 async function assertOwnership(
@@ -191,10 +233,22 @@ async function publishOwner(
 }
 
 async function readOwner(directory: string, filesystem: ProcessLockFilesystem): Promise<LockOwner> {
+  const owner = await tryReadOwner(directory, filesystem);
+  if (!owner) {
+    throw new ProcessLockError("recovery-required", `Library lock owner is unreadable: ${directory}`);
+  }
+  return owner;
+}
+
+async function tryReadOwner(
+  directory: string,
+  filesystem: ProcessLockFilesystem,
+): Promise<LockOwner | null> {
   let value: unknown;
   try {
     value = JSON.parse(await filesystem.readFile(join(directory, "owner.json")));
   } catch (error) {
+    if (isMissingPathError(error)) return null;
     throw new ProcessLockError("recovery-required", `Library lock owner is unreadable: ${directory}`);
   }
   if (!isLockOwner(value)) {
@@ -220,6 +274,20 @@ async function pathExists(path: string, filesystem: ProcessLockFilesystem): Prom
   } catch (error) {
     if (isMissingPathError(error)) return false;
     throw error;
+  }
+}
+
+async function validateLockPathIfPresent(
+  lockDir: string,
+  filesystem: ProcessLockFilesystem,
+): Promise<void> {
+  try {
+    const lockStats = await filesystem.lstat(lockDir);
+    if (lockStats.isSymbolicLink() || !lockStats.isDirectory()) {
+      throw new ProcessLockError("recovery-required", `Library lock path is unsafe: ${lockDir}`);
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
   }
 }
 

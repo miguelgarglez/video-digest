@@ -68,7 +68,7 @@ export function renderTranscriptMarkdown(input: {
   const channel = input.metadata?.channel?.trim();
   if (channel) lines.push(`Channel: ${channel}`);
 
-  lines.push("");
+  lines.push("", "## Transcript", "");
 
   for (const segment of input.transcript.segments) {
     const text = segment.text.trim();

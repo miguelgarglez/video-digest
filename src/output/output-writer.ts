@@ -285,8 +285,18 @@ export async function recoverPendingOutputTransactions(
   outputDir: string,
   operationOverrides: Partial<OutputFileOperations> = {},
 ): Promise<void> {
-  await withOutputLibraryLock(outputDir, async () =>
-    recoverPendingOutputTransactionsLocked(outputDir, operationOverrides));
+  await withRecoveredOutputLibrary(outputDir, async () => {}, operationOverrides);
+}
+
+export async function withRecoveredOutputLibrary<T>(
+  outputDir: string,
+  operation: () => Promise<T>,
+  operationOverrides: Partial<OutputFileOperations> = {},
+): Promise<T> {
+  return withOutputLibraryLock(outputDir, async () => {
+    await recoverPendingOutputTransactionsLocked(outputDir, operationOverrides);
+    return operation();
+  });
 }
 
 async function recoverPendingOutputTransactionsLocked(
@@ -332,6 +342,7 @@ async function recoverPendingOutputTransactionsLocked(
     if (!match || manifestNameSet.has(`${match[1]}.json`)) continue;
     await unlinkIfPresent(join(transactionDir, name), fileOperations);
   }
+  await cleanupOrphanArtifactTemps(outputDir, new Set(manifests.map(({ manifest }) => manifest.token)), fileOperations);
 
   for (const { manifest, manifestPath } of manifests) {
     const recoveryFailures: string[] = [];
@@ -589,6 +600,43 @@ async function validateRecoveryPathsSafe(
           );
         }
       }
+    }
+  }
+}
+
+async function cleanupOrphanArtifactTemps(
+  outputDir: string,
+  activeTokens: Set<string>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  const layouts = [
+    { directory: "digests", pattern: /^([A-Za-z0-9_-]{11})\.md\.([0-9a-f-]{36})\.tmp$/i },
+    { directory: "emails", pattern: /^([A-Za-z0-9_-]{11})\.md\.([0-9a-f-]{36})\.tmp$/i },
+    { directory: "metadata", pattern: /^([A-Za-z0-9_-]{11})\.json\.([0-9a-f-]{36})\.tmp$/i },
+    { directory: "transcripts", pattern: /^([A-Za-z0-9_-]{11})\.(?:json|md|txt)\.([0-9a-f-]{36})\.tmp$/i },
+  ];
+  const canonicalRoot = await fileOperations.realpath(outputDir);
+  for (const layout of layouts) {
+    const directoryPath = join(outputDir, layout.directory);
+    let names: string[];
+    try {
+      if ((await fileOperations.lstat(directoryPath)).isSymbolicLink()) {
+        throw new OutputRecoveryError([], new Error(`Symlinked artifact directory: ${directoryPath}`));
+      }
+      const fromRoot = relative(canonicalRoot, await fileOperations.realpath(directoryPath));
+      if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+        throw new OutputRecoveryError([], new Error(`Artifact directory escapes root: ${directoryPath}`));
+      }
+      names = await fileOperations.readDirectory(directoryPath);
+    } catch (error) {
+      if (isMissingPathError(error)) continue;
+      throw error;
+    }
+    for (const name of names) {
+      const match = name.match(layout.pattern);
+      const token = match?.[2];
+      if (!token || !TRANSACTION_TOKEN_PATTERN.test(token) || activeTokens.has(token)) continue;
+      await unlinkIfPresent(join(directoryPath, name), fileOperations);
     }
   }
 }

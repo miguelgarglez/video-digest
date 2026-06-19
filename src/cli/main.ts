@@ -30,7 +30,7 @@ import { TranscriptSourceError } from "../transcript/transcript-source";
 import { readFile } from "node:fs/promises";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, prepareRuntime, resolveUvExecutable, RuntimeSetupError, type RuntimeReadiness } from "./runtime-manager";
-import { recoverPendingOutputTransactions } from "../output/output-writer";
+import { withRecoveredOutputLibrary } from "../output/output-writer";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -51,7 +51,7 @@ export type CliDependencies = {
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
-  recoverPendingOutputTransactions?: (outputDir: string) => Promise<void>;
+  withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
@@ -107,11 +107,6 @@ export async function runCli(
       envOutputDir: env.VIDEO_DIGEST_OUTPUT_DIR,
       savedArtifactLibrary: config?.artifactLibrary,
     });
-    if (["list", "open"].includes(result.value.command)) {
-      await (dependencies.recoverPendingOutputTransactions ?? recoverPendingOutputTransactions)(
-        artifactLibrary.path,
-      );
-    }
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
 
     if (result.value.command === "config") {
@@ -131,7 +126,10 @@ export async function runCli(
     }
 
     if (result.value.command === "list") {
-      const items = await listArtifacts(artifactLibrary.path);
+      const items = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
+        artifactLibrary.path,
+        () => listArtifacts(artifactLibrary.path),
+      );
       if (result.value.json) {
         io.log(JSON.stringify({ items, schemaVersion: "artifact-list.v0" }));
       } else {
@@ -141,7 +139,11 @@ export async function runCli(
     }
 
     if (result.value.command === "open") {
-      const openResult = await resolveOpenTarget(artifactLibrary.path, result.value.target);
+      const target = result.value.target;
+      const openResult = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
+        artifactLibrary.path,
+        () => resolveOpenTarget(artifactLibrary.path, target),
+      );
 
       if (!openResult.ok) {
         const payload = {

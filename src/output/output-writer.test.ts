@@ -9,6 +9,7 @@ import type { YouTubeVideo } from "../video/youtube-url";
 import {
   OutputRecoveryError,
   recoverPendingOutputTransactions,
+  withRecoveredOutputLibrary,
   writeFailedIngestionMetadata,
   writeIngestionOutputs,
   writeTranscriptOnlyOutputs,
@@ -49,6 +50,8 @@ describe("writeIngestionOutputs", () => {
         "Language: en",
         "Source: youtube-transcript-api",
         "Provenance: unknown",
+        "",
+        "## Transcript",
         "",
         "**00:00** Technology can change media businesses.",
         "",
@@ -422,6 +425,11 @@ describe("writeIngestionOutputs", () => {
       transcriptQuality: usableQuality,
       video,
     })).rejects.toMatchObject({ code: "already-running" });
+    let discovered = false;
+    await expect(withRecoveredOutputLibrary(outputDir, async () => {
+      discovered = true;
+    })).rejects.toMatchObject({ code: "already-running" });
+    expect(discovered).toBe(false);
 
     unblock();
     await first;
@@ -429,6 +437,29 @@ describe("writeIngestionOutputs", () => {
 });
 
 describe("recoverPendingOutputTransactions", () => {
+  test("rejects a symlinked library lock without mutating its external owner", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-lock-symlink-"));
+    const transactionDir = join(outputDir, ".transactions");
+    const external = await mkdtemp(join(tmpdir(), "video-digest-lock-owner-"));
+    const ownerPath = join(external, "owner.json");
+    const owner = JSON.stringify({
+      createdAt: "2020-01-01T00:00:00.000Z",
+      pid: 999999,
+      processIdentity: "dead",
+      schemaVersion: "process-lock.v0",
+      token: "external",
+    });
+    await mkdir(transactionDir, { recursive: true });
+    await writeFile(ownerPath, owner);
+    await symlink(external, join(transactionDir, "library.lock"));
+
+    await expect(recoverPendingOutputTransactions(outputDir)).rejects.toMatchObject({
+      code: "recovery-required",
+    });
+    expect(await readFile(ownerPath, "utf8")).toBe(owner);
+    expect(await readdir(external)).toEqual(["owner.json"]);
+  });
+
   test("restores an interrupted transaction and is idempotent", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-interrupted-"));
     const token = "11111111-1111-4111-8111-111111111111";
@@ -654,6 +685,21 @@ describe("recoverPendingOutputTransactions", () => {
     await expect(readFile(ownedTemp, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(unknown, "utf8")).toBe("keep");
   });
+
+  test("removes only exact owned artifact temps left before manifest publication", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-orphan-artifact-"));
+    const token = "77777777-7777-4777-8777-777777777777";
+    const transcriptDir = join(outputDir, "transcripts");
+    const ownedTemp = join(transcriptDir, `${video.videoId}.json.${token}.tmp`);
+    const unknown = join(transcriptDir, `notes.json.${token}.tmp`);
+    await mkdir(transcriptDir, { recursive: true });
+    await Promise.all([writeFile(ownedTemp, "partial"), writeFile(unknown, "keep")]);
+
+    await recoverPendingOutputTransactions(outputDir);
+
+    await expect(readFile(ownedTemp, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(unknown, "utf8")).toBe("keep");
+  });
 });
 
 describe("writeTranscriptOnlyOutputs", () => {
@@ -687,6 +733,8 @@ describe("writeTranscriptOnlyOutputs", () => {
         "Language: en",
         "Source: youtube-transcript-api",
         "Provenance: unknown",
+        "",
+        "## Transcript",
         "",
         "**00:00** Technology can change media businesses.",
         "",

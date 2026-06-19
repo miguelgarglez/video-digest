@@ -842,8 +842,9 @@ describe("runCli", () => {
         return completedIngestion();
       },
       outputDir,
-      recoverPendingOutputTransactions: async (path) => {
+      withRecoveredOutputLibrary: async (path, operation) => {
         events.push(`recover:${path}`);
+        return operation();
       },
     };
     const io = { error: () => {}, log: () => {} };

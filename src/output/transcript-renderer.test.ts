@@ -81,6 +81,8 @@ describe("renderTranscriptMarkdown", () => {
         "Provenance: manual",
         "Channel: Example Channel",
         "",
+        "## Transcript",
+        "",
         "**00:00** First idea.",
         "",
         "**1:01:01** Second idea.",
@@ -103,6 +105,8 @@ describe("renderTranscriptMarkdown", () => {
         "Language: unknown",
         "Source: youtube-transcript-api",
         "Provenance: unknown",
+        "",
+        "## Transcript",
         "",
       ].join("\n"),
     );

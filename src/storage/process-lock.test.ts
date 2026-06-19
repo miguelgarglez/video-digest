@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -53,6 +53,7 @@ describe("withProcessLock", () => {
     await withProcessLock({
       filesystem: {
         access,
+        lstat,
         mkdir,
         readFile: (path) => readFile(path, "utf8"),
         rename,
@@ -60,6 +61,7 @@ describe("withProcessLock", () => {
           removedPaths.push(path.toString());
           await rm(path, options);
         },
+        stat,
         writeFile,
       },
       getProcessIdentity: async (pid) => pid === 101 ? null : "202:start",
@@ -80,5 +82,67 @@ describe("withProcessLock", () => {
       code: "already-running",
       message: "busy",
     });
+  });
+
+  test("rejects a symlink lock without mutating its external owner", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-lock-link-"));
+    const external = await mkdtemp(join(tmpdir(), "video-digest-lock-external-"));
+    const lockDir = join(root, "library.lock");
+    const ownerPath = join(external, "owner.json");
+    const owner = JSON.stringify({
+      createdAt: "2020-01-01T00:00:00.000Z",
+      pid: 101,
+      processIdentity: "101:dead",
+      schemaVersion: "process-lock.v0",
+      token: "external",
+    });
+    await writeFile(ownerPath, owner);
+    await symlink(external, lockDir);
+
+    await expect(withProcessLock({
+      getProcessIdentity: async (pid) => pid === 101 ? null : "202:start",
+      lockDir,
+      pid: 202,
+    }, async () => {})).rejects.toMatchObject({ code: "recovery-required" });
+    expect(await readFile(ownerPath, "utf8")).toBe(owner);
+  });
+
+  test("recovers a stale canonical lock created before owner publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-lock-empty-"));
+    const lockDir = join(root, "library.lock");
+    await mkdir(lockDir);
+    await utimes(lockDir, new Date(0), new Date(0));
+    let ran = false;
+
+    await withProcessLock({
+      getProcessIdentity: async () => "202:start",
+      lockDir,
+      pid: 202,
+      tokenFactory: () => "replacement",
+    }, async () => { ran = true; });
+
+    expect(ran).toBe(true);
+  });
+
+  test("recovers a stale recovery claim created before owner publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-lock-empty-claim-"));
+    const lockDir = join(root, "library.lock");
+    const claimDir = join(lockDir, "recovery-claim");
+    await mkdir(claimDir, { recursive: true });
+    await writeFile(join(lockDir, "owner.json"), JSON.stringify({
+      createdAt: "2020-01-01T00:00:00.000Z",
+      pid: 101,
+      processIdentity: "101:dead",
+      schemaVersion: "process-lock.v0",
+      token: "dead",
+    }));
+    await utimes(claimDir, new Date(0), new Date(0));
+
+    await expect(withProcessLock({
+      getProcessIdentity: async (pid) => pid === 101 ? null : "202:start",
+      lockDir,
+      pid: 202,
+      tokenFactory: () => "replacement",
+    }, async () => {})).resolves.toBeUndefined();
   });
 });
