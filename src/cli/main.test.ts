@@ -804,7 +804,7 @@ describe("runCli", () => {
     expect(checkedPath).toBe("/effective-env");
   });
 
-  test("lists digest artifacts in human and json output", async () => {
+  test("lists Library Entries in human and versioned json output", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const logs: string[] = [];
     const jsonLogs: string[] = [];
@@ -818,12 +818,53 @@ describe("runCli", () => {
 
     expect(humanExit).toBe(0);
     expect(logs.join("\n")).toContain("1ZgUcrR0K7I");
-    expect(logs.join("\n")).toContain("Generated Digest Title");
+    expect(logs.join("\n")).toContain("Generated Video Title");
     expect(jsonExit).toBe(0);
-    expect(JSON.parse(jsonLogs[0]!).items[0]).toMatchObject({
-      digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
-      digestTitle: "Generated Digest Title",
-      metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+    expect(JSON.parse(jsonLogs[0]!)).toMatchObject({
+      schemaVersion: "library-list.v0",
+      items: [{
+        channel: "Generated Channel",
+        paths: {
+          digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
+          metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+        },
+        title: "Generated Video Title",
+        updatedAt: "2026-06-18T12:00:00.000Z",
+        videoId: "1ZgUcrR0K7I",
+      }],
+    });
+  });
+
+  test("lists and resolves transcript-only Library Entries", async () => {
+    const outputDir = await createOutputDirWithTranscript("1ZgUcrR0K7I");
+    const listLogs: string[] = [];
+    const openLogs: string[] = [];
+
+    expect(await runCli(
+      ["list", "--json"],
+      { error: () => {}, log: (message) => listLogs.push(message) },
+      { outputDir },
+    )).toBe(0);
+    expect(JSON.parse(listLogs[0]!)).toMatchObject({
+      items: [{
+        paths: {
+          digestPath: null,
+          transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+        },
+        videoId: "1ZgUcrR0K7I",
+      }],
+      schemaVersion: "library-list.v0",
+    });
+
+    expect(await runCli(
+      ["open", "latest", "--json"],
+      { error: () => {}, log: (message) => openLogs.push(message) },
+      { outputDir },
+    )).toBe(0);
+    expect(JSON.parse(openLogs[0]!)).toMatchObject({
+      openPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+      paths: { digestPath: null },
+      schemaVersion: "open-result.v0",
       videoId: "1ZgUcrR0K7I",
     });
   });
@@ -881,7 +922,8 @@ describe("runCli", () => {
     expect(exitCode).toBe(0);
     expect(opened).toEqual([]);
     expect(JSON.parse(logs[0]!)).toMatchObject({
-      digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
+      openPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
+      paths: { digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md") },
       schemaVersion: "open-result.v0",
       videoId: "1ZgUcrR0K7I",
     });
@@ -1406,18 +1448,46 @@ async function createOutputDirWithDigest(videoId: string): Promise<string> {
   await writeFile(
     metadataPath,
     JSON.stringify({
+      metadataSchemaVersion: "metadata.v0",
+      processedAt: "2026-06-18T12:00:00.000Z",
       digest: {
         digestTitle: "Generated Digest Title",
       },
       video: {
         canonicalUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        channel: "Generated Channel",
+        durationSeconds: 60,
         videoId,
+        videoTitle: "Generated Video Title",
       },
     }),
     { flag: "w" },
   );
 
   expect(await readFile(digestPath, "utf8")).toContain("Generated Digest Title");
+  return outputDir;
+}
+
+async function createOutputDirWithTranscript(videoId: string): Promise<string> {
+  const outputDir = await mkdtemp(join(tmpdir(), "video-digest-cli-transcript-"));
+  await mkdir(join(outputDir, "metadata"), { recursive: true });
+  await mkdir(join(outputDir, "transcripts"), { recursive: true });
+  await writeFile(join(outputDir, "transcripts", `${videoId}.md`), "# Transcript\n");
+  await writeFile(join(outputDir, "transcripts", `${videoId}.json`), "{}\n");
+  await writeFile(join(outputDir, "transcripts", `${videoId}.txt`), "Transcript\n");
+  await writeFile(join(outputDir, "metadata", `${videoId}.json`), JSON.stringify({
+    metadataSchemaVersion: "metadata.v0",
+    mode: "transcript-only",
+    processedAt: "2026-06-18T12:00:00.000Z",
+    transcriptQuality: {},
+    video: {
+      canonicalUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      channel: null,
+      durationSeconds: 60,
+      videoId,
+      videoTitle: null,
+    },
+  }));
   return outputDir;
 }
 

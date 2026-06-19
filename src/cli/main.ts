@@ -1,7 +1,7 @@
 import { stdin, stdout } from "node:process";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { listArtifacts, resolveOpenTarget, type ArtifactEntry } from "./artifacts";
+import { listLibraryEntries, resolveLibraryEntry, type LibraryEntry } from "./artifacts";
 import {
   MacOSKeychainCredentialStore,
   resolveOpenCodeApiKey,
@@ -131,12 +131,12 @@ export async function runCli(
     if (result.value.command === "list") {
       const items = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
         artifactLibrary.path,
-        () => listArtifacts(artifactLibrary.path),
+        () => listLibraryEntries(artifactLibrary.path),
       );
       if (result.value.json) {
-        io.log(JSON.stringify({ items, schemaVersion: "artifact-list.v0" }));
+        io.log(JSON.stringify({ items, schemaVersion: "library-list.v0" }));
       } else {
-        printArtifactList(items, io);
+        printLibraryEntries(items, io);
       }
       return 0;
     }
@@ -147,9 +147,9 @@ export async function runCli(
       const openResult = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
         artifactLibrary.path,
         async () => {
-          const resolved = await resolveOpenTarget(artifactLibrary.path, target);
+          const resolved = await resolveLibraryEntry(artifactLibrary.path, target);
           if (resolved.ok && !json) {
-            await (dependencies.openPath ?? openWithSystem)(resolved.item.digestPath);
+            await (dependencies.openPath ?? openWithSystem)(resolved.openPath);
           }
           return resolved;
         },
@@ -158,7 +158,7 @@ export async function runCli(
       if (!openResult.ok) {
         const payload = {
           error: {
-            code: "digest-not-found",
+            code: "library-entry-not-found",
             message: openResult.message,
           },
           schemaVersion: "open-result.v0",
@@ -174,9 +174,13 @@ export async function runCli(
       }
 
       if (result.value.json) {
-        io.log(JSON.stringify({ schemaVersion: "open-result.v0", ...openResult.item }));
+        io.log(JSON.stringify({
+          ...openResult.item,
+          openPath: openResult.openPath,
+          schemaVersion: "open-result.v0",
+        }));
       } else {
-        io.log(`Opened digest: ${openResult.item.digestPath}`);
+        io.log(`Opened: ${openResult.openPath}`);
       }
 
       return 0;
@@ -716,14 +720,16 @@ function printDoctorReport(report: DoctorReport, io: CliIO): void {
   }
 }
 
-function printArtifactList(items: ArtifactEntry[], io: CliIO): void {
+function printLibraryEntries(items: LibraryEntry[], io: CliIO): void {
   if (items.length === 0) {
-    io.log("No digests found.");
+    io.log("No Library Entries found.");
     return;
   }
 
   for (const item of items) {
-    io.log(`${item.videoId}  ${item.digestTitle ?? "(untitled)"}  ${item.digestPath}`);
+    const label = item.title ?? item.videoId;
+    const path = item.paths.digestPath ?? item.paths.transcriptMarkdownPath ?? item.paths.metadataPath;
+    io.log(`${item.videoId}  ${label}  ${path}`);
   }
 }
 
