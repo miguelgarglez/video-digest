@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { copyText, openPath, revealPath, SystemActionError, type SpawnCommand } from "./system-actions";
+import { copyText, openPath, revealPath, spawnCommand, SystemActionError, type SpawnCommand } from "./system-actions";
 
 function recordingSpawn(exitCode = 0, stderr = ""): { calls: Array<{ command: string[]; stdin?: string }>; spawn: SpawnCommand } {
   const calls: Array<{ command: string[]; stdin?: string }> = [];
@@ -17,6 +17,38 @@ describe("macOS system actions", () => {
     const fake = recordingSpawn();
     await copyText("hello\n", fake.spawn);
     expect(fake.calls).toEqual([{ command: ["pbcopy"], stdin: "hello\n" }]);
+  });
+
+  test("preserves a large Unicode payload exactly", async () => {
+    const fake = recordingSpawn();
+    const text = `${"🧠 résumé 日本語\n".repeat(100_000)}final\n`;
+    await copyText(text, fake.spawn);
+    expect(fake.calls[0]?.stdin).toBe(text);
+  });
+
+  test("maps early-exit input delivery failures without an unhandled rejection", async () => {
+    const spawn: SpawnCommand = async () => {
+      await Promise.resolve();
+      throw Object.assign(new Error("broken pipe detail"), { code: "EPIPE" });
+    };
+    await expect(copyText("large text", spawn)).rejects.toMatchObject({ code: "copy-failed" });
+  });
+
+  test("delivers a backpressured Unicode Blob before reporting success", async () => {
+    const text = "🧠日本語résumé".repeat(200_000);
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const result = await spawnCommand([
+      process.execPath,
+      "-e",
+      "const s=await Bun.stdin.text();process.exit(new TextEncoder().encode(s).byteLength===Number(Bun.argv.at(-1))?0:1)",
+      String(byteLength),
+    ], { stdin: text });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("maps a real early child exit while a large input is pending", async () => {
+    await expect(copyText("x".repeat(2_000_000), (command, options) =>
+      spawnCommand(["/bin/sh", "-c", "exit 9"], options))).rejects.toMatchObject({ code: "copy-failed" });
   });
 
   test("opens and reveals paths without invoking a shell", async () => {

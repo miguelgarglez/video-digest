@@ -63,9 +63,14 @@ export type CliDependencies = {
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
   libraryFileOperations?: Partial<LibraryFileOperations>;
   metadataSource?: VideoMetadataSource;
+  openGeneratedTranscript?: (input: {
+    open: (path: string) => Promise<void>;
+    outputDir: string;
+    path: string;
+    videoId: string;
+  }) => Promise<void>;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
-  readTextFile?: (path: string) => Promise<string>;
   systemActions?: SystemActions;
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
@@ -223,8 +228,13 @@ export async function runCli(
         json,
         metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
         outputDir: artifactLibrary.path,
+        openGeneratedTranscript: dependencies.openGeneratedTranscript ?? ((openInput) =>
+          openGeneratedTranscriptSecurely({
+            ...openInput,
+            fileOperations: dependencies.libraryFileOperations,
+            withRecoveredLibrary: dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary,
+          })),
         presentation: { copy, open, stdout: stdoutMode },
-        readTextFile: dependencies.readTextFile ?? ((path) => readFile(path, "utf8")),
         spinnerIntervalMs: dependencies.spinnerIntervalMs,
         systemActions: dependencies.systemActions ?? createMacOSSystemActions(),
         video,
@@ -497,16 +507,18 @@ async function resolveCliOptions(args: string[], io: CliIO): Promise<ReturnType<
   const outputDirArgs = outputDirIndex === -1
     ? []
     : ["--output-dir", args[outputDirIndex + 1]!];
+  const sharedArgs = args.includes("--json") ? ["--json"] : [];
 
   if (mode === "2" || mode.toLowerCase() === "transcript") {
-    return parseCliArgs(["transcript", url, ...outputDirArgs]);
+    const presentationArgs = ["--copy", "--open", "--stdout"].filter((flag) => args.includes(flag));
+    return parseCliArgs(["transcript", url, ...presentationArgs, ...sharedArgs, ...outputDirArgs]);
   }
 
   const emailPreview = args.includes("--email-preview") || isAffirmative(
     await io.prompt("Create email preview? [y/N]: "),
   );
 
-  return parseCliArgs(["ingest", url, ...(emailPreview ? ["--email-preview"] : []), ...outputDirArgs]);
+  return parseCliArgs(["ingest", url, ...(emailPreview ? ["--email-preview"] : []), ...sharedArgs, ...outputDirArgs]);
 }
 
 async function runConfigCommand(
@@ -646,8 +658,8 @@ async function runTranscriptCommand(input: {
   json: boolean;
   metadataSource: VideoMetadataSource;
   outputDir: string;
+  openGeneratedTranscript?: NonNullable<CliDependencies["openGeneratedTranscript"]>;
   presentation?: { copy: boolean; open: boolean; stdout: boolean };
-  readTextFile?: (path: string) => Promise<string>;
   spinnerIntervalMs?: number;
   systemActions?: SystemActions;
   video: { canonicalUrl: string; videoId: string };
@@ -665,9 +677,7 @@ async function runTranscriptCommand(input: {
     video: input.video,
   }).finally(() => progress?.stop());
 
-  const cleanText = presentation.stdout || presentation.copy
-    ? await input.readTextFile!(transcriptResult.paths.transcriptTextPath)
-    : null;
+  const cleanText = transcriptResult.cleanText;
 
   if (input.json) {
     printTranscriptJson(input.video.canonicalUrl, input.video.videoId, transcriptResult, input.io);
@@ -683,11 +693,41 @@ async function runTranscriptCommand(input: {
       if (!presentation.stdout) input.io.log("Copied transcript text to the clipboard.");
     }
     if (presentation.open) {
-      await input.systemActions!.open(transcriptResult.paths.transcriptMarkdownPath);
+      await input.openGeneratedTranscript!({
+        open: input.systemActions!.open,
+        outputDir: input.outputDir,
+        path: transcriptResult.paths.transcriptMarkdownPath,
+        videoId: input.video.videoId,
+      });
       if (!presentation.stdout) input.io.log("Opened transcript Markdown.");
     }
   }
   return transcriptResult.exitCode;
+}
+
+async function openGeneratedTranscriptSecurely(input: {
+  fileOperations?: Partial<LibraryFileOperations>;
+  open: (path: string) => Promise<void>;
+  outputDir: string;
+  path: string;
+  videoId: string;
+  withRecoveredLibrary: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
+}): Promise<void> {
+  const failure = new SystemActionError(
+    "open-failed",
+    "Could not open the transcript. Open the Markdown file from its reported path.",
+  );
+  try {
+    await input.withRecoveredLibrary(input.outputDir, async () => {
+      const resolved = await resolveLibraryEntry(input.outputDir, input.videoId, input.fileOperations);
+      if (!resolved.ok || resolved.openPath !== input.path) throw failure;
+      await revalidateLibraryOpenTarget(resolved.openTarget, input.fileOperations);
+      await input.open(resolved.openPath);
+    });
+  } catch (error) {
+    if (error instanceof SystemActionError) throw error;
+    throw failure;
+  }
 }
 
 function writeExact(io: CliIO, text: string): void {
@@ -799,8 +839,15 @@ function printTranscriptResult(
 }
 
 function formatTerminalPath(path: string, io: CliIO): string {
-  if (io.supportsHyperlinks !== true) return path;
-  return `\u001b]8;;${pathToFileURL(resolve(path)).href}\u0007${path}\u001b]8;;\u0007`;
+  const label = sanitizeTerminalLabel(path);
+  if (io.supportsHyperlinks !== true || label !== path) return label;
+  const uri = pathToFileURL(resolve(path)).href;
+  if (sanitizeTerminalLabel(uri) !== uri) return label;
+  return `\u001b]8;;${uri}\u0007${label}\u001b]8;;\u0007`;
+}
+
+export function sanitizeTerminalLabel(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, "�");
 }
 
 function printTranscriptJson(
@@ -838,7 +885,7 @@ function printLibraryEntries(items: LibraryEntry[], io: CliIO): void {
   }
 
   for (const item of items) {
-    const label = item.title ?? item.videoId;
+    const label = sanitizeTerminalLabel(item.title ?? item.videoId);
     const path = item.paths.digestPath ?? item.paths.transcriptMarkdownPath ?? item.paths.metadataPath;
     io.log(`${item.videoId}  ${label}  ${formatTerminalPath(path, io)}`);
   }

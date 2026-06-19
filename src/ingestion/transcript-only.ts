@@ -11,6 +11,7 @@ import {
   type VideoMetadataSource,
 } from "../video/video-metadata-source";
 import type { IngestionProgressEvent } from "./ingest-video";
+import { renderTranscriptText } from "../output/transcript-renderer";
 
 export type FetchTranscriptOnlyInput = {
   metadataSource?: VideoMetadataSource;
@@ -21,6 +22,7 @@ export type FetchTranscriptOnlyInput = {
 };
 
 export type FetchTranscriptOnlyResult = {
+  cleanText: string;
   exitCode: 0;
   paths: TranscriptOnlyOutputPaths;
   status: "completed";
@@ -36,9 +38,11 @@ export async function fetchTranscriptOnly(
 
   emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);
+  const cleanText = renderTranscriptText(transcript);
 
   emitProgress(input, "writing-outputs");
   const paths = await writeTranscriptOnlyOutputs({
+    cleanText,
     metadata,
     outputDir: input.outputDir,
     transcript,
@@ -49,6 +53,7 @@ export async function fetchTranscriptOnly(
   emitProgress(input, "completed");
 
   return {
+    cleanText,
     exitCode: 0,
     paths,
     status: "completed",

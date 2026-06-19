@@ -65,19 +65,14 @@ async function execute(
   }
 }
 
-async function spawnCommand(command: readonly string[], options: { stdin?: string } = {}): Promise<SpawnResult> {
+export async function spawnCommand(command: readonly string[], options: { stdin?: string } = {}): Promise<SpawnResult> {
   const child = Bun.spawn([...command], {
-    stdin: options.stdin === undefined ? "ignore" : "pipe",
+    // A buffered Blob makes Bun own the complete delivery lifecycle. There are no
+    // FileSink write/end promises that can reject after this function returns.
+    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
     stdout: "ignore",
     stderr: "pipe",
   });
-
-  if (options.stdin !== undefined) {
-    const childStdin = child.stdin;
-    if (!childStdin) throw new Error("Command stdin is unavailable.");
-    childStdin.write(options.stdin);
-    childStdin.end();
-  }
 
   const [exitCode, stderr] = await Promise.all([
     child.exited,

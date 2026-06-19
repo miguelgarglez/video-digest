@@ -104,11 +104,12 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   if (unsupportedOption && command !== "setup") {
     return failure("unsupported-option", `Unsupported ${command ?? "CLI"} option: ${unsupportedOption}`);
   }
-  const unsupportedAction = ["--copy", "--open", "--stdout"].find((flag) => args.includes(flag) && command !== "transcript");
+  const unsupportedAction = ["--copy", "--open", "--stdout"].find((flag) =>
+    args.includes(flag) && command !== undefined && command !== "transcript");
   if (unsupportedAction) {
     return failure("unsupported-option", `${unsupportedAction} is only supported for transcript.`);
   }
-  if (command === "transcript" && args.includes("--json") && args.includes("--stdout")) {
+  if ((command === "transcript" || command === undefined) && args.includes("--json") && args.includes("--stdout")) {
     return failure("conflicting-options", "--stdout cannot be combined with --json. Remove one of these options.");
   }
 
@@ -389,7 +390,7 @@ function allowedOptionsFor(command: string | undefined): Set<string> {
     case "doctor":
     case "config": return new Set(common);
     default:
-      return new Set([...common, "--email-preview", "--output-dir"]);
+      return new Set([...common, "--copy", "--email-preview", "--open", "--output-dir", "--stdout"]);
   }
 }
 

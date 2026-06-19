@@ -31,6 +31,7 @@ export type IngestionOutputPaths = {
 };
 
 export type TranscriptOnlyOutputInput = {
+  cleanText?: string;
   metadata?: VideoMetadata;
   outputDir: string;
   transcript: Transcript;
@@ -175,7 +176,7 @@ async function writeTranscriptOnlyOutputsLocked(
     [
       { contents: `${JSON.stringify(input.transcript, null, 2)}\n`, path: paths.transcriptJsonPath },
       { contents: renderTranscriptMarkdown(input), path: paths.transcriptMarkdownPath },
-      { contents: renderTranscriptText(input.transcript), path: paths.transcriptTextPath },
+      { contents: input.cleanText ?? renderTranscriptText(input.transcript), path: paths.transcriptTextPath },
       {
         contents: `${JSON.stringify(buildTranscriptOnlyMetadata(input), null, 2)}\n`,
         path: paths.metadataPath,

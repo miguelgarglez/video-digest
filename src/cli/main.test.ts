@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -12,6 +12,8 @@ import { TranscriptSourceError, type Transcript } from "../transcript/transcript
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import { RuntimeSetupError } from "./runtime-manager";
 import type { LibraryFileOperations } from "./artifacts";
+import { writeTranscriptOnlyOutputs } from "../output/output-writer";
+import { SystemActionError } from "./system-actions";
 
 async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<number> {
   return runCliProduction(args, io, {
@@ -40,17 +42,13 @@ describe("runCli", () => {
       { error: (message) => errors.push(message), log: (message) => logs.push(message), write: (message) => writes.push(message) },
       {
         fetchTranscriptOnly: async () => { fetchCalls += 1; return completedTranscriptOnly(); },
-        readTextFile: async (path) => {
-          expect(path).toBe("outputs/transcripts/1ZgUcrR0K7I.txt");
-          return "First paragraph.\n\nSecond paragraph.\n";
-        },
       },
     );
     expect(exitCode).toBe(0);
     expect(fetchCalls).toBe(1);
     expect(logs).toEqual([]);
     expect(errors).toEqual([]);
-    expect(writes.join("")).toBe("First paragraph.\n\nSecond paragraph.\n");
+    expect(writes.join("")).toBe("Hello from the transcript.\n");
   });
 
   test("transcript actions copy clean text and open Markdown after writing artifacts", async () => {
@@ -60,20 +58,112 @@ describe("runCli", () => {
       { error: () => {}, log: () => {} },
       {
         fetchTranscriptOnly: async () => { calls.push("write"); return completedTranscriptOnly(); },
-        readTextFile: async () => "exact text\n",
         systemActions: {
           copy: async (text) => { calls.push(`copy:${text}`); },
           open: async (path) => { calls.push(`open:${path}`); },
           reveal: async () => {},
         },
+        openGeneratedTranscript: async ({ open, path }) => open(path),
       },
     );
     expect(exitCode).toBe(0);
     expect(calls).toEqual([
       "write",
-      "copy:exact text\n",
+      "copy:Hello from the transcript.\n",
       "open:outputs/transcripts/1ZgUcrR0K7I.md",
     ]);
+  });
+
+  test("holds the Artifact Library lock while opening the revalidated generated Markdown", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-action-open-"));
+    const paths = await writeTranscriptOnlyOutputs({
+      outputDir,
+      transcript: transcriptFixture(),
+      transcriptQuality: qualityFixture(),
+      video: videoFixture(),
+    });
+    let writerWasFenced = false;
+    const errors: string[] = [];
+    const exitCode = await runCli(
+      ["transcript", videoFixture().canonicalUrl, "--open", "--output-dir", outputDir],
+      { error: (message) => errors.push(message), log: () => {} },
+      {
+        fetchTranscriptOnly: async () => ({ cleanText: "Useful content.\n", exitCode: 0, paths, status: "completed", transcriptQuality: qualityFixture() }),
+        systemActions: {
+          copy: async () => {},
+          open: async (path) => {
+            expect(path).toBe(paths.transcriptMarkdownPath);
+            await expect(writeTranscriptOnlyOutputs({
+              outputDir,
+              transcript: transcriptFixture(),
+              transcriptQuality: qualityFixture(),
+              video: videoFixture(),
+            })).rejects.toMatchObject({ code: "already-running" });
+            writerWasFenced = true;
+          },
+          reveal: async () => {},
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(errors).toEqual([]);
+    expect(writerWasFenced).toBe(true);
+  });
+
+  test("refuses a swapped generated Markdown path before invoking the opener", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-action-swap-"));
+    const paths = await writeTranscriptOnlyOutputs({
+      outputDir,
+      transcript: transcriptFixture(),
+      transcriptQuality: qualityFixture(),
+      video: videoFixture(),
+    });
+    const victim = join(outputDir, "outside.md");
+    await writeFile(victim, "outside");
+    await unlink(paths.transcriptMarkdownPath);
+    await symlink(victim, paths.transcriptMarkdownPath);
+    let openCalls = 0;
+    const errors: string[] = [];
+    const exitCode = await runCli(
+      ["transcript", videoFixture().canonicalUrl, "--open", "--output-dir", outputDir],
+      { error: (message) => errors.push(message), log: () => {} },
+      {
+        fetchTranscriptOnly: async () => ({ cleanText: "Useful content.\n", exitCode: 0, paths, status: "completed", transcriptQuality: qualityFixture() }),
+        systemActions: { copy: async () => {}, open: async () => { openCalls += 1; }, reveal: async () => {} },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(openCalls).toBe(0);
+    expect(errors).toEqual(["Could not open the transcript. Open the Markdown file from its reported path."]);
+    expect(await readFile(victim, "utf8")).toBe("outside");
+  });
+
+  test.each([
+    ["--copy", "copy-failed", "Could not copy the transcript. Ensure pbcopy is available and try again."],
+    ["--open", "open-failed", "Could not open the transcript. Open the Markdown file from its reported path."],
+  ] as const)("keeps committed artifacts and reports stable %s action failures", async (flag, code, message) => {
+    let artifactsCommitted = false;
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const failure = new SystemActionError(code, message);
+    const exitCode = await runCli(
+      ["transcript", videoFixture().canonicalUrl, flag],
+      { error: (value) => errors.push(value), log: (value) => logs.push(value) },
+      {
+        fetchTranscriptOnly: async () => { artifactsCommitted = true; return completedTranscriptOnly(); },
+        openGeneratedTranscript: async ({ open, path }) => open(path),
+        systemActions: {
+          copy: async () => { throw failure; },
+          open: async () => { throw failure; },
+          reveal: async () => {},
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(artifactsCommitted).toBe(true);
+    expect(errors).toEqual([message]);
+    expect(logs).not.toContain("Copied transcript text to the clipboard.");
+    expect(logs).not.toContain("Opened transcript Markdown.");
   });
 
   test("json mode never performs system actions", async () => {
@@ -119,6 +209,20 @@ describe("runCli", () => {
     expect(linked.join("\n")).toContain("\u001b]8;;file://");
     expect(linked.join("\n")).toContain("outputs/transcripts/1ZgUcrR0K7I.md\u001b]8;;\u0007");
     expect(plain.join("\n")).not.toContain("\u001b]8;;");
+  });
+
+  test("sanitizes control characters in terminal paths and disables their hyperlinks", async () => {
+    const logs: string[] = [];
+    await runCli(
+      ["transcript", "https://youtu.be/1ZgUcrR0K7I", "--output-dir", "/tmp/bad\n\u001b]8;;https://evil.example\u0007"],
+      { error: () => {}, log: (message) => logs.push(message), supportsHyperlinks: true },
+      { fetchTranscriptOnly: async () => completedTranscriptOnly("/tmp/bad\n\u001b]8;;https://evil.example\u0007") },
+    );
+    const output = logs.join("\n");
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\u0007");
+    expect(output.split("\n")).toHaveLength(6);
+    expect(output).toContain("�");
   });
 
   test("setup requires explicit consent before preparing the isolated runtime", async () => {
@@ -1511,6 +1615,33 @@ describe("runCli", () => {
     expect(logs).toContain("Fetched transcript for 1ZgUcrR0K7I");
   });
 
+  test.each(["--copy", "--open", "--stdout"])("preserves interactive transcript action %s", async (flag) => {
+    const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
+    const actions: string[] = [];
+    const writes: string[] = [];
+    const exitCode = await runCli(
+      [flag],
+      {
+        error: () => {},
+        log: () => {},
+        prompt: async () => answers.shift() ?? "",
+        write: (text) => writes.push(text),
+      },
+      {
+        fetchTranscriptOnly: async () => completedTranscriptOnly(),
+        openGeneratedTranscript: async ({ open, path }) => open(path),
+        systemActions: {
+          copy: async () => { actions.push("copy"); },
+          open: async () => { actions.push("open"); },
+          reveal: async () => {},
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(actions).toEqual(flag === "--copy" ? ["copy"] : flag === "--open" ? ["open"] : []);
+    expect(writes).toEqual(flag === "--stdout" ? ["Hello from the transcript.\n"] : []);
+  });
+
   test("preserves output-dir when interactively selecting transcript", async () => {
     const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
     let outputDir = "";
@@ -1665,14 +1796,15 @@ function completedIngestion(): IngestVideoResult {
   };
 }
 
-function completedTranscriptOnly(): FetchTranscriptOnlyResult {
+function completedTranscriptOnly(outputDir = "outputs"): FetchTranscriptOnlyResult {
   return {
+    cleanText: "Hello from the transcript.\n",
     exitCode: 0,
     paths: {
-      metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-      transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
-      transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
-      transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
+      metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+      transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+      transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
     },
     status: "completed",
     transcriptQuality: {
@@ -1702,6 +1834,26 @@ function transcriptFixture(): Transcript {
     ],
     source: "youtube-transcript-api",
     videoId: "1ZgUcrR0K7I",
+  };
+}
+
+function videoFixture() {
+  return {
+    canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+    videoId: "1ZgUcrR0K7I",
+  };
+}
+
+function qualityFixture(): TranscriptQuality {
+  return {
+    averageCharsPerMinute: 720,
+    durationSeconds: 300,
+    language: "en",
+    qualitySchemaVersion: "transcript-quality.v0",
+    segmentCount: 60,
+    status: "usable",
+    totalTextLength: 3600,
+    warnings: [],
   };
 }
 

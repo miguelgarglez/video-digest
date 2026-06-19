@@ -23,6 +23,7 @@ describe("fetchTranscriptOnly", () => {
     });
 
     expect(result).toEqual({
+      cleanText: expect.any(String),
       exitCode: 0,
       paths: {
         metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
@@ -43,6 +44,7 @@ describe("fetchTranscriptOnly", () => {
     expect(await readFile(result.paths.transcriptTextPath, "utf8")).toContain(
       "This is a substantial transcript segment with useful content.",
     );
+    expect(result.cleanText).toBe(await readFile(result.paths.transcriptTextPath, "utf8"));
   });
 
   test("persists one best-effort metadata lookup in JSON and Markdown", async () => {
