@@ -1,12 +1,16 @@
-import { mkdtemp, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { createDigest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
-import { writeIngestionOutputs, writeTranscriptOnlyOutputs } from "./output-writer";
+import {
+  OutputRecoveryError,
+  writeIngestionOutputs,
+  writeTranscriptOnlyOutputs,
+} from "./output-writer";
 
 describe("writeIngestionOutputs", () => {
   test("writes versioned transcript, digest, metadata, and email preview files", async () => {
@@ -166,6 +170,150 @@ describe("writeIngestionOutputs", () => {
     expect((await readdir(outputDir, { recursive: true })).filter((path) => path.endsWith(".tmp")))
       .toEqual([]);
   });
+
+  test("restores every previous artifact when replacement fails after installation starts", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-rollback-"));
+    const oldArtifacts = artifactContents(outputDir);
+    await seedArtifacts(oldArtifacts);
+    let installedCount = 0;
+
+    await expect(
+      writeIngestionOutputs(
+        {
+          digest,
+          emailPreview: true,
+          outputDir,
+          transcript,
+          transcriptQuality: usableQuality,
+          video,
+        },
+        {
+          rename: async (from, to) => {
+            if (from.endsWith(".tmp")) {
+              installedCount += 1;
+              if (installedCount === 2) throw new Error("simulated install failure");
+            }
+            await rename(from, to);
+          },
+          unlink,
+          writeFile,
+        },
+      ),
+    ).rejects.toThrow("simulated install failure");
+
+    expect(installedCount).toBe(2);
+    for (const [path, contents] of oldArtifacts) {
+      expect(await readFile(path, "utf8")).toBe(contents);
+    }
+    expect(
+      (await readdir(outputDir, { recursive: true })).filter(
+        (path) => path.endsWith(".tmp") || path.endsWith(".backup"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("removes a stale email preview when a later ingest disables it", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-stale-email-"));
+    const emailPath = join(outputDir, "emails", `${video.videoId}.md`);
+
+    await writeIngestionOutputs({
+      digest,
+      emailPreview: true,
+      outputDir,
+      transcript,
+      transcriptQuality: usableQuality,
+      video,
+    });
+    expect(await readFile(emailPath, "utf8")).toContain("Subject:");
+
+    await writeIngestionOutputs({
+      digest,
+      emailPreview: false,
+      outputDir,
+      transcript,
+      transcriptQuality: usableQuality,
+      video,
+    });
+
+    await expect(readFile(emailPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("restores a stale email when an ingest without preview rolls back", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-stale-email-rollback-"));
+    const emailPath = join(outputDir, "emails", `${video.videoId}.md`);
+    await mkdir(dirname(emailPath), { recursive: true });
+    await writeFile(emailPath, "previous email\n");
+    let installedCount = 0;
+
+    await expect(
+      writeIngestionOutputs(
+        {
+          digest,
+          emailPreview: false,
+          outputDir,
+          transcript,
+          transcriptQuality: usableQuality,
+          video,
+        },
+        {
+          rename: async (from, to) => {
+            if (from.endsWith(".tmp") && ++installedCount === 2) {
+              throw new Error("simulated install failure");
+            }
+            await rename(from, to);
+          },
+        },
+      ),
+    ).rejects.toThrow("simulated install failure");
+
+    expect(await readFile(emailPath, "utf8")).toBe("previous email\n");
+    expect(
+      (await readdir(outputDir, { recursive: true })).filter(
+        (path) => path.endsWith(".tmp") || path.endsWith(".backup"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("preserves and reports a backup whose restoration fails", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-recovery-error-"));
+    const oldArtifacts = artifactContents(outputDir);
+    await seedArtifacts(oldArtifacts);
+    let installedCount = 0;
+    let unrestoredBackupPath = "";
+
+    const promise = writeIngestionOutputs(
+      {
+        digest,
+        emailPreview: true,
+        outputDir,
+        transcript,
+        transcriptQuality: usableQuality,
+        video,
+      },
+      {
+        rename: async (from, to) => {
+          if (from.endsWith(".tmp") && ++installedCount === 2) {
+            throw new Error("simulated install failure");
+          }
+          if (from.endsWith(".backup") && to.endsWith(".json") && to.includes("transcripts")) {
+            unrestoredBackupPath = from;
+            throw new Error("simulated restore failure");
+          }
+          await rename(from, to);
+        },
+      },
+    );
+
+    const error = await promise.catch((caught) => caught);
+    expect(error).toBeInstanceOf(OutputRecoveryError);
+    expect(error.preservedBackupPaths).toEqual([unrestoredBackupPath]);
+    expect(error.message).toContain("Restore these files manually");
+    expect(await readFile(unrestoredBackupPath, "utf8")).toBe("old transcript json\n");
+    const leftovers = (await readdir(outputDir, { recursive: true })).filter(
+      (path) => path.endsWith(".tmp") || path.endsWith(".backup"),
+    );
+    expect(leftovers).toEqual([unrestoredBackupPath.slice(outputDir.length + 1)]);
+  });
 });
 
 describe("writeTranscriptOnlyOutputs", () => {
@@ -275,3 +423,23 @@ const digest = createDigest({
   tldr: ["A concise digest."],
   verdict: "watch_fragments",
 });
+
+function artifactContents(outputDir: string): Map<string, string> {
+  return new Map([
+    [join(outputDir, "transcripts", `${video.videoId}.json`), "old transcript json\n"],
+    [join(outputDir, "transcripts", `${video.videoId}.md`), "old transcript markdown\n"],
+    [join(outputDir, "transcripts", `${video.videoId}.txt`), "old transcript text\n"],
+    [join(outputDir, "digests", `${video.videoId}.md`), "old digest\n"],
+    [join(outputDir, "metadata", `${video.videoId}.json`), "old metadata\n"],
+    [join(outputDir, "emails", `${video.videoId}.md`), "old email\n"],
+  ]);
+}
+
+async function seedArtifacts(artifacts: Map<string, string>): Promise<void> {
+  await Promise.all(
+    [...artifacts].map(async ([path, contents]) => {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, contents);
+    }),
+  );
+}

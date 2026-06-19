@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Digest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
@@ -40,16 +40,39 @@ export type TranscriptOnlyOutputPaths = {
 };
 
 export type OutputFileOperations = {
+  pathExists(path: string): Promise<boolean>;
   rename(from: string, to: string): Promise<void>;
   unlink(path: string): Promise<void>;
   writeFile(path: string, contents: string): Promise<void>;
 };
 
 const defaultFileOperations: OutputFileOperations = {
+  pathExists: async (path) => {
+    try {
+      await access(path);
+      return true;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return false;
+      throw error;
+    }
+  },
   rename,
   unlink,
   writeFile,
 };
+
+export class OutputRecoveryError extends Error {
+  constructor(
+    public readonly preservedBackupPaths: string[],
+    cause: unknown,
+  ) {
+    super(
+      `Artifact rollback could not restore every previous file. Preserved backup paths: ${preservedBackupPaths.join(", ")}. Restore these files manually before retrying.`,
+      { cause },
+    );
+    this.name = "OutputRecoveryError";
+  }
+}
 
 export type FailedIngestionMetadataInput = {
   error: {
@@ -63,7 +86,7 @@ export type FailedIngestionMetadataInput = {
 
 export async function writeIngestionOutputs(
   input: IngestionOutputInput,
-  fileOperations: OutputFileOperations = defaultFileOperations,
+  fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<IngestionOutputPaths> {
   const paths = outputPaths(input.outputDir, input.video.videoId, input.emailPreview);
 
@@ -85,14 +108,17 @@ export async function writeIngestionOutputs(
     { contents: `${JSON.stringify(buildMetadata(input), null, 2)}\n`, path: paths.metadataPath },
   ];
 
-  await writeFilesAtomically(entries, fileOperations);
+  const stalePaths = input.emailPreview
+    ? []
+    : [join(input.outputDir, "emails", `${input.video.videoId}.md`)];
+  await replaceArtifactsTransactionally(entries, stalePaths, fileOperations);
 
   return paths;
 }
 
 export async function writeTranscriptOnlyOutputs(
   input: TranscriptOnlyOutputInput,
-  fileOperations: OutputFileOperations = defaultFileOperations,
+  fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<TranscriptOnlyOutputPaths> {
   const paths = {
     metadataPath: join(input.outputDir, "metadata", `${input.video.videoId}.json`),
@@ -106,7 +132,7 @@ export async function writeTranscriptOnlyOutputs(
     mkdir(join(input.outputDir, "transcripts"), { recursive: true }),
   ]);
 
-  await writeFilesAtomically(
+  await replaceArtifactsTransactionally(
     [
       { contents: `${JSON.stringify(input.transcript, null, 2)}\n`, path: paths.transcriptJsonPath },
       { contents: renderTranscriptMarkdown(input), path: paths.transcriptMarkdownPath },
@@ -116,6 +142,7 @@ export async function writeTranscriptOnlyOutputs(
         path: paths.metadataPath,
       },
     ],
+    [],
     fileOperations,
   );
 
@@ -124,12 +151,12 @@ export async function writeTranscriptOnlyOutputs(
 
 export async function writeFailedIngestionMetadata(
   input: FailedIngestionMetadataInput,
-  fileOperations: OutputFileOperations = defaultFileOperations,
+  fileOperations: Partial<OutputFileOperations> = {},
 ): Promise<string> {
   const metadataPath = join(input.outputDir, "metadata", `${input.video.videoId}.json`);
 
   await mkdir(join(input.outputDir, "metadata"), { recursive: true });
-  await writeFilesAtomically(
+  await replaceArtifactsTransactionally(
     [
       {
         contents: `${JSON.stringify(
@@ -146,6 +173,7 @@ export async function writeFailedIngestionMetadata(
         path: metadataPath,
       },
     ],
+    [],
     fileOperations,
   );
 
@@ -183,14 +211,20 @@ function outputPaths(outputDir: string, videoId: string, emailPreview: boolean):
   };
 }
 
-async function writeFilesAtomically(
+async function replaceArtifactsTransactionally(
   entries: Array<{ contents: string; path: string }>,
-  fileOperations: OutputFileOperations,
+  removalPaths: string[],
+  operationOverrides: Partial<OutputFileOperations>,
 ): Promise<void> {
+  const fileOperations = { ...defaultFileOperations, ...operationOverrides };
+  const operationId = randomUUID();
   const temporaryEntries = entries.map((entry) => ({
     ...entry,
-    temporaryPath: `${entry.path}.${randomUUID()}.tmp`,
+    temporaryPath: `${entry.path}.${operationId}.tmp`,
   }));
+  const destinations = [...entries.map((entry) => entry.path), ...removalPaths];
+  const backups: Array<{ backupPath: string; path: string }> = [];
+  const installedPaths: string[] = [];
 
   try {
     const writeResults = await Promise.allSettled(
@@ -201,17 +235,68 @@ async function writeFilesAtomically(
       throw failedWrite.reason;
     }
 
+    for (const path of destinations) {
+      if (!(await fileOperations.pathExists(path))) continue;
+      const backupPath = `${path}.${operationId}.backup`;
+      await fileOperations.rename(path, backupPath);
+      backups.push({ backupPath, path });
+    }
+
     for (const entry of temporaryEntries) {
       await fileOperations.rename(entry.temporaryPath, entry.path);
+      installedPaths.push(entry.path);
+    }
+
+    const cleanupResults = await Promise.allSettled(
+      backups.map(({ backupPath }) => fileOperations.unlink(backupPath)),
+    );
+    const preservedBackupPaths = backups
+      .filter((_, index) => cleanupResults[index]?.status === "rejected")
+      .map(({ backupPath }) => backupPath);
+    if (preservedBackupPaths.length > 0) {
+      throw new OutputRecoveryError(preservedBackupPaths, cleanupResults);
     }
   } catch (error) {
-    await Promise.all(
-      temporaryEntries.map((entry) =>
-        fileOperations.unlink(entry.temporaryPath).catch(() => undefined),
-      ),
+    if (error instanceof OutputRecoveryError) throw error;
+
+    const recoveryFailures: string[] = [];
+    const backedUpPaths = new Set(backups.map(({ path }) => path));
+
+    for (const path of installedPaths.reverse()) {
+      try {
+        await fileOperations.unlink(path);
+      } catch (removalError) {
+        if (!backedUpPaths.has(path) && !isMissingPathError(removalError)) {
+          recoveryFailures.push(path);
+        }
+      }
+    }
+
+    for (const backup of backups.reverse()) {
+      try {
+        await fileOperations.rename(backup.backupPath, backup.path);
+      } catch {
+        recoveryFailures.push(backup.backupPath);
+      }
+    }
+
+    await Promise.allSettled(
+      temporaryEntries.map((entry) => fileOperations.unlink(entry.temporaryPath)),
     );
+
+    if (recoveryFailures.length > 0) {
+      throw new OutputRecoveryError(recoveryFailures, error);
+    }
     throw error;
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "ENOENT";
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function buildMetadata(input: IngestionOutputInput) {
