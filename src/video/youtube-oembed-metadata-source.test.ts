@@ -33,6 +33,14 @@ describe("YouTubeOEmbedMetadataSource", () => {
     expect(await source.fetch(video)).toEqual({ channel: null, title: null });
   });
 
+  test("maps a non-object JSON payload to null metadata", async () => {
+    const source = new YouTubeOEmbedMetadataSource(async () =>
+      new Response("null", { headers: { "content-type": "application/json" } }),
+    );
+
+    expect(await source.fetch(video)).toEqual({ channel: null, title: null });
+  });
+
   test("rejects non-success responses", async () => {
     const source = new YouTubeOEmbedMetadataSource(async () => new Response("missing", { status: 404 }));
 

@@ -21,10 +21,15 @@ export class YouTubeOEmbedMetadataSource implements VideoMetadataSource {
       throw new Error(`YouTube oEmbed failed with HTTP ${response.status}`);
     }
 
-    const payload = await response.json() as Record<string, unknown>;
+    const value: unknown = await response.json();
+    const payload = isRecord(value) ? value : {};
     return {
       channel: typeof payload.author_name === "string" ? payload.author_name : null,
       title: typeof payload.title === "string" ? payload.title : null,
     };
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
