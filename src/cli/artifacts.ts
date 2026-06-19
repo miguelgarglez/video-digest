@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, open, readdir, realpath, type FileHandle } from "node:fs/promises";
+import { lstat, open, readdir, readlink, realpath, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
@@ -22,6 +22,7 @@ export type LibraryFileOperations = {
   lstat(path: string): Promise<FileStats>;
   open(path: string, flags: number): Promise<LibraryFileHandle>;
   readdir(path: string): Promise<string[]>;
+  readlink(path: string): Promise<string>;
   realpath(path: string): Promise<string>;
 };
 
@@ -29,6 +30,7 @@ const defaultFileOperations: LibraryFileOperations = {
   lstat,
   open: (path, flags) => open(path, flags) as Promise<FileHandle & LibraryFileHandle>,
   readdir,
+  readlink,
   realpath,
 };
 
@@ -49,8 +51,13 @@ export type LibraryEntry = {
   videoId: string;
 };
 
-export type LibraryRootIdentity = FileIdentity & {
+export type LibraryRootIdentity = {
+  canonicalIdentity: FileIdentity;
   canonicalPath: string;
+  lexicalIdentity: FileIdentity & {
+    kind: "directory" | "symlink";
+    linkTarget: string | null;
+  };
   path: string;
 };
 
@@ -104,6 +111,7 @@ export async function listLibraryEntries(
   const operations = { ...defaultFileOperations, ...fileOperations };
   const root = await captureLibraryRoot(outputDir, operations);
   if (!root) return [];
+  await assertLibraryRootIdentity(root, operations);
 
   const metadataDir = join(outputDir, "metadata");
   const metadataParent = await captureDirectoryIfPresent(metadataDir, root, operations);
@@ -348,13 +356,26 @@ async function captureLibraryRoot(
 ): Promise<LibraryRootIdentity | null> {
   const stats = await lstatIfPresent(path, operations);
   if (!stats) return null;
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new LibraryIntegrityError(`Artifact Library root must be a non-symlink directory: ${path}`);
+  const isDirectory = stats.isDirectory() && !stats.isSymbolicLink();
+  const isSymlink = stats.isSymbolicLink();
+  if (!isDirectory && !isSymlink) {
+    throw new LibraryIntegrityError(`Artifact Library root must be a directory or a symlink to one: ${path}`);
   }
+  const linkTarget = isSymlink ? await operations.readlink(path) : null;
+  const canonicalPath = await operations.realpath(path);
+  const canonicalStats = await operations.lstat(canonicalPath);
+  if (!canonicalStats.isDirectory() || canonicalStats.isSymbolicLink()) {
+    throw new LibraryIntegrityError(`Artifact Library root must resolve to a non-symlink directory: ${path}`);
+  }
+  if (isDirectory && !sameIdentity(stats, canonicalStats)) throw changedDuringValidation(path);
   return {
-    canonicalPath: await operations.realpath(path),
-    dev: stats.dev,
-    ino: stats.ino,
+    canonicalIdentity: identityOf(canonicalStats),
+    canonicalPath,
+    lexicalIdentity: {
+      ...identityOf(stats),
+      kind: isSymlink ? "symlink" : "directory",
+      linkTarget,
+    },
     path,
   };
 }
@@ -364,6 +385,7 @@ async function assertLibraryRootIdentity(
   operations: LibraryFileOperations,
 ): Promise<void> {
   let stats: FileStats;
+  let canonicalStats: FileStats;
   let canonicalPath: string;
   try {
     stats = await operations.lstat(root.path);
@@ -375,11 +397,35 @@ async function assertLibraryRootIdentity(
     throw error;
   }
 
+  const lexicalKindMatches = root.lexicalIdentity.kind === "symlink"
+    ? stats.isSymbolicLink()
+    : stats.isDirectory() && !stats.isSymbolicLink();
+  let linkTargetMatches = true;
+  if (root.lexicalIdentity.kind === "symlink") {
+    try {
+      linkTargetMatches = await operations.readlink(root.path) === root.lexicalIdentity.linkTarget;
+    } catch (error) {
+      if (isMissingPathError(error) || isNotSymlinkError(error)) throw changedDuringValidation(root.path);
+      throw error;
+    }
+  }
+  try {
+    // Keep the canonical target identity check last: subsequent code is
+    // synchronous until the caller's protected operation.
+    canonicalStats = await operations.lstat(root.canonicalPath);
+  } catch (error) {
+    if (isMissingPathError(error)) throw changedDuringValidation(root.path);
+    throw error;
+  }
+
   if (
-    !stats.isDirectory()
-    || stats.isSymbolicLink()
-    || !sameIdentity(stats, root)
+    !lexicalKindMatches
+    || !sameIdentity(stats, root.lexicalIdentity)
+    || !linkTargetMatches
     || canonicalPath !== root.canonicalPath
+    || !canonicalStats.isDirectory()
+    || canonicalStats.isSymbolicLink()
+    || !sameIdentity(canonicalStats, root.canonicalIdentity)
   ) {
     throw changedDuringValidation(root.path);
   }
@@ -446,6 +492,10 @@ function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
 
 function isSymlinkRaceError(error: unknown): boolean {
   return isNodeError(error) && error.code === "ELOOP";
+}
+
+function isNotSymlinkError(error: unknown): boolean {
+  return isNodeError(error) && error.code === "EINVAL";
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

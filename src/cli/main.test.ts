@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -1071,6 +1071,66 @@ describe("runCli", () => {
     expect(openCalls).toBe(0);
     expect(errors.join("\n")).toContain("changed during validation");
   });
+
+  test.each(["symlink-retarget", "canonical-target-replacement"] as const)(
+    "fails closed before the opener on linked Library root %s",
+    async (rootChange) => {
+      const targetDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
+      const canonicalTarget = await realpath(targetDir);
+      const linkParent = await mkdtemp(join(tmpdir(), "video-digest-cli-linked-"));
+      const outputDir = join(linkParent, "library");
+      await symlink(targetDir, outputDir);
+      const digestPath = join(outputDir, "digests", "1ZgUcrR0K7I.md");
+      let changed = false;
+      let openCalls = 0;
+      const errors: string[] = [];
+
+      const exitCode = await runCli(
+        ["open", "latest"],
+        { error: (message) => errors.push(message), log: () => {} },
+        {
+          libraryFileOperations: mainLibraryOperations({
+            lstat: async (path) => {
+              const stats = await lstat(path);
+              if (changed && rootChange === "symlink-retarget" && path === outputDir) {
+                return {
+                  dev: stats.dev,
+                  ino: stats.ino + 1,
+                  isDirectory: () => false,
+                  isFile: () => false,
+                  isSymbolicLink: () => true,
+                };
+              }
+              if (changed && rootChange === "canonical-target-replacement" && path === canonicalTarget) {
+                return {
+                  dev: stats.dev,
+                  ino: stats.ino + 1,
+                  isDirectory: () => true,
+                  isFile: () => false,
+                  isSymbolicLink: () => false,
+                };
+              }
+              return stats;
+            },
+            open: async (path, flags) => {
+              const handle = await open(path, flags);
+              if (path === digestPath) changed = true;
+              return handle;
+            },
+            readlink: async (path) => changed && rootChange === "symlink-retarget" && path === outputDir
+              ? "retargeted-library"
+              : readlink(path),
+          }),
+          openPath: async () => { openCalls += 1; },
+          outputDir,
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(openCalls).toBe(0);
+      expect(errors.join("\n")).toContain("changed during validation");
+    },
+  );
 
   test("keeps the library lock while human openPath is running", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
