@@ -1,7 +1,13 @@
 import { stdin, stdout } from "node:process";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { listLibraryEntries, resolveLibraryEntry, type LibraryEntry } from "./artifacts";
+import {
+  listLibraryEntries,
+  resolveLibraryEntry,
+  revalidateLibraryOpenTarget,
+  type LibraryEntry,
+  type LibraryFileOperations,
+} from "./artifacts";
 import {
   MacOSKeychainCredentialStore,
   resolveOpenCodeApiKey,
@@ -51,6 +57,7 @@ export type CliDependencies = {
   homeDir?: string;
   fetchTranscriptOnly?: (input: FetchTranscriptOnlyInput) => Promise<FetchTranscriptOnlyResult>;
   ingestVideo?: (input: IngestVideoInput) => Promise<IngestVideoResult>;
+  libraryFileOperations?: Partial<LibraryFileOperations>;
   metadataSource?: VideoMetadataSource;
   openPath?: (path: string) => Promise<void>;
   outputDir?: string;
@@ -131,7 +138,7 @@ export async function runCli(
     if (result.value.command === "list") {
       const items = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
         artifactLibrary.path,
-        () => listLibraryEntries(artifactLibrary.path),
+        () => listLibraryEntries(artifactLibrary.path, dependencies.libraryFileOperations),
       );
       if (result.value.json) {
         io.log(JSON.stringify({ items, schemaVersion: "library-list.v0" }));
@@ -147,8 +154,13 @@ export async function runCli(
       const openResult = await (dependencies.withRecoveredOutputLibrary ?? withRecoveredOutputLibrary)(
         artifactLibrary.path,
         async () => {
-          const resolved = await resolveLibraryEntry(artifactLibrary.path, target);
+          const resolved = await resolveLibraryEntry(
+            artifactLibrary.path,
+            target,
+            dependencies.libraryFileOperations,
+          );
           if (resolved.ok && !json) {
+            await revalidateLibraryOpenTarget(resolved.openTarget, dependencies.libraryFileOperations);
             await (dependencies.openPath ?? openWithSystem)(resolved.openPath);
           }
           return resolved;
@@ -158,7 +170,7 @@ export async function runCli(
       if (!openResult.ok) {
         const payload = {
           error: {
-            code: "library-entry-not-found",
+            code: openResult.errorCode,
             message: openResult.message,
           },
           schemaVersion: "open-result.v0",

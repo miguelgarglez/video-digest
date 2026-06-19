@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -11,6 +11,7 @@ import { SummarizerError } from "../summarizer/summarizer";
 import { TranscriptSourceError, type Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import { RuntimeSetupError } from "./runtime-manager";
+import type { LibraryFileOperations } from "./artifacts";
 
 async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<number> {
   return runCliProduction(args, io, {
@@ -929,6 +930,108 @@ describe("runCli", () => {
     });
   });
 
+  test("returns distinct stable open errors for absent and non-openable Library Entries", async () => {
+    const outputDir = await createOutputDirWithTranscript("1ZgUcrR0K7I");
+    await Bun.file(join(outputDir, "transcripts", "1ZgUcrR0K7I.md")).delete();
+
+    for (const [target, code] of [
+      ["AAAAAAAAAAA", "library-entry-not-found"],
+      ["1ZgUcrR0K7I", "library-entry-not-openable"],
+    ] as const) {
+      const logs: string[] = [];
+      const exitCode = await runCli(
+        ["open", target, "--json"],
+        { error: () => {}, log: (message) => logs.push(message) },
+        { outputDir },
+      );
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(logs[0]!)).toMatchObject({
+        error: { code },
+        schemaVersion: "open-result.v0",
+        status: "failed",
+      });
+    }
+  });
+
+  test.each(["readdir", "lstat", "open", "fstat", "read"] as const)(
+    "reports an injected %s EACCES as a nonzero stable CLI error",
+    async (stage) => {
+      const outputDir = await createOutputDirWithTranscript("1ZgUcrR0K7I");
+      const logs: string[] = [];
+      const failure = Object.assign(new Error(`${stage} unavailable`), { code: "EACCES" });
+      const metadataPath = join(outputDir, "metadata", "1ZgUcrR0K7I.json");
+      const overrides: Partial<LibraryFileOperations> = stage === "readdir"
+        ? { readdir: async () => { throw failure; } }
+        : stage === "lstat"
+          ? { lstat: async (path) => {
+            if (path === metadataPath) throw failure;
+            return lstat(path);
+          } }
+          : stage === "open"
+            ? { open: async () => { throw failure; } }
+            : { open: async (path, flags) => {
+              const handle = await open(path, flags);
+              return {
+                close: () => handle.close(),
+                readFile: stage === "read"
+                  ? async () => { throw failure; }
+                  : (options) => handle.readFile(options),
+                stat: stage === "fstat"
+                  ? async () => { throw failure; }
+                  : () => handle.stat(),
+              };
+            } };
+
+      const exitCode = await runCli(
+        ["list", "--json"],
+        { error: () => {}, log: (message) => logs.push(message) },
+        { libraryFileOperations: mainLibraryOperations(overrides), outputDir },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(logs[0]!)).toMatchObject({
+        error: { code: "unexpected-error" },
+        schemaVersion: "cli-result.v0",
+        status: "failed",
+      });
+    },
+  );
+
+  test("revalidates the selected artifact under the library lock immediately before opening", async () => {
+    const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
+    const digestPath = join(outputDir, "digests", "1ZgUcrR0K7I.md");
+    let digestLstats = 0;
+    let openCalls = 0;
+    const errors: string[] = [];
+    const exitCode = await runCli(
+      ["open", "latest"],
+      { error: (message) => errors.push(message), log: () => {} },
+      {
+        libraryFileOperations: mainLibraryOperations({
+          lstat: async (path) => {
+            const stats = await lstat(path);
+            if (path === digestPath && ++digestLstats === 3) {
+              return {
+                dev: stats.dev,
+                ino: stats.ino + 1,
+                isDirectory: () => stats.isDirectory(),
+                isFile: () => stats.isFile(),
+                isSymbolicLink: () => stats.isSymbolicLink(),
+              };
+            }
+            return stats;
+          },
+        }),
+        openPath: async () => { openCalls += 1; },
+        outputDir,
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(openCalls).toBe(0);
+    expect(errors.join("\n")).toContain("changed during validation");
+  });
+
   test("keeps the library lock while human openPath is running", async () => {
     const outputDir = await createOutputDirWithDigest("1ZgUcrR0K7I");
     const events: string[] = [];
@@ -1489,6 +1592,10 @@ async function createOutputDirWithTranscript(videoId: string): Promise<string> {
     },
   }));
   return outputDir;
+}
+
+function mainLibraryOperations(overrides: Partial<LibraryFileOperations> = {}) {
+  return { lstat, open, readdir, realpath, ...overrides } as never;
 }
 
 function fakeCredentialStore(options: {

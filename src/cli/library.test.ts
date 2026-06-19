@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   listLibraryEntries,
   resolveLibraryEntry,
+  type LibraryFileOperations,
 } from "./artifacts";
 
 const VIDEO_ID = "1ZgUcrR0K7I";
@@ -94,6 +96,98 @@ describe("Artifact Library", () => {
 
     expect(await listLibraryEntries(outputDir)).toEqual([]);
   });
+
+  test.each(["EACCES", "EIO", "EMFILE"])("propagates %s while reading the metadata directory", async (code) => {
+    const outputDir = await createLibrary();
+    const operations = libraryOperations({
+      readdir: async () => { throw nodeError(code); },
+    });
+
+    await expect(listLibraryEntries(outputDir, operations)).rejects.toMatchObject({ code });
+  });
+
+  test("propagates metadata open, read, and stat failures instead of returning an empty library", async () => {
+    const outputDir = await createLibrary();
+    await seedMetadata(outputDir, VIDEO_ID, { processedAt: "2026-06-18T12:00:00.000Z" });
+
+    for (const operation of ["open", "read", "stat"] as const) {
+      const error = nodeError("EACCES");
+      const operations = libraryOperations(operation === "open"
+        ? { open: async () => { throw error; } }
+        : operation === "stat"
+          ? { lstat: async (path) => {
+            if (path.endsWith(`${VIDEO_ID}.json`)) throw error;
+            return lstat(path);
+          } }
+          : { open: async (path, flags) => {
+            const handle = await open(path, flags);
+            return {
+              close: () => handle.close(),
+              readFile: async () => { throw error; },
+              stat: () => handle.stat(),
+            };
+          } });
+
+      await expect(listLibraryEntries(outputDir, operations)).rejects.toBe(error);
+    }
+  });
+
+  test("distinguishes an absent entry from an entry with no readable artifact", async () => {
+    const outputDir = await createLibrary();
+    await seedMetadata(outputDir, VIDEO_ID, { processedAt: "2026-06-18T12:00:00.000Z" });
+
+    expect(await resolveLibraryEntry(outputDir, "AAAAAAAAAAA")).toMatchObject({
+      errorCode: "library-entry-not-found",
+      ok: false,
+    });
+    expect(await resolveLibraryEntry(outputDir, VIDEO_ID)).toMatchObject({
+      errorCode: "library-entry-not-openable",
+      message: expect.stringContaining("Reprocess"),
+      ok: false,
+    });
+  });
+
+  test("checks metadata file identity before reading through its already-open handle", async () => {
+    const outputDir = await createLibrary();
+    await seedMetadata(outputDir, VIDEO_ID, { processedAt: "2026-06-18T12:00:00.000Z" });
+    let externalRead = false;
+    let openFlags = 0;
+    const operations = libraryOperations({
+      open: async (_path, flags) => {
+        openFlags = flags;
+        return {
+          close: async () => {},
+          readFile: async () => { externalRead = true; return "{}"; },
+          stat: async () => fileStats({ dev: 900, ino: 901 }),
+        };
+      },
+    });
+
+    await expect(listLibraryEntries(outputDir, operations)).rejects.toThrow("changed during validation");
+    expect(externalRead).toBe(false);
+    expect(openFlags & constants.O_RDONLY).toBe(constants.O_RDONLY);
+    if (constants.O_NOFOLLOW !== undefined) {
+      expect(openFlags & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+    }
+  });
+
+  test("revalidates an artifact identity immediately before returning it", async () => {
+    const outputDir = await createLibrary();
+    await seedMetadata(outputDir, VIDEO_ID, { processedAt: "2026-06-18T12:00:00.000Z" });
+    const digestPath = await writeArtifact(outputDir, "digests", `${VIDEO_ID}.md`, "# Digest\n");
+    let digestStats = 0;
+    const operations = libraryOperations({
+      lstat: async (path) => {
+        const stats = await lstat(path);
+        if (path === digestPath && ++digestStats === 2) {
+          return fileStats({ dev: stats.dev, ino: stats.ino + 1 });
+        }
+        return stats;
+      },
+    });
+
+    await expect(listLibraryEntries(outputDir, operations)).rejects.toThrow("changed during validation");
+  });
 });
 
 async function createLibrary(): Promise<string> {
@@ -132,7 +226,33 @@ function metadata(
   };
 }
 
-async function writeArtifact(outputDir: string, directory: string, name: string, contents: string): Promise<void> {
+async function writeArtifact(outputDir: string, directory: string, name: string, contents: string): Promise<string> {
   await mkdir(join(outputDir, directory), { recursive: true });
-  await writeFile(join(outputDir, directory, name), contents);
+  const path = join(outputDir, directory, name);
+  await writeFile(path, contents);
+  return path;
+}
+
+function libraryOperations(overrides: Partial<LibraryFileOperations> = {}) {
+  return {
+    lstat,
+    open,
+    readdir,
+    realpath,
+    ...overrides,
+  } as never;
+}
+
+function nodeError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
+}
+
+function fileStats(identity: { dev: number; ino: number }) {
+  return {
+    ...identity,
+    isDirectory: () => false,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+    mode: constants.S_IFREG,
+  } as never;
 }
