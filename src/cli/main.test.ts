@@ -263,7 +263,9 @@ describe("runCli", () => {
             digestPath: "outputs/digests/1ZgUcrR0K7I.md",
             emailPreviewPath: emailPreview ? "outputs/emails/1ZgUcrR0K7I.md" : null,
             metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-            transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+            transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+            transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+            transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
           },
           status: "completed",
           transcriptQuality: {
@@ -286,7 +288,9 @@ describe("runCli", () => {
     expect(logs).toEqual([
       "Ingested video 1ZgUcrR0K7I",
       "Transcript quality: usable",
-      "Transcript artifact: outputs/transcripts/1ZgUcrR0K7I.json",
+      "Transcript JSON: outputs/transcripts/1ZgUcrR0K7I.json",
+      "Transcript Markdown: outputs/transcripts/1ZgUcrR0K7I.md",
+      "Transcript text: outputs/transcripts/1ZgUcrR0K7I.txt",
       "Digest: outputs/digests/1ZgUcrR0K7I.md",
       "Metadata: outputs/metadata/1ZgUcrR0K7I.json",
       "Email preview: outputs/emails/1ZgUcrR0K7I.md",
@@ -379,7 +383,9 @@ describe("runCli", () => {
         digestPath: "outputs/digests/1ZgUcrR0K7I.md",
         emailPreviewPath: null,
         metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-        transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+        transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+        transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+        transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
       },
       schemaVersion: "cli-result.v0",
       status: "completed",
@@ -585,7 +591,9 @@ describe("runCli", () => {
     expect(logs).toEqual([
       "Fetched transcript for 1ZgUcrR0K7I",
       "Transcript quality: usable",
-      "Transcript artifact: outputs/transcripts/1ZgUcrR0K7I.json",
+      "Transcript JSON: outputs/transcripts/1ZgUcrR0K7I.json",
+      "Transcript Markdown: outputs/transcripts/1ZgUcrR0K7I.md",
+      "Transcript text: outputs/transcripts/1ZgUcrR0K7I.txt",
       "Metadata: outputs/metadata/1ZgUcrR0K7I.json",
     ]);
   });
@@ -613,7 +621,9 @@ describe("runCli", () => {
       canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
       paths: {
         metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-        transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+        transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+        transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+        transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
       },
       schemaVersion: "cli-result.v0",
       status: "completed",
@@ -866,7 +876,9 @@ describe("runCli", () => {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
               emailPreviewPath: null,
               metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-              transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+              transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+              transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+              transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
             },
             status: "completed",
             transcriptQuality: {
@@ -917,7 +929,9 @@ describe("runCli", () => {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
               emailPreviewPath: null,
               metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-              transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+              transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+              transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+              transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
             },
             status: "completed",
             transcriptQuality: {
@@ -1019,7 +1033,9 @@ describe("runCli", () => {
             digestPath: "outputs/digests/1ZgUcrR0K7I.md",
             emailPreviewPath: emailPreview ? "outputs/emails/1ZgUcrR0K7I.md" : null,
             metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-            transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+            transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+            transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+            transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
           },
           status: "completed",
           transcriptQuality: {
@@ -1238,7 +1254,9 @@ function completedIngestion(): IngestVideoResult {
       digestPath: "outputs/digests/1ZgUcrR0K7I.md",
       emailPreviewPath: null,
       metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-      transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+      transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+      transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+      transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
     },
     status: "completed" as const,
     transcriptQuality: {
@@ -1259,7 +1277,9 @@ function completedTranscriptOnly(): FetchTranscriptOnlyResult {
     exitCode: 0,
     paths: {
       metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-      transcriptPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+      transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
+      transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
+      transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
     },
     status: "completed",
     transcriptQuality: {

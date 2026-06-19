@@ -614,7 +614,9 @@ function printIngestionResult(videoId: string, result: IngestVideoResult, io: Cl
 
   io.log(`Ingested video ${videoId}`);
   io.log(`Transcript quality: ${result.transcriptQuality.status}`);
-  io.log(`Transcript artifact: ${result.paths.transcriptPath}`);
+  io.log(`Transcript JSON: ${result.paths.transcriptJsonPath}`);
+  io.log(`Transcript Markdown: ${result.paths.transcriptMarkdownPath}`);
+  io.log(`Transcript text: ${result.paths.transcriptTextPath}`);
   io.log(`Digest: ${result.paths.digestPath}`);
   io.log(`Metadata: ${result.paths.metadataPath}`);
 
@@ -657,7 +659,9 @@ function printTranscriptResult(
 ): void {
   io.log(`Fetched transcript for ${videoId}`);
   io.log(`Transcript quality: ${result.transcriptQuality.status}`);
-  io.log(`Transcript artifact: ${result.paths.transcriptPath}`);
+  io.log(`Transcript JSON: ${result.paths.transcriptJsonPath}`);
+  io.log(`Transcript Markdown: ${result.paths.transcriptMarkdownPath}`);
+  io.log(`Transcript text: ${result.paths.transcriptTextPath}`);
   io.log(`Metadata: ${result.paths.metadataPath}`);
 }
 

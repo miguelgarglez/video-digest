@@ -26,7 +26,9 @@ describe("fetchTranscriptOnly", () => {
       exitCode: 0,
       paths: {
         metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
-        transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+        transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+        transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+        transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
       },
       status: "completed",
       transcriptQuality: expect.objectContaining({
@@ -34,7 +36,13 @@ describe("fetchTranscriptOnly", () => {
       }),
     });
     expect(progressStages).toEqual(["fetching-transcript", "scoring-transcript", "writing-outputs", "completed"]);
-    expect(await readFile(result.paths.transcriptPath, "utf8")).toContain("transcript.v0");
+    expect(await readFile(result.paths.transcriptJsonPath, "utf8")).toContain("transcript.v0");
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain(
+      "**00:00** This is a substantial transcript segment with useful content.",
+    );
+    expect(await readFile(result.paths.transcriptTextPath, "utf8")).toContain(
+      "This is a substantial transcript segment with useful content.",
+    );
   });
 });
 

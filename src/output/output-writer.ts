@@ -1,9 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Digest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
+import { renderTranscriptMarkdown, renderTranscriptText } from "./transcript-renderer";
 
 export type IngestionOutputInput = {
   digest: Digest;
@@ -18,7 +20,9 @@ export type IngestionOutputPaths = {
   digestPath: string;
   emailPreviewPath: string | null;
   metadataPath: string;
-  transcriptPath: string;
+  transcriptJsonPath: string;
+  transcriptMarkdownPath: string;
+  transcriptTextPath: string;
 };
 
 export type TranscriptOnlyOutputInput = {
@@ -30,7 +34,21 @@ export type TranscriptOnlyOutputInput = {
 
 export type TranscriptOnlyOutputPaths = {
   metadataPath: string;
-  transcriptPath: string;
+  transcriptJsonPath: string;
+  transcriptMarkdownPath: string;
+  transcriptTextPath: string;
+};
+
+export type OutputFileOperations = {
+  rename(from: string, to: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+  writeFile(path: string, contents: string): Promise<void>;
+};
+
+const defaultFileOperations: OutputFileOperations = {
+  rename,
+  unlink,
+  writeFile,
 };
 
 export type FailedIngestionMetadataInput = {
@@ -45,6 +63,7 @@ export type FailedIngestionMetadataInput = {
 
 export async function writeIngestionOutputs(
   input: IngestionOutputInput,
+  fileOperations: OutputFileOperations = defaultFileOperations,
 ): Promise<IngestionOutputPaths> {
   const paths = outputPaths(input.outputDir, input.video.videoId, input.emailPreview);
 
@@ -55,23 +74,31 @@ export async function writeIngestionOutputs(
     input.emailPreview ? mkdir(join(input.outputDir, "emails"), { recursive: true }) : undefined,
   ]);
 
-  await writeFile(paths.transcriptPath, `${JSON.stringify(input.transcript, null, 2)}\n`);
-  await writeFile(paths.metadataPath, `${JSON.stringify(buildMetadata(input), null, 2)}\n`);
-  await writeFile(paths.digestPath, renderDigestMarkdown(input));
+  const entries = [
+    { contents: `${JSON.stringify(input.transcript, null, 2)}\n`, path: paths.transcriptJsonPath },
+    { contents: renderTranscriptMarkdown(input), path: paths.transcriptMarkdownPath },
+    { contents: renderTranscriptText(input.transcript), path: paths.transcriptTextPath },
+    { contents: renderDigestMarkdown(input), path: paths.digestPath },
+    ...(paths.emailPreviewPath
+      ? [{ contents: renderEmailPreview(input), path: paths.emailPreviewPath }]
+      : []),
+    { contents: `${JSON.stringify(buildMetadata(input), null, 2)}\n`, path: paths.metadataPath },
+  ];
 
-  if (paths.emailPreviewPath) {
-    await writeFile(paths.emailPreviewPath, renderEmailPreview(input));
-  }
+  await writeFilesAtomically(entries, fileOperations);
 
   return paths;
 }
 
 export async function writeTranscriptOnlyOutputs(
   input: TranscriptOnlyOutputInput,
+  fileOperations: OutputFileOperations = defaultFileOperations,
 ): Promise<TranscriptOnlyOutputPaths> {
   const paths = {
     metadataPath: join(input.outputDir, "metadata", `${input.video.videoId}.json`),
-    transcriptPath: join(input.outputDir, "transcripts", `${input.video.videoId}.json`),
+    transcriptJsonPath: join(input.outputDir, "transcripts", `${input.video.videoId}.json`),
+    transcriptMarkdownPath: join(input.outputDir, "transcripts", `${input.video.videoId}.md`),
+    transcriptTextPath: join(input.outputDir, "transcripts", `${input.video.videoId}.txt`),
   };
 
   await Promise.all([
@@ -79,26 +106,17 @@ export async function writeTranscriptOnlyOutputs(
     mkdir(join(input.outputDir, "transcripts"), { recursive: true }),
   ]);
 
-  await writeFile(paths.transcriptPath, `${JSON.stringify(input.transcript, null, 2)}\n`);
-  await writeFile(
-    paths.metadataPath,
-    `${JSON.stringify(
+  await writeFilesAtomically(
+    [
+      { contents: `${JSON.stringify(input.transcript, null, 2)}\n`, path: paths.transcriptJsonPath },
+      { contents: renderTranscriptMarkdown(input), path: paths.transcriptMarkdownPath },
+      { contents: renderTranscriptText(input.transcript), path: paths.transcriptTextPath },
       {
-        metadataSchemaVersion: "metadata.v0",
-        mode: "transcript-only",
-        processedAt: new Date().toISOString(),
-        transcriptQuality: input.transcriptQuality,
-        video: {
-          canonicalUrl: input.video.canonicalUrl,
-          channel: null,
-          durationSeconds: input.transcriptQuality.durationSeconds,
-          videoId: input.video.videoId,
-          videoTitle: null,
-        },
+        contents: `${JSON.stringify(buildTranscriptOnlyMetadata(input), null, 2)}\n`,
+        path: paths.metadataPath,
       },
-      null,
-      2,
-    )}\n`,
+    ],
+    fileOperations,
   );
 
   return paths;
@@ -106,32 +124,52 @@ export async function writeTranscriptOnlyOutputs(
 
 export async function writeFailedIngestionMetadata(
   input: FailedIngestionMetadataInput,
+  fileOperations: OutputFileOperations = defaultFileOperations,
 ): Promise<string> {
   const metadataPath = join(input.outputDir, "metadata", `${input.video.videoId}.json`);
 
   await mkdir(join(input.outputDir, "metadata"), { recursive: true });
-  await writeFile(
-    metadataPath,
-    `${JSON.stringify(
+  await writeFilesAtomically(
+    [
       {
-        error: input.error,
-        metadataSchemaVersion: "metadata.v0",
-        processedAt: new Date().toISOString(),
-        transcriptQuality: input.transcriptQuality,
-        video: {
-          canonicalUrl: input.video.canonicalUrl,
-          channel: null,
-          durationSeconds: input.transcriptQuality.durationSeconds,
-          videoId: input.video.videoId,
-          videoTitle: null,
-        },
+        contents: `${JSON.stringify(
+          {
+            error: input.error,
+            metadataSchemaVersion: "metadata.v0",
+            processedAt: new Date().toISOString(),
+            transcriptQuality: input.transcriptQuality,
+            video: buildVideoMetadata(input.video, input.transcriptQuality),
+          },
+          null,
+          2,
+        )}\n`,
+        path: metadataPath,
       },
-      null,
-      2,
-    )}\n`,
+    ],
+    fileOperations,
   );
 
   return metadataPath;
+}
+
+function buildTranscriptOnlyMetadata(input: TranscriptOnlyOutputInput) {
+  return {
+    metadataSchemaVersion: "metadata.v0",
+    mode: "transcript-only",
+    processedAt: new Date().toISOString(),
+    transcriptQuality: input.transcriptQuality,
+    video: buildVideoMetadata(input.video, input.transcriptQuality),
+  };
+}
+
+function buildVideoMetadata(video: YouTubeVideo, transcriptQuality: TranscriptQuality) {
+  return {
+    canonicalUrl: video.canonicalUrl,
+    channel: null,
+    durationSeconds: transcriptQuality.durationSeconds,
+    videoId: video.videoId,
+    videoTitle: null,
+  };
 }
 
 function outputPaths(outputDir: string, videoId: string, emailPreview: boolean): IngestionOutputPaths {
@@ -139,8 +177,41 @@ function outputPaths(outputDir: string, videoId: string, emailPreview: boolean):
     digestPath: join(outputDir, "digests", `${videoId}.md`),
     emailPreviewPath: emailPreview ? join(outputDir, "emails", `${videoId}.md`) : null,
     metadataPath: join(outputDir, "metadata", `${videoId}.json`),
-    transcriptPath: join(outputDir, "transcripts", `${videoId}.json`),
+    transcriptJsonPath: join(outputDir, "transcripts", `${videoId}.json`),
+    transcriptMarkdownPath: join(outputDir, "transcripts", `${videoId}.md`),
+    transcriptTextPath: join(outputDir, "transcripts", `${videoId}.txt`),
   };
+}
+
+async function writeFilesAtomically(
+  entries: Array<{ contents: string; path: string }>,
+  fileOperations: OutputFileOperations,
+): Promise<void> {
+  const temporaryEntries = entries.map((entry) => ({
+    ...entry,
+    temporaryPath: `${entry.path}.${randomUUID()}.tmp`,
+  }));
+
+  try {
+    const writeResults = await Promise.allSettled(
+      temporaryEntries.map((entry) => fileOperations.writeFile(entry.temporaryPath, entry.contents)),
+    );
+    const failedWrite = writeResults.find((result) => result.status === "rejected");
+    if (failedWrite?.status === "rejected") {
+      throw failedWrite.reason;
+    }
+
+    for (const entry of temporaryEntries) {
+      await fileOperations.rename(entry.temporaryPath, entry.path);
+    }
+  } catch (error) {
+    await Promise.all(
+      temporaryEntries.map((entry) =>
+        fileOperations.unlink(entry.temporaryPath).catch(() => undefined),
+      ),
+    );
+    throw error;
+  }
 }
 
 function buildMetadata(input: IngestionOutputInput) {
@@ -149,13 +220,7 @@ function buildMetadata(input: IngestionOutputInput) {
     metadataSchemaVersion: "metadata.v0",
     processedAt: new Date().toISOString(),
     transcriptQuality: input.transcriptQuality,
-    video: {
-      canonicalUrl: input.video.canonicalUrl,
-      channel: null,
-      durationSeconds: input.transcriptQuality.durationSeconds,
-      videoId: input.video.videoId,
-      videoTitle: null,
-    },
+    video: buildVideoMetadata(input.video, input.transcriptQuality),
   };
 }
 

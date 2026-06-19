@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -25,11 +25,32 @@ describe("writeIngestionOutputs", () => {
       digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
       emailPreviewPath: join(outputDir, "emails", "1ZgUcrR0K7I.md"),
       metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
-      transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+      transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
     });
 
-    const transcriptJson = JSON.parse(await readFile(result.transcriptPath, "utf8"));
+    expect(await readFile(result.transcriptJsonPath, "utf8")).toBe(
+      `${JSON.stringify(transcript, null, 2)}\n`,
+    );
+    const transcriptJson = JSON.parse(await readFile(result.transcriptJsonPath, "utf8"));
     expect(transcriptJson.schemaVersion).toBe("transcript.v0");
+    expect(await readFile(result.transcriptMarkdownPath, "utf8")).toBe(
+      [
+        "# Transcript 1ZgUcrR0K7I",
+        "",
+        `URL: ${video.canonicalUrl}`,
+        "Language: en",
+        "Source: youtube-transcript-api",
+        "Provenance: unknown",
+        "",
+        "**00:00** Technology can change media businesses.",
+        "",
+      ].join("\n"),
+    );
+    expect(await readFile(result.transcriptTextPath, "utf8")).toBe(
+      "Technology can change media businesses.\n",
+    );
 
     const metadataJson = JSON.parse(await readFile(result.metadataPath, "utf8"));
     expect(metadataJson).toMatchObject({
@@ -72,6 +93,79 @@ describe("writeIngestionOutputs", () => {
 
     expect(result.emailPreviewPath).toBeNull();
   });
+
+  test("renames metadata after every other entry file", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-order-"));
+    const renamedDestinations: string[] = [];
+
+    await writeIngestionOutputs(
+      {
+        digest,
+        emailPreview: true,
+        outputDir,
+        transcript,
+        transcriptQuality: usableQuality,
+        video,
+      },
+      {
+        rename: async (from, to) => {
+          renamedDestinations.push(to);
+          await rename(from, to);
+        },
+        unlink,
+        writeFile,
+      },
+    );
+
+    expect(renamedDestinations.at(-1)).toBe(
+      join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
+    );
+  });
+
+  test("commits metadata last and cleans temporary siblings after a write failure", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-failure-"));
+    const renamedDestinations: string[] = [];
+    const cleanedPaths: string[] = [];
+
+    await expect(
+      writeIngestionOutputs(
+        {
+          digest,
+          emailPreview: false,
+          outputDir,
+          transcript,
+          transcriptQuality: usableQuality,
+          video,
+        },
+        {
+          rename: async (from, to) => {
+            renamedDestinations.push(to);
+            await rename(from, to);
+          },
+          unlink: async (path) => {
+            cleanedPaths.push(path);
+            await unlink(path).catch(() => undefined);
+          },
+          writeFile: async (path, contents) => {
+            if (path.includes("digests") && path.endsWith(".tmp")) {
+              throw new Error("simulated write failure");
+            }
+            if (path.endsWith(".txt") || path.includes(".txt.")) {
+              await Bun.sleep(20);
+            }
+            await writeFile(path, contents);
+          },
+        },
+      ),
+    ).rejects.toThrow("simulated write failure");
+
+    expect(renamedDestinations).not.toContain(join(outputDir, "metadata", "1ZgUcrR0K7I.json"));
+    expect(cleanedPaths.length).toBeGreaterThan(0);
+    expect(cleanedPaths.every((path) => path.endsWith(".tmp"))).toBe(true);
+    await Bun.sleep(30);
+    expect((await readdir(outputDir, { recursive: true })).filter((path) => path.endsWith(".tmp")))
+      .toEqual([]);
+  });
 });
 
 describe("writeTranscriptOnlyOutputs", () => {
@@ -87,11 +181,32 @@ describe("writeTranscriptOnlyOutputs", () => {
 
     expect(result).toEqual({
       metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
-      transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+      transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
     });
 
-    const transcriptJson = JSON.parse(await readFile(result.transcriptPath, "utf8"));
+    expect(await readFile(result.transcriptJsonPath, "utf8")).toBe(
+      `${JSON.stringify(transcript, null, 2)}\n`,
+    );
+    const transcriptJson = JSON.parse(await readFile(result.transcriptJsonPath, "utf8"));
     expect(transcriptJson.schemaVersion).toBe("transcript.v0");
+    expect(await readFile(result.transcriptMarkdownPath, "utf8")).toBe(
+      [
+        "# Transcript 1ZgUcrR0K7I",
+        "",
+        `URL: ${video.canonicalUrl}`,
+        "Language: en",
+        "Source: youtube-transcript-api",
+        "Provenance: unknown",
+        "",
+        "**00:00** Technology can change media businesses.",
+        "",
+      ].join("\n"),
+    );
+    expect(await readFile(result.transcriptTextPath, "utf8")).toBe(
+      "Technology can change media businesses.\n",
+    );
 
     const metadataJson = JSON.parse(await readFile(result.metadataPath, "utf8"));
     expect(metadataJson).toMatchObject({

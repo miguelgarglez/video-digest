@@ -180,7 +180,9 @@ async function completedResult(outputDir: string): Promise<IngestVideoResult> {
       digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
       emailPreviewPath: null,
       metadataPath,
-      transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+      transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+      transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
     },
     status: "completed",
     transcriptQuality: {
