@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
-import { SelectRenderable, type Renderable } from "@opentui/core";
+import { createTestRenderer, setRendererCapabilities, type TestRendererSetup } from "@opentui/core/testing";
+import { CliRenderEvents, SelectRenderable, TextRenderable, type Renderable } from "@opentui/core";
 import type { LibraryEntry } from "../cli/artifacts";
 import { initialModel, type Event, type Model, type ResultData } from "./model";
 import { createOpenTuiFacadeFromRenderer, createTuiRenderer } from "./renderer";
@@ -34,6 +34,76 @@ function readyModel(overrides: Partial<Model> = {}): Model {
 }
 
 describe("native OpenTUI adapter", () => {
+  test("renders the canonical Agent Skill source as a native hyperlink when supported", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 120 });
+    setRendererCapabilities(setup.renderer, { hyperlinks: true });
+    const model = readyModel({ screen: "agent-skill" });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
+    const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
+    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      const body = setup.renderer.root.findDescendantById("screen-reader-content");
+      expect(body).toBeInstanceOf(TextRenderable);
+      expect((body as TextRenderable).content.chunks).toContainEqual(
+        expect.objectContaining({ link: { url: source }, text: source }),
+      );
+      expect(setup.captureCharFrame()).toContain(source);
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
+  test("renders the Agent Skill source as plain HTTPS when hyperlinks are unsupported", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 120 });
+    setRendererCapabilities(setup.renderer, { hyperlinks: false });
+    const model = readyModel({ screen: "agent-skill" });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
+    const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
+    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      const body = setup.renderer.root.findDescendantById("screen-reader-content");
+      expect(body).toBeInstanceOf(TextRenderable);
+      expect((body as TextRenderable).content.chunks.every((chunk) => chunk.link === undefined)).toBe(true);
+      expect(setup.captureCharFrame()).toContain(source);
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
+  test("upgrades the Agent Skill source when terminal hyperlink capability arrives", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 120 });
+    setRendererCapabilities(setup.renderer, { hyperlinks: false });
+    const model = readyModel({ screen: "agent-skill" });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
+    const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
+    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      const capabilities = setRendererCapabilities(setup.renderer, { hyperlinks: true });
+      setup.renderer.emit(CliRenderEvents.CAPABILITIES, capabilities);
+      await setup.flush();
+
+      const body = setup.renderer.root.findDescendantById("screen-reader-content");
+      expect(body).toBeInstanceOf(TextRenderable);
+      expect((body as TextRenderable).content.chunks).toContainEqual(
+        expect.objectContaining({ link: { url: source }, text: source }),
+      );
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
   test("submits the accepted absolute onboarding default when Enter is pressed unchanged", async () => {
     const setup = await createTestRenderer({ height: 18, width: 80 });
     const events: Event[] = [];

@@ -241,9 +241,17 @@ and never parse human output. The exact success and failure shapes are defined i
 [exit-code reference](docs/cli/exit-codes.md).
 
 The prepared `0.1.0` release will also contain a portable, independently installed
-agent skill at
-[`.agents/skills/video-digest/SKILL.md`](.agents/skills/video-digest/SKILL.md). Review
-that file before installing it; package installation never modifies an agent host.
+[Video Digest agent skill](https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md).
+Review the source first, then copy the command you intend to run:
+
+```bash
+gh skill preview miguelgarglez/personal-video-digest video-digest
+gh skill install miguelgarglez/personal-video-digest video-digest
+```
+
+`gh skill` is a GitHub CLI preview feature and may not be available in every GitHub
+CLI version. The TUI only displays and copies these commands; it never runs them.
+Package installation also never modifies an agent host.
 
 ## Privacy and security
 

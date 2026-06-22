@@ -8,6 +8,7 @@ export const TUI_COPY = Object.freeze({
   agentSkill: {
     install: "gh skill install miguelgarglez/personal-video-digest video-digest",
     preview: "gh skill preview miguelgarglez/personal-video-digest video-digest",
+    source: "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md",
   },
   footer: {
     back: "Esc Back",
@@ -55,9 +56,15 @@ export type ScreenAction =
   | { type: "open-agent-skill" }
   | { type: "copy-text"; text: string };
 
+export type ScreenBodyLink = Readonly<{
+  text: string;
+  url: string;
+}>;
+
 export type ScreenView = Readonly<{
   actions: readonly ScreenAction[];
   body: readonly string[];
+  bodyLinks: readonly ScreenBodyLink[];
   bodyKind: ScreenBodyKind;
   focus: ScreenFocus;
   footer: string;
@@ -77,6 +84,7 @@ export type ScreenDimensions = Readonly<{ height: number; width: number }>;
 type MutableView = {
   actions?: ScreenAction[];
   body?: string[];
+  bodyLinks?: ScreenBodyLink[];
   bodyKind?: ScreenBodyKind;
   focus?: ScreenFocus;
   footer?: string;
@@ -111,6 +119,7 @@ export function buildScreenView(model: Model, dimensions?: ScreenDimensions): Sc
     body: Object.freeze((source.body ?? []).map((text) => source.bodyKind === "document"
       ? sanitizeTerminalText(text)
       : sanitizeSummaryText(text, lineLimit))),
+    bodyLinks: Object.freeze(source.bodyLinks ?? []),
     bodyKind: source.bodyKind ?? "summary",
     focus,
     footer: source.footer ?? defaultFooter(focus),
@@ -228,12 +237,15 @@ function viewForScreen(model: Model): MutableView {
           { text: TUI_COPY.agentSkill.install, type: "copy-text" },
         ],
         body: [
-          "The Video Digest Agent Skill teaches compatible agents to use the stable CLI safely.",
-          "Review the skill before installing it. This screen never runs an installation command.",
-          ".agents/skills/video-digest/SKILL.md",
+          "Review the skill before installing it.",
+          "Preview feature; unavailable in some gh versions.",
+          "The TUI copies commands; it never runs them.",
+          TUI_COPY.agentSkill.source,
           TUI_COPY.agentSkill.preview,
           TUI_COPY.agentSkill.install,
         ],
+        bodyKind: "document",
+        bodyLinks: [{ text: TUI_COPY.agentSkill.source, url: TUI_COPY.agentSkill.source }],
         options: ["Copy Preview Command", "Copy Install Command"],
         title: "Agent Skill",
       };
@@ -344,6 +356,7 @@ function smallTerminalView(): ScreenView {
     body: Object.freeze([
       `Video Digest needs at least ${MIN_TERMINAL_SIZE.width}×${MIN_TERMINAL_SIZE.height} characters. Enlarge the terminal to continue.`,
     ]),
+    bodyLinks: Object.freeze([]),
     bodyKind: "summary",
     focus: "none",
     footer: TUI_COPY.footer.quit,

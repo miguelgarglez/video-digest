@@ -2,7 +2,13 @@ import type { CliRenderer, KeyEvent, Renderable } from "@opentui/core";
 import { writeFileSync } from "node:fs";
 import type { Event, Model } from "./model";
 import { createSecretEditor, type SecretEditor } from "./secret-editor";
-import { buildScreenView, type ScreenAction, type ScreenStatusTone, type ScreenView } from "./screens";
+import {
+  buildScreenView,
+  type ScreenAction,
+  type ScreenBodyLink,
+  type ScreenStatusTone,
+  type ScreenView,
+} from "./screens";
 import { createTheme, type TuiTheme } from "./theme";
 
 export type RendererKey = Readonly<{
@@ -195,9 +201,34 @@ function bindOpenTuiFacade(
     }
   };
   const resizeHandler = (): void => currentFrame?.onResize();
+  const capabilitiesHandler = (): void => {
+    if (currentFrame && !destroyed) mountFrame(currentFrame);
+  };
   renderer.keyInput.on("keypress", keyHandler);
   renderer.on(core.CliRenderEvents.RESIZE, resizeHandler);
+  renderer.on(core.CliRenderEvents.CAPABILITIES, capabilitiesHandler);
   if (noColorPostProcess) renderer.addPostProcessFn(noColorPostProcess);
+
+  const mountFrame = (frame: RenderFrame): void => {
+    currentFrame = frame;
+    if (frame.view.input?.secret) {
+      secretEditor ??= createSecretEditor();
+      inputDraft = null;
+    } else {
+      secretEditor?.clear();
+      secretEditor = null;
+      if (frame.view.input) {
+        const key = `${frame.view.kind}:${frame.view.input.label}`;
+        if (inputDraft?.key !== key) inputDraft = { key, value: frame.view.input.value };
+      } else {
+        inputDraft = null;
+      }
+    }
+    destroyCurrentRoot(renderer, currentRoot);
+    currentRoot = renderOpenTuiFrame(core, renderer, frame, theme, secretEditor, inputDraft);
+    renderer.root.add(currentRoot);
+    renderer.requestRender();
+  };
 
   const facade: OpenTuiFacade = {
     get dimensions() {
@@ -213,6 +244,7 @@ function bindOpenTuiFacade(
       try {
         renderer.keyInput.off("keypress", keyHandler);
         renderer.off(core.CliRenderEvents.RESIZE, resizeHandler);
+        renderer.off(core.CliRenderEvents.CAPABILITIES, capabilitiesHandler);
         if (noColorPostProcess) renderer.removePostProcessFn(noColorPostProcess);
         destroyCurrentRoot(renderer, currentRoot);
         currentRoot = null;
@@ -235,24 +267,7 @@ function bindOpenTuiFacade(
     },
     render(frame) {
       if (destroyed) return;
-      currentFrame = frame;
-      if (frame.view.input?.secret) {
-        secretEditor ??= createSecretEditor();
-        inputDraft = null;
-      } else {
-        secretEditor?.clear();
-        secretEditor = null;
-        if (frame.view.input) {
-          const key = `${frame.view.kind}:${frame.view.input.label}`;
-          if (inputDraft?.key !== key) inputDraft = { key, value: frame.view.input.value };
-        } else {
-          inputDraft = null;
-        }
-      }
-      destroyCurrentRoot(renderer, currentRoot);
-      currentRoot = renderOpenTuiFrame(core, renderer, frame, theme, secretEditor, inputDraft);
-      renderer.root.add(currentRoot);
-      renderer.requestRender();
+      mountFrame(frame);
     },
   };
 
@@ -302,7 +317,7 @@ function renderOpenTuiFrame(
       scrollY: true,
     });
     scroll.add(new core.TextRenderable(renderer, {
-      content: frame.view.body.join("\n"),
+      content: renderBodyContent(core, frame.view.body, frame.view.bodyLinks, renderer.capabilities?.hyperlinks === true),
       id: "screen-reader-content",
       width: "100%",
       wrapMode: "word",
@@ -406,6 +421,25 @@ function renderOpenTuiFrame(
     ...colorOption("fg", theme.muted),
   }));
   return root;
+}
+
+function renderBodyContent(
+  core: OpenTuiModule,
+  lines: readonly string[],
+  links: readonly ScreenBodyLink[],
+  hyperlinks: boolean,
+): string | import("@opentui/core").StyledText {
+  if (!hyperlinks || links.length === 0) return lines.join("\n");
+
+  const linksByText = new Map(links.map((bodyLink) => [bodyLink.text, bodyLink.url]));
+  const chunks = lines.flatMap((line, index) => {
+    const url = linksByText.get(line);
+    const lineChunks = url ? [core.link(url)(line)] : core.stringToStyledText(line).chunks;
+    return index === lines.length - 1
+      ? lineChunks
+      : [...lineChunks, ...core.stringToStyledText("\n").chunks];
+  });
+  return new core.StyledText(chunks);
 }
 
 function isTerminalExitKey(key: KeyEvent): boolean {

@@ -239,10 +239,28 @@ describe("buildScreenView", () => {
     });
 
     const skill = buildScreenView(readyModel({ screen: "agent-skill" }));
-    expect(skill.body).toContain("gh skill preview miguelgarglez/personal-video-digest video-digest");
-    expect(skill.body).toContain("gh skill install miguelgarglez/personal-video-digest video-digest");
+    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest";
+    const install = "gh skill install miguelgarglez/personal-video-digest video-digest";
+    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+    expect(skill.body).toContain(preview);
+    expect(skill.body).toContain(install);
+    expect(skill.body).toContain(source);
     expect(skill.body.join(" ")).toContain("Review the skill before installing it");
+    expect(skill.body.join(" ")).toContain("Preview feature");
+    expect(skill.body.join(" ")).toContain("unavailable in some gh versions");
+    expect(skill.body.join(" ")).toContain("never runs");
+    expect(skill.bodyLinks).toEqual([{ text: source, url: source }]);
+    expect(skill.actions).toEqual([
+      { text: preview, type: "copy-text" },
+      { text: install, type: "copy-text" },
+    ]);
     expect(skill.options).toEqual(["Copy Preview Command", "Copy Install Command"]);
+    expect(skill.options).not.toContain("Install automatically");
+
+    const minimumWidth = buildScreenView(readyModel({ screen: "agent-skill" }), MIN_TERMINAL_SIZE);
+    expect(minimumWidth.body).toContain(preview);
+    expect(minimumWidth.body).toContain(install);
+    expect(minimumWidth.body).toContain(source);
   });
 
   test("uses a clear fallback below the supported terminal size", () => {

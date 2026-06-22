@@ -262,9 +262,14 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
   test("skill discovery copies commands but never installs the skill", () => {
     const skill = update(readyModel({ screen: "settings" }), { type: "open-agent-skill" }).model;
     expect(skill.screen).toBe("agent-skill");
-    expect(update(skill, { text: "gh skill preview owner/repo video-digest", type: "copy-text" }).effects).toEqual([
-      { requestId: 1, text: "gh skill preview owner/repo video-digest", type: "copy" },
-    ]);
+    for (const text of [
+      "gh skill preview miguelgarglez/personal-video-digest video-digest",
+      "gh skill install miguelgarglez/personal-video-digest video-digest",
+    ]) {
+      expect(update(skill, { text, type: "copy-text" }).effects).toEqual([
+        { requestId: 1, text, type: "copy" },
+      ]);
+    }
   });
 });
 
