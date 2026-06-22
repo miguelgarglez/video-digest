@@ -14,9 +14,12 @@ Always pass `--json`, inspect the process exit status, require the exact documen
 | Resolve an artifact | `video-digest open <latest-or-video-id> --json` | `open-result.v0`: Library Entry fields plus `openPath`; no `status` on success and no application is opened |
 | Inspect configuration | `video-digest config get --json` | `config-status.v0`: `artifactLibrary`, credential presence/source only |
 | Save output location | `video-digest config set output-dir '<path>' --json` | `config-result.v0`: `status: "saved"`, `artifactLibrary` |
-| Remove saved output location | `video-digest config unset output-dir --json` | `config-result.v0`: `status: "deleted"` |
 
 `ingest`, `transcript`, `list`, and `open` may add `--output-dir '<path>'` for a single invocation. Do not combine JSON mode with Transcript presentation flags.
+
+There is no output-location unset command. Change the saved location by running `video-digest config set output-dir '<path>' --json` with user authorization.
+
+Credential changes are private, user-only interactions. Ask the user to run `video-digest config set opencode-api-key` or `video-digest config unset opencode-api-key` in their own terminal. The agent must not invoke these commands, request the value, or observe the interaction.
 
 ## Results and failures
 
