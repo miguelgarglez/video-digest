@@ -42,6 +42,11 @@ import { withRecoveredOutputLibrary } from "../output/output-writer";
 import type { VideoMetadataSource } from "../video/video-metadata-source";
 import { YouTubeOEmbedMetadataSource } from "../video/youtube-oembed-metadata-source";
 import { createMacOSSystemActions, SystemActionError, type SystemActions } from "./system-actions";
+import {
+  PUBLIC_CLI_ERROR_CODE,
+  PUBLIC_CLI_SCHEMA,
+  type PublicCliErrorCode,
+} from "./public-contract";
 
 export type CliIO = {
   error: (message: string) => void;
@@ -112,7 +117,7 @@ export async function runCli(
             code: result.error.code,
             message: result.error.message,
           },
-          schemaVersion: args[0] === "setup" ? "setup-result.v0" : "cli-result.v0",
+          schemaVersion: args[0] === "setup" ? PUBLIC_CLI_SCHEMA.setupResult : PUBLIC_CLI_SCHEMA.cliResult,
           status: "failed",
         }));
       } else {
@@ -161,7 +166,7 @@ export async function runCli(
         ? await dependencies.doctor(artifactLibrary.path)
         : await defaultDoctor(credentialStore, artifactLibrary.path);
       if (result.value.json) {
-        io.log(JSON.stringify({ schemaVersion: "doctor-report.v0", ...report }));
+        io.log(JSON.stringify({ schemaVersion: PUBLIC_CLI_SCHEMA.doctorReport, ...report }));
       } else {
         printDoctorReport(report, io);
       }
@@ -174,7 +179,7 @@ export async function runCli(
         () => listLibraryEntries(artifactLibrary.path, dependencies.libraryFileOperations),
       );
       if (result.value.json) {
-        io.log(JSON.stringify({ items, schemaVersion: "library-list.v0" }));
+        io.log(JSON.stringify({ items, schemaVersion: PUBLIC_CLI_SCHEMA.libraryList }));
       } else {
         printLibraryEntries(items, io);
       }
@@ -206,7 +211,7 @@ export async function runCli(
             code: openResult.errorCode,
             message: openResult.message,
           },
-          schemaVersion: "open-result.v0",
+          schemaVersion: PUBLIC_CLI_SCHEMA.openResult,
           status: "failed",
         };
 
@@ -222,7 +227,7 @@ export async function runCli(
         io.log(JSON.stringify({
           ...openResult.item,
           openPath: openResult.openPath,
-          schemaVersion: "open-result.v0",
+          schemaVersion: PUBLIC_CLI_SCHEMA.openResult,
         }));
       } else {
         io.log(`Opened: ${formatTerminalPath(openResult.openPath, io)}`);
@@ -321,7 +326,7 @@ export async function runCli(
           code: cliError.code,
           message: cliError.message,
         },
-        schemaVersion: "cli-result.v0",
+        schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
         status: "failed",
         videoId: parsedVideo?.videoId,
       }));
@@ -335,7 +340,7 @@ export async function runCli(
 function formatCliError(
   error: unknown,
   video?: { canonicalUrl: string },
-): { code: string; exitCode: number; message: string } {
+): { code: PublicCliErrorCode; exitCode: number; message: string } {
   if (error instanceof TranscriptSourceError && error.code === "transcript-unavailable") {
     const providerReason = extractProviderReason(error.message);
     const lines = [
@@ -345,7 +350,7 @@ function formatCliError(
     ];
 
     return {
-      code: "transcript-unavailable",
+      code: PUBLIC_CLI_ERROR_CODE.transcriptUnavailable,
       exitCode: 2,
       message: lines.filter((line): line is string => line !== null).join("\n"),
     };
@@ -364,7 +369,7 @@ function formatCliError(
       ? `video-digest transcript ${video.canonicalUrl}`
       : "video-digest transcript <youtube-url>";
     return {
-      code: "missing-api-key",
+      code: PUBLIC_CLI_ERROR_CODE.missingApiKey,
       exitCode: 1,
       message: [
         "Digest generation requires OPENCODE_API_KEY.",
@@ -388,14 +393,14 @@ function formatCliError(
 
   if (error instanceof Error) {
     return {
-      code: "unexpected-error",
+      code: PUBLIC_CLI_ERROR_CODE.unexpectedError,
       exitCode: 1,
       message: error.message,
     };
   }
 
   return {
-    code: "unexpected-error",
+    code: PUBLIC_CLI_ERROR_CODE.unexpectedError,
     exitCode: 1,
     message: "Video ingestion failed",
   };
@@ -413,7 +418,7 @@ function extractProviderReason(message: string): string | null {
 }
 
 const HELP_TEXT = [
-  "Personal Video Digest",
+  "Video Digest",
   "",
   "Usage:",
   "  video-digest ingest <youtube-url> [--email-preview] [--json] [--output-dir <path>]",
@@ -538,7 +543,7 @@ async function runConfigCommand(
           configured,
           source: credential.source,
         },
-        schemaVersion: "config-status.v0",
+        schemaVersion: PUBLIC_CLI_SCHEMA.configStatus,
       }));
     } else {
       io.log(configured
@@ -560,7 +565,11 @@ async function runConfigCommand(
       };
       await configStore.save(config);
       if (command.json) {
-        io.log(JSON.stringify({ artifactLibrary: config.artifactLibrary, schemaVersion: "config-result.v0", status: "saved" }));
+        io.log(JSON.stringify({
+          artifactLibrary: config.artifactLibrary,
+          schemaVersion: PUBLIC_CLI_SCHEMA.configResult,
+          status: "saved",
+        }));
       } else {
         io.log(`Artifact Library saved: ${formatTerminalPath(config.artifactLibrary, io)}`);
       }
@@ -569,10 +578,10 @@ async function runConfigCommand(
     if (command.json) {
       io.log(JSON.stringify({
         error: {
-          code: "interactive-required",
+          code: PUBLIC_CLI_ERROR_CODE.interactiveRequired,
           message: "config set opencode-api-key requires an interactive prompt.",
         },
-        schemaVersion: "config-result.v0",
+        schemaVersion: PUBLIC_CLI_SCHEMA.configResult,
         status: "failed",
       }));
       return 1;
@@ -600,7 +609,7 @@ async function runConfigCommand(
       opencodeApiKey: {
         configured: false,
       },
-      schemaVersion: "config-result.v0",
+      schemaVersion: PUBLIC_CLI_SCHEMA.configResult,
       status: "deleted",
     }));
   } else {
@@ -796,7 +805,7 @@ function printIngestionJson(
   if (result.status === "unusable-transcript") {
     io.log(JSON.stringify({
       metadataPath: result.metadataPath,
-      schemaVersion: "cli-result.v0",
+      schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
       status: "unusable-transcript",
       transcriptQuality: result.transcriptQuality.status,
       videoId,
@@ -807,7 +816,7 @@ function printIngestionJson(
   io.log(JSON.stringify({
     canonicalUrl,
     paths: result.paths,
-    schemaVersion: "cli-result.v0",
+    schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
     status: result.status,
     transcriptQuality: result.transcriptQuality.status,
     videoId,
@@ -848,7 +857,7 @@ function printTranscriptJson(
   io.log(JSON.stringify({
     canonicalUrl,
     paths: result.paths,
-    schemaVersion: "cli-result.v0",
+    schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
     status: result.status,
     transcriptQuality: result.transcriptQuality.status,
     videoId,
@@ -908,8 +917,8 @@ async function runSetupCommand(
       const message = "Setup requires explicit consent; rerun with --yes.";
       if (command.json) {
         io.log(JSON.stringify({
-          error: { code: "consent-required", message },
-          schemaVersion: "setup-result.v0",
+          error: { code: PUBLIC_CLI_ERROR_CODE.consentRequired, message },
+          schemaVersion: PUBLIC_CLI_SCHEMA.setupResult,
           status: "failed",
         }));
       } else {
@@ -929,7 +938,7 @@ async function runSetupCommand(
   try {
     await runtimeManager.prepare();
     if (command.json) {
-      io.log(JSON.stringify({ schemaVersion: "setup-result.v0", status: "ready" }));
+      io.log(JSON.stringify({ schemaVersion: PUBLIC_CLI_SCHEMA.setupResult, status: "ready" }));
     } else {
       io.log("Python runtime is ready.");
     }
@@ -938,11 +947,11 @@ async function runSetupCommand(
     const message = error instanceof RuntimeSetupError
       ? error.message
       : "Setup failed while preparing the isolated Python runtime.";
-    const code = error instanceof RuntimeSetupError ? error.code : "setup-failed";
+    const code = error instanceof RuntimeSetupError ? error.code : PUBLIC_CLI_ERROR_CODE.setupFailed;
     if (command.json) {
       io.log(JSON.stringify({
         error: { code, message },
-        schemaVersion: "setup-result.v0",
+        schemaVersion: PUBLIC_CLI_SCHEMA.setupResult,
         status: "failed",
       }));
     } else {
@@ -962,8 +971,8 @@ async function requireReadyRuntime(
   const message = `Python runtime is ${readiness.status}. ${readiness.remediation}`;
   if (json) {
     io.log(JSON.stringify({
-      error: { code: "runtime-not-ready", message },
-      schemaVersion: "cli-result.v0",
+      error: { code: PUBLIC_CLI_ERROR_CODE.runtimeNotReady, message },
+      schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
       status: "failed",
     }));
   } else {

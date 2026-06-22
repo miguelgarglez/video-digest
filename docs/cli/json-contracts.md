@@ -17,8 +17,10 @@ See also [Exit codes](./exit-codes.md) and
 - A failed object has `status: "failed"` and an `error` object unless a command's
   documented schema says otherwise. `error.message` is for display; branch on
   `error.code` and the process exit status.
-- Fields shown as `null` are present and nullable. `videoId` is omitted when an
-  error occurs before a YouTube URL can be parsed.
+- Fields shown as `null` are present and nullable. Domain failures that occur after
+  URL parsing may include `videoId`. Parsing, runtime-readiness, and failures without
+  a parsed Video omit it. Consumers must therefore treat `videoId` as optional on
+  `status: "failed"` objects; it is required on completed Video results.
 
 The public stdout schema versions are:
 
@@ -38,7 +40,7 @@ On success, `paths.emailPreviewPath` is a string only when `--email-preview` was
 requested; otherwise it is `null`. The three Transcript paths, Digest path, and
 metadata path are always present.
 
-<!-- ingest:success -->
+<!-- contract:ingest-success -->
 ```json
 {
   "canonicalUrl": "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
@@ -60,7 +62,7 @@ metadata path are always present.
 Provider, credential, runtime, parsing, and unexpected failures use the same
 schema. For example, unavailable subtitles return exit status `2`:
 
-<!-- ingest:failure -->
+<!-- contract:ingest-failure -->
 ```json
 {
   "error": {
@@ -76,6 +78,7 @@ schema. For example, unavailable subtitles return exit status `2`:
 An unusable Transcript is a completed quality decision rather than an `error`
 object. It returns exit status `2` and this alternate result shape:
 
+<!-- contract:ingest-unusable -->
 ```json
 {
   "metadataPath": "/artifact-library/metadata/1ZgUcrR0K7I.json",
@@ -91,7 +94,7 @@ object. It returns exit status `2` and this alternate result shape:
 The command writes canonical Transcript JSON, human-readable Markdown, clean text,
 and entry metadata before returning their paths.
 
-<!-- transcript:success -->
+<!-- contract:transcript-success -->
 ```json
 {
   "canonicalUrl": "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
@@ -110,7 +113,7 @@ and entry metadata before returning their paths.
 
 The runtime is inspected but never prepared implicitly:
 
-<!-- transcript:failure -->
+<!-- contract:transcript-failure -->
 ```json
 {
   "error": {
@@ -126,7 +129,7 @@ The runtime is inspected but never prepared implicitly:
 
 `--yes` is required in JSON mode because setup changes application support state.
 
-<!-- setup:success -->
+<!-- contract:setup-success -->
 ```json
 {
   "schemaVersion": "setup-result.v0",
@@ -136,7 +139,7 @@ The runtime is inspected but never prepared implicitly:
 
 Without explicit consent, no setup mutation starts:
 
-<!-- setup:failure -->
+<!-- contract:setup-failure -->
 ```json
 {
   "error": {
@@ -151,12 +154,14 @@ Without explicit consent, no setup mutation starts:
 ## `video-digest config <operation> --json`
 
 `config get` uses `config-status.v0`. `artifactLibrary.configured` is the saved
-preference or `null`; `effective` reflects flag/environment/config/default
-precedence. `source` is one of `cli`, `env`, `config`, or `default`.
+preference or `null`; `effective` reflects environment/config/default precedence.
+`source` is one of `env`, `config`, or `default`.
+`--output-dir` is not accepted by `config`; it is a one-command override only for
+`ingest`, `transcript`, `list`, and `open`.
 `opencodeApiKey.source` is one of `env`, `keychain`, or `missing`; credential values
 are never returned.
 
-<!-- config:success -->
+<!-- contract:config-get-success -->
 ```json
 {
   "artifactLibrary": {
@@ -172,12 +177,35 @@ are never returned.
 }
 ```
 
-`config set output-dir <path>` returns `status: "saved"` and
-`artifactLibrary`; `config unset opencode-api-key` returns `status: "deleted"`
-and `opencodeApiKey.configured: false`. Setting a credential is deliberately
-interactive and therefore unavailable in JSON mode:
+`config set output-dir <path>` returns `status: "saved"` and `artifactLibrary`:
 
-<!-- config:failure -->
+<!-- contract:config-set-success -->
+```json
+{
+  "artifactLibrary": "/artifact-library",
+  "schemaVersion": "config-result.v0",
+  "status": "saved"
+}
+```
+
+`config unset opencode-api-key` returns `status: "deleted"` and never returns the
+deleted credential:
+
+<!-- contract:config-unset-success -->
+```json
+{
+  "opencodeApiKey": {
+    "configured": false
+  },
+  "schemaVersion": "config-result.v0",
+  "status": "deleted"
+}
+```
+
+Setting a credential is deliberately interactive and therefore unavailable in JSON
+mode:
+
+<!-- contract:config-failure -->
 ```json
 {
   "error": {
@@ -195,7 +223,22 @@ Every check contains a `capability` (`transcript` or `digest`), stable check `id
 human message, nullable remediation, and `status` (`pass`, `warn`, or `fail`).
 Warnings do not make the report fail. `ok` is false when at least one check fails.
 
-<!-- doctor:success -->
+The exact check IDs are:
+
+| Check ID | Capability | Interpretation |
+| --- | --- | --- |
+| `bun` | `transcript` | The Bun process running the CLI is available. |
+| `uv` | `transcript` | `uv` is available for explicit runtime setup; it may warn when an already-prepared runtime remains usable. |
+| `python-sidecar` | `transcript` | The packaged Transcript sidecar exists. |
+| `python-runtime` | `transcript` | The managed Python runtime matches the shipped lockfile. |
+| `opencode-api-key` | `digest` | Digest credentials are configured; absence is a warning because Transcript mode still works. |
+| `output-dir` | `transcript` | The effective Artifact Library is writable or can be created. |
+
+`capability` identifies the product capability directly assessed by a check. Digest
+generation also depends on Transcript readiness, so consumers should use the report's
+top-level `ok` and all failed checks rather than considering only `digest` rows.
+
+<!-- contract:doctor-success -->
 ```json
 {
   "schemaVersion": "doctor-report.v0",
@@ -222,7 +265,7 @@ Warnings do not make the report fail. `ok` is false when at least one check fail
 A failed diagnostic remains a `doctor-report.v0` report, not a generic `error`
 object, and exits `1`:
 
-<!-- doctor:failure -->
+<!-- contract:doctor-failure -->
 ```json
 {
   "schemaVersion": "doctor-report.v0",
@@ -245,7 +288,7 @@ object, and exits `1`:
 all six artifact path keys. Missing optional artifacts are `null`; `metadataPath`
 is always a string. `title` and `channel` are nullable.
 
-<!-- list:success -->
+<!-- contract:list-success -->
 ```json
 {
   "items": [
@@ -271,7 +314,7 @@ is always a string. `title` and `channel` are nullable.
 An empty Library is a successful list with `items: []`. An operational failure
 uses the generic command-failure schema:
 
-<!-- list:failure -->
+<!-- contract:list-failure -->
 ```json
 {
   "error": {
@@ -289,7 +332,7 @@ JSON mode resolves the preferred human-readable artifact but never opens it. A
 Digest is preferred; Transcript Markdown is the fallback. Success contains the
 same Library Entry fields as `list` plus `openPath`, and has no `status` field.
 
-<!-- open:success -->
+<!-- contract:open-success -->
 ```json
 {
   "channel": "Example Channel",
@@ -309,7 +352,7 @@ same Library Entry fields as `list` plus `openPath`, and has no `status` field.
 }
 ```
 
-<!-- open:failure -->
+<!-- contract:open-failure -->
 ```json
 {
   "error": {
@@ -327,6 +370,7 @@ When `--json` is present but argument parsing fails, stdout still receives one
 failure object. It uses `setup-result.v0` when the first token is `setup`, and
 `cli-result.v0` otherwise:
 
+<!-- contract:invocation-failure -->
 ```json
 {
   "error": {

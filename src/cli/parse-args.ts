@@ -1,4 +1,5 @@
 import { parseYouTubeVideoUrl, type YouTubeVideo } from "../video/youtube-url";
+import type { PublicCliErrorCode } from "./public-contract";
 
 export type CliOptions =
   | {
@@ -53,7 +54,14 @@ export type CliOptions =
     };
 
 export type CliError = {
-  code: "conflicting-options" | "duplicate-option" | "missing-url" | "invalid-url" | "missing-option-value" | "unsupported-command" | "unsupported-option";
+  code: Extract<PublicCliErrorCode,
+    | "conflicting-options"
+    | "duplicate-option"
+    | "missing-url"
+    | "invalid-url"
+    | "missing-option-value"
+    | "unsupported-command"
+    | "unsupported-option">;
   message: string;
 };
 

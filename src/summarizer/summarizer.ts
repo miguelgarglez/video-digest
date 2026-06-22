@@ -1,4 +1,5 @@
 import type { DigestDraft } from "../digest/digest";
+import type { PublicCliErrorCode } from "../cli/public-contract";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
@@ -14,7 +15,8 @@ export type Summarizer = {
   generateDigest(input: SummarizerInput): Promise<DigestDraft>;
 };
 
-export type SummarizerErrorCode = "missing-api-key" | "provider-failed" | "invalid-provider-response";
+export type SummarizerErrorCode = Extract<PublicCliErrorCode,
+  "missing-api-key" | "provider-failed" | "invalid-provider-response">;
 
 export class SummarizerError extends Error {
   constructor(

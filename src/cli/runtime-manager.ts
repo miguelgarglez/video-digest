@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { PublicCliErrorCode } from "./public-contract";
 
 const REMEDIATION = "Run video-digest setup.";
 
@@ -29,7 +30,10 @@ export type PrepareRuntimeInput = {
 };
 
 export class RuntimeSetupError extends Error {
-  constructor(public readonly code: "already-running" | "recovery-required", message: string) {
+  constructor(
+    public readonly code: Extract<PublicCliErrorCode, "already-running" | "recovery-required">,
+    message: string,
+  ) {
     super(message);
     this.name = "RuntimeSetupError";
   }

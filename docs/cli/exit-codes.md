@@ -15,6 +15,16 @@ both the process status and the versioned object on stdout. See
 
 No other process exit status is part of the `0.1.0` public contract.
 
+## Command-family behavior
+
+| Command family | Exit `0` | Exit `1` | Exit `2` |
+| --- | --- | --- | --- |
+| Invocation | Valid `--help` or `--version` output | Argument parsing or unsupported invocation | Never |
+| Setup | Runtime prepared and ready | Consent, locking, recovery, or preparation failure | Never |
+| Doctor | `ok: true`, including warnings | `ok: false` because at least one check failed | Never |
+| Ingest / Transcript | Artifacts completed | Runtime, credential, provider, filesystem, or unexpected failure | Transcript unavailable; also an unusable Transcript for `ingest` |
+| Library / Config | Successful list, resolution, or configuration operation | Library, validation, interactive-requirement, or configuration failure | Never |
+
 ## JSON error codes
 
 Error codes are scoped by the schema and operation. They are more precise than
@@ -91,4 +101,3 @@ With `--json`, stdout contains exactly one documented JSON object, including on 
 parsing failure. Diagnostics, when present, are written to stderr and are intended
 for humans. Without `--json`, failures are written to stderr as concise actionable
 text; stdout remains the human result channel.
-

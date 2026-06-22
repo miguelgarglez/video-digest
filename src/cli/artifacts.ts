@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir, readlink, realpath, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
+import type { PublicCliErrorCode } from "./public-contract";
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 const OPEN_READ_ONLY_NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
@@ -84,7 +85,8 @@ export type ResolvedLibraryEntry = {
   openTarget: LibraryOpenTarget;
 };
 
-export type LibraryEntryErrorCode = "library-entry-not-found" | "library-entry-not-openable";
+export type LibraryEntryErrorCode = Extract<PublicCliErrorCode,
+  "library-entry-not-found" | "library-entry-not-openable">;
 
 export type UnresolvedLibraryEntry = {
   errorCode: LibraryEntryErrorCode;

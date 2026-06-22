@@ -1,3 +1,5 @@
+import type { PublicCliErrorCode } from "./public-contract";
+
 export type SpawnResult = {
   exitCode: number;
   stderr: string;
@@ -15,7 +17,10 @@ export type SystemActions = {
 };
 
 export class SystemActionError extends Error {
-  constructor(public readonly code: "copy-failed" | "open-failed" | "reveal-failed", message: string) {
+  constructor(
+    public readonly code: Extract<PublicCliErrorCode, "copy-failed" | "open-failed" | "reveal-failed">,
+    message: string,
+  ) {
     super(message);
     this.name = "SystemActionError";
   }
