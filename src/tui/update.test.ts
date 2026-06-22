@@ -547,10 +547,7 @@ describe("pending state integrity", () => {
     expect(JSON.stringify(completed)).not.toContain("top-secret");
   });
 
-  test("only cancellable controller operations emit cancellation and clear pending navigation", () => {
-    const doctor = update(readyModel(), { type: "open-doctor" }).model;
-    expect(update(doctor, { type: "back" })).toEqual({ effects: [], model: doctor });
-
+  test("only cancellable controller operations emit cancellation when navigating", () => {
     const operation = update(readyModel({ creationMode: "transcript", screen: "enter-url" }), {
       type: "submit-url",
       url: "https://youtu.be/abc123_DEF4",
@@ -559,6 +556,88 @@ describe("pending state integrity", () => {
       effects: [{ requestId: 1, type: "cancel-operation" }],
       model: expect.objectContaining({ pending: null, screen: "home" }),
     });
+  });
+});
+
+describe("dismissible pending navigation", () => {
+  test("dismisses doctor with Back or Home and ignores its late completion", () => {
+    const report = { checks: [], ok: true };
+    for (const event of [{ type: "back" } as const, { type: "go-home" } as const]) {
+      const running = update(readyModel(), { type: "open-doctor" }).model;
+      const dismissed = update(running, event);
+      expect(dismissed).toEqual({
+        effects: [],
+        model: expect.objectContaining({ pending: null, screen: "home" }),
+      });
+      expect(update(dismissed.model, { report, requestId: 1, type: "doctor-completed" }).model)
+        .toBe(dismissed.model);
+    }
+  });
+
+  test("dismisses Library loading with Back or Home and ignores its late completion", () => {
+    for (const event of [{ type: "back" } as const, { type: "go-home" } as const]) {
+      const loading = update(readyModel(), { type: "browse-library" }).model;
+      const dismissed = update(loading, event);
+      expect(dismissed).toEqual({
+        effects: [],
+        model: expect.objectContaining({ pending: null, screen: "home" }),
+      });
+      expect(update(dismissed.model, { entries: [entry], requestId: 1, type: "library-loaded" }).model)
+        .toBe(dismissed.model);
+    }
+  });
+
+  test("dismisses reader loading with Back or Home and ignores its late completion", () => {
+    for (const event of [{ type: "back" } as const, { type: "go-home" } as const]) {
+      const reading = update(readyModel({ result: transcriptResult, screen: "result" }), {
+        type: "read-result",
+      }).model;
+      const dismissed = update(reading, event);
+      expect(dismissed).toEqual({
+        effects: [],
+        model: expect.objectContaining({ pending: null, screen: "home" }),
+      });
+      expect(update(dismissed.model, {
+        content: "late",
+        path: entry.paths.transcriptMarkdownPath!,
+        requestId: 1,
+        title: "late",
+        type: "reader-loaded",
+      }).model).toBe(dismissed.model);
+    }
+  });
+
+  test("dismisses every OS system action without claiming cancellation", () => {
+    const cases = [
+      {
+        start: () => update(readyModel({ result: transcriptResult, screen: "result" }), { type: "copy-result" }).model,
+        type: "copy",
+      },
+      {
+        start: () => update(readyModel({ screen: "library", selectedEntry: entry }), { type: "open-entry-externally" }).model,
+        type: "open",
+      },
+      {
+        start: () => update(readyModel({ result: transcriptResult, screen: "result" }), { type: "reveal-result" }).model,
+        type: "reveal",
+      },
+      {
+        start: () => update(readyModel({ result: transcriptResult, screen: "result" }), { type: "print-result" }).model,
+        type: "print",
+      },
+    ] as const;
+
+    for (const item of cases) {
+      for (const event of [{ type: "back" } as const, { type: "go-home" } as const]) {
+        const running = item.start();
+        expect(running.pending?.kind).toBe(item.type);
+        const dismissed = update(running, event);
+        expect(dismissed.effects).toEqual([]);
+        expect(dismissed.model).toMatchObject({ pending: null, screen: "home" });
+        expect(update(dismissed.model, { requestId: 1, type: "system-action-completed" }).model)
+          .toBe(dismissed.model);
+      }
+    }
   });
 });
 

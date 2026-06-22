@@ -34,6 +34,7 @@ export type PendingKind =
   | "read"
   | "load-library"
   | "run-doctor";
+export type PendingPolicy = "persistent-blocking" | "cancellable" | "dismissible";
 
 export type PendingRequest = Readonly<{
   kind: PendingKind;

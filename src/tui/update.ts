@@ -10,6 +10,7 @@ import {
   type Model,
   type LibraryEntrySnapshot,
   type PendingKind,
+  type PendingPolicy,
   type RequestId,
   type ResultData,
   type Screen,
@@ -227,14 +228,10 @@ export function update(model: Model, event: Event): Transition {
         ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "back":
-      return model.pending && !isCancellablePending(model.pending.kind)
-        ? unchanged(model)
-        : navigateBack(model);
+      return navigateBackWithPendingPolicy(model);
     case "go-home": {
       if (model.config.artifactLibrary === null) return unchanged(model);
-      if (model.pending && !isCancellablePending(model.pending.kind)) return unchanged(model);
-      const cancellation = cancellationEffect(model);
-      return transition(goHome(model), cancellation ? [cancellation] : []);
+      return navigateHomeWithPendingPolicy(model);
     }
     default:
       return assertNever(event);
@@ -362,8 +359,62 @@ function cancellationEffect(model: Model): Extract<Effect, { type: "cancel-opera
   return { requestId: model.pending.requestId, type: "cancel-operation" };
 }
 
-function isCancellablePending(kind: PendingKind): kind is "ingest" | "transcript" {
-  return kind === "ingest" || kind === "transcript";
+function pendingPolicy(kind: PendingKind): PendingPolicy {
+  switch (kind) {
+    case "save-library":
+    case "prepare-runtime":
+    case "save-credential":
+      return "persistent-blocking";
+    case "ingest":
+    case "transcript":
+      return "cancellable";
+    case "load-library":
+    case "read":
+    case "run-doctor":
+    case "copy":
+    case "open":
+    case "reveal":
+    case "print":
+      return "dismissible";
+    default:
+      return assertNever(kind);
+  }
+}
+
+function navigateBackWithPendingPolicy(model: Model): Transition {
+  if (!model.pending) return navigateBack(model);
+
+  const policy = pendingPolicy(model.pending.kind);
+  switch (policy) {
+    case "persistent-blocking":
+      return unchanged(model);
+    case "cancellable": {
+      const cancellation = cancellationEffect(model);
+      return transition(goHome(model), cancellation ? [cancellation] : []);
+    }
+    case "dismissible":
+      return navigateBack(model);
+    default:
+      return assertNever(policy);
+  }
+}
+
+function navigateHomeWithPendingPolicy(model: Model): Transition {
+  if (!model.pending) return transition(goHome(model));
+
+  const policy = pendingPolicy(model.pending.kind);
+  switch (policy) {
+    case "persistent-blocking":
+      return unchanged(model);
+    case "cancellable": {
+      const cancellation = cancellationEffect(model);
+      return transition(goHome(model), cancellation ? [cancellation] : []);
+    }
+    case "dismissible":
+      return transition(goHome(model));
+    default:
+      return assertNever(policy);
+  }
 }
 
 function cloneLibraryEntry(entry: LibraryEntrySnapshot): LibraryEntrySnapshot {
