@@ -47,6 +47,7 @@ import {
   PUBLIC_CLI_SCHEMA,
   type PublicCliErrorCode,
   type PublicCliExitCode,
+  type PublicTuiExitCode,
 } from "./public-contract";
 
 export type CliIO = {
@@ -84,7 +85,7 @@ export type CliDependencies = {
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
-  startTui?: () => Promise<PublicCliExitCode>;
+  startTui?: () => Promise<PublicTuiExitCode>;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
 };
 

@@ -43,6 +43,12 @@ export type PublicCliErrorCode = typeof PUBLIC_CLI_ERROR_CODES[number];
 export const PUBLIC_CLI_EXIT_CODES = [0, 1, 2] as const;
 export type PublicCliExitCode = typeof PUBLIC_CLI_EXIT_CODES[number];
 
+export const PUBLIC_TUI_EXIT_CODES = [0, 1] as const satisfies readonly PublicCliExitCode[];
+export type PublicTuiExitCode = Extract<
+  PublicCliExitCode,
+  typeof PUBLIC_TUI_EXIT_CODES[number]
+>;
+
 export const PUBLIC_DOCTOR_CHECK_ID = {
   bun: "bun",
   opencodeApiKey: "opencode-api-key",
