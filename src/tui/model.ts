@@ -20,6 +20,25 @@ export type CreationMode = "digest" | "transcript";
 export type ReaderOrigin = "result" | "library";
 export type GateOrigin = "creation" | "settings";
 export type LibrarySelectionOrigin = "onboarding" | "settings";
+export type RequestId = number;
+export type PendingKind =
+  | "save-library"
+  | "prepare-runtime"
+  | "save-credential"
+  | "ingest"
+  | "transcript"
+  | "copy"
+  | "open"
+  | "reveal"
+  | "print"
+  | "read"
+  | "load-library"
+  | "run-doctor";
+
+export type PendingRequest = {
+  kind: PendingKind;
+  requestId: RequestId;
+};
 
 export type TuiConfig = {
   artifactLibrary: string | null;
@@ -47,6 +66,8 @@ export type Model = {
   gateOrigin: GateOrigin;
   librarySelectionOrigin: LibrarySelectionOrigin;
   message: string | null;
+  nextRequestId: RequestId;
+  pending: PendingRequest | null;
   progress: string | null;
   reader: ReaderData | null;
   readerOrigin: ReaderOrigin | null;
@@ -76,6 +97,8 @@ export function initialModel(input: InitialModelInput): Model {
     gateOrigin: "creation",
     librarySelectionOrigin: configured ? "settings" : "onboarding",
     message: null,
+    nextRequestId: 1,
+    pending: null,
     progress: null,
     reader: null,
     readerOrigin: null,
@@ -94,56 +117,58 @@ export type Event =
   | { type: "choose-digest" }
   | { type: "choose-transcript" }
   | { type: "prepare-runtime" }
-  | { type: "runtime-ready" }
-  | { type: "runtime-failed"; message: string; readiness: Exclude<RuntimeReadiness, { status: "ready" }> }
+  | { type: "runtime-ready"; requestId: RequestId }
+  | { type: "runtime-failed"; message: string; readiness: Exclude<RuntimeReadiness, { status: "ready" }>; requestId: RequestId }
   | { type: "save-credential"; value: string }
-  | { type: "credential-saved" }
-  | { type: "credential-failed"; message: string }
+  | { type: "credential-saved"; requestId: RequestId }
+  | { type: "credential-failed"; message: string; requestId: RequestId }
   | { type: "submit-url"; url: string }
-  | { type: "operation-progress"; message: string }
-  | { type: "operation-succeeded"; result: ResultData }
-  | { type: "operation-failed"; message: string }
+  | { type: "operation-progress"; message: string; requestId: RequestId }
+  | { type: "operation-succeeded"; result: ResultData; requestId: RequestId }
+  | { type: "operation-failed"; message: string; requestId: RequestId }
   | { type: "copy-result" }
   | { type: "print-result" }
   | { type: "reveal-result" }
   | { type: "read-result" }
   | { type: "browse-library" }
-  | { type: "library-loaded"; entries: LibraryEntry[] }
-  | { type: "library-failed"; message: string }
-  | { type: "select-entry"; entry: LibraryEntry }
+  | { type: "library-loaded"; entries: LibraryEntry[]; requestId: RequestId }
+  | { type: "library-failed"; message: string; requestId: RequestId }
+  | { type: "select-entry"; videoId: string }
   | { type: "read-entry" }
   | { type: "open-entry-externally" }
-  | { type: "reader-loaded"; content: string; path: string; title: string }
-  | { type: "reader-failed"; message: string }
+  | { type: "reader-loaded"; content: string; path: string; title: string; requestId: RequestId }
+  | { type: "reader-failed"; message: string; requestId: RequestId }
   | { type: "open-settings" }
   | { type: "change-library" }
   | { type: "save-library"; path: string }
-  | { type: "library-saved"; path: string }
-  | { type: "library-save-failed"; message: string }
+  | { type: "library-saved"; path: string; requestId: RequestId }
+  | { type: "library-save-failed"; message: string; requestId: RequestId }
   | { type: "open-runtime-setup" }
   | { type: "open-credential-setup" }
   | { type: "open-doctor" }
-  | { type: "doctor-completed"; report: DoctorReport }
-  | { type: "doctor-failed"; message: string }
+  | { type: "doctor-completed"; report: DoctorReport; requestId: RequestId }
+  | { type: "doctor-failed"; message: string; requestId: RequestId }
   | { type: "open-agent-skill" }
   | { type: "copy-text"; text: string }
+  | { type: "system-action-completed"; requestId: RequestId }
+  | { type: "system-action-failed"; message: string; requestId: RequestId }
   | { type: "back" }
   | { type: "go-home" };
 
 export type Effect =
-  | { type: "save-library"; path: string }
-  | { type: "prepare-runtime" }
-  | { type: "save-credential"; value: string }
-  | { type: "ingest"; url: string }
-  | { type: "transcript"; url: string }
-  | { type: "copy"; text: string }
-  | { type: "open"; path: string }
-  | { type: "reveal"; path: string }
-  | { type: "print"; text: string }
-  | { type: "read"; path: string }
-  | { type: "load-library" }
-  | { type: "run-doctor" }
-  | { type: "cancel-operation" }
+  | { type: "save-library"; path: string; requestId: RequestId }
+  | { type: "prepare-runtime"; requestId: RequestId }
+  | { type: "save-credential"; value: string; requestId: RequestId }
+  | { type: "ingest"; url: string; requestId: RequestId }
+  | { type: "transcript"; url: string; requestId: RequestId }
+  | { type: "copy"; text: string; requestId: RequestId }
+  | { type: "open"; path: string; requestId: RequestId }
+  | { type: "reveal"; path: string; requestId: RequestId }
+  | { type: "print"; text: string; requestId: RequestId }
+  | { type: "read"; path: string; requestId: RequestId }
+  | { type: "load-library"; requestId: RequestId }
+  | { type: "run-doctor"; requestId: RequestId }
+  | { type: "cancel-operation"; requestId: RequestId }
   | { type: "quit" };
 
 export type Transition = {

@@ -78,7 +78,8 @@ describe("progressive creation gates", () => {
       screen: "runtime-required",
     });
 
-    expect(update(model, { type: "runtime-ready" }).model).toMatchObject({
+    const preparing = update(model, { type: "prepare-runtime" });
+    expect(update(preparing.model, { requestId: 1, type: "runtime-ready" }).model).toMatchObject({
       runtimeReadiness: { status: "ready" },
       screen: "credential-required",
     });
@@ -94,14 +95,14 @@ describe("progressive creation gates", () => {
   test("emits setup and credential persistence only after explicit submission", () => {
     const runtimeModel = readyModel({ screen: "runtime-required" });
     expect(update(runtimeModel, { type: "prepare-runtime" })).toEqual({
-      effects: [{ type: "prepare-runtime" }],
-      model: runtimeModel,
+      effects: [{ requestId: 1, type: "prepare-runtime" }],
+      model: expect.objectContaining({ pending: { kind: "prepare-runtime", requestId: 1 } }),
     });
 
     const credentialModel = readyModel({ credentialConfigured: false, screen: "credential-required" });
     const transition = update(credentialModel, { type: "save-credential", value: "secret" });
-    expect(transition.effects).toEqual([{ type: "save-credential", value: "secret" }]);
-    expect(transition.model).toBe(credentialModel);
+    expect(transition.effects).toEqual([{ requestId: 1, type: "save-credential", value: "secret" }]);
+    expect(transition.model.pending).toEqual({ kind: "save-credential", requestId: 1 });
   });
 });
 
@@ -119,30 +120,36 @@ describe("creation and results", () => {
     const model = readyModel({ creationMode: "transcript", screen: "enter-url" });
 
     expect(update(model, { type: "submit-url", url: "  https://youtu.be/abc123_DEF4  " })).toEqual({
-      effects: [{ type: "transcript", url: "https://youtu.be/abc123_DEF4" }],
+      effects: [{ requestId: 1, type: "transcript", url: "https://www.youtube.com/watch?v=abc123_DEF4" }],
       model: expect.objectContaining({
         message: "Getting transcript…",
         progress: null,
         screen: "progress",
-        submittedUrl: "https://youtu.be/abc123_DEF4",
+        submittedUrl: "https://www.youtube.com/watch?v=abc123_DEF4",
       }),
     });
   });
 
   test("tracks progress and exposes result data without an inline preview", () => {
-    const progress = readyModel({ creationMode: "transcript", screen: "progress" });
-    const tracked = update(progress, { message: "Fetching transcript", type: "operation-progress" }).model;
+    const progress = update(readyModel({ creationMode: "transcript", screen: "enter-url" }), {
+      type: "submit-url",
+      url: "https://youtu.be/abc123_DEF4",
+    }).model;
+    const tracked = update(progress, { message: "Fetching transcript", requestId: 1, type: "operation-progress" }).model;
     expect(tracked.progress).toBe("Fetching transcript");
 
-    const completed = update(tracked, { result: transcriptResult, type: "operation-succeeded" }).model;
+    const completed = update(tracked, { requestId: 1, result: transcriptResult, type: "operation-succeeded" }).model;
     expect(completed).toMatchObject({ progress: null, result: transcriptResult, screen: "result" });
     expect(completed.reader).toBeNull();
   });
 
   test("returns a failed operation to URL input with actionable context", () => {
-    const model = readyModel({ creationMode: "digest", screen: "progress" });
+    const model = update(readyModel({ creationMode: "digest", screen: "enter-url" }), {
+      type: "submit-url",
+      url: "https://youtu.be/abc123_DEF4",
+    }).model;
 
-    expect(update(model, { message: "Transcript unavailable", type: "operation-failed" }).model).toMatchObject({
+    expect(update(model, { message: "Transcript unavailable", requestId: 1, type: "operation-failed" }).model).toMatchObject({
       message: "Transcript unavailable",
       screen: "enter-url",
     });
@@ -152,13 +159,13 @@ describe("creation and results", () => {
     const model = readyModel({ result: transcriptResult, screen: "result" });
 
     expect(update(model, { type: "copy-result" }).effects).toEqual([
-      { text: "A clean transcript.", type: "copy" },
+      { requestId: 1, text: "A clean transcript.", type: "copy" },
     ]);
     expect(update(model, { type: "print-result" }).effects).toEqual([
-      { text: "A clean transcript.", type: "print" },
+      { requestId: 1, text: "A clean transcript.", type: "print" },
     ]);
     expect(update(model, { type: "reveal-result" }).effects).toEqual([
-      { path: "/library/transcripts/abc123_DEF4.md", type: "reveal" },
+      { path: "/library/transcripts/abc123_DEF4.md", requestId: 1, type: "reveal" },
     ]);
 
     const digestWithoutText = readyModel({
@@ -172,13 +179,15 @@ describe("creation and results", () => {
     const model = readyModel({ result: transcriptResult, screen: "result" });
 
     expect(update(model, { type: "read-result" })).toEqual({
-      effects: [{ path: "/library/transcripts/abc123_DEF4.md", type: "read" }],
+      effects: [{ path: "/library/transcripts/abc123_DEF4.md", requestId: 1, type: "read" }],
       model: expect.objectContaining({ readerOrigin: "result" }),
     });
 
-    const loaded = update(model, {
+    const reading = update(model, { type: "read-result" }).model;
+    const loaded = update(reading, {
       content: "# Transcript",
       path: "/library/transcripts/abc123_DEF4.md",
+      requestId: 1,
       title: "Example video",
       type: "reader-loaded",
     }).model;
@@ -193,22 +202,23 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
   test("loads Library Entries and retains the selected entry", () => {
     const home = readyModel();
     expect(update(home, { type: "browse-library" })).toEqual({
-      effects: [{ type: "load-library" }],
+      effects: [{ requestId: 1, type: "load-library" }],
       model: expect.objectContaining({ entries: [], screen: "library", selectedEntry: null }),
     });
 
-    const loaded = update(readyModel({ screen: "library" }), { entries: [entry], type: "library-loaded" }).model;
-    expect(update(loaded, { entry, type: "select-entry" }).model.selectedEntry).toEqual(entry);
+    const loading = update(readyModel(), { type: "browse-library" }).model;
+    const loaded = update(loading, { entries: [entry], requestId: 1, type: "library-loaded" }).model;
+    expect(update(loaded, { type: "select-entry", videoId: entry.videoId }).model.selectedEntry).toEqual(entry);
   });
 
   test("opens selected Library content in the reader and external applications explicitly", () => {
     const model = readyModel({ screen: "library", selectedEntry: entry });
 
     expect(update(model, { type: "read-entry" }).effects).toEqual([
-      { path: "/library/digests/abc123_DEF4.md", type: "read" },
+      { path: "/library/digests/abc123_DEF4.md", requestId: 1, type: "read" },
     ]);
     expect(update(model, { type: "open-entry-externally" }).effects).toEqual([
-      { path: "/library/digests/abc123_DEF4.md", type: "open" },
+      { path: "/library/digests/abc123_DEF4.md", requestId: 1, type: "open" },
     ]);
   });
 
@@ -218,11 +228,12 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
 
     const chooser = update(settings, { type: "change-library" }).model;
     expect(chooser).toMatchObject({ librarySelectionOrigin: "settings", screen: "choose-library" });
-    expect(update(chooser, { path: "/new-library", type: "save-library" }).effects).toEqual([
-      { path: "/new-library", type: "save-library" },
+    const saving = update(chooser, { path: "/new-library", type: "save-library" });
+    expect(saving.effects).toEqual([
+      { path: "/new-library", requestId: 1, type: "save-library" },
     ]);
 
-    expect(update(chooser, { path: "/new-library", type: "library-saved" }).model).toMatchObject({
+    expect(update(saving.model, { path: "/new-library", requestId: 1, type: "library-saved" }).model).toMatchObject({
       config: { artifactLibrary: "/new-library" },
       screen: "settings",
     });
@@ -230,18 +241,18 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
 
   test("runs diagnostics as an explicit effect and stores the report", () => {
     const transition = update(readyModel(), { type: "open-doctor" });
-    expect(transition.effects).toEqual([{ type: "run-doctor" }]);
+    expect(transition.effects).toEqual([{ requestId: 1, type: "run-doctor" }]);
     expect(transition.model.screen).toBe("doctor");
 
     const report = { checks: [], ok: true };
-    expect(update(transition.model, { report, type: "doctor-completed" }).model.doctorReport).toEqual(report);
+    expect(update(transition.model, { report, requestId: 1, type: "doctor-completed" }).model.doctorReport).toEqual(report);
   });
 
   test("skill discovery copies commands but never installs the skill", () => {
     const skill = update(readyModel({ screen: "settings" }), { type: "open-agent-skill" }).model;
     expect(skill.screen).toBe("agent-skill");
     expect(update(skill, { text: "gh skill preview owner/repo video-digest", type: "copy-text" }).effects).toEqual([
-      { text: "gh skill preview owner/repo video-digest", type: "copy" },
+      { requestId: 1, text: "gh skill preview owner/repo video-digest", type: "copy" },
     ]);
   });
 });
@@ -262,9 +273,14 @@ describe("navigation", () => {
   });
 
   test("Escape cancels progress before returning home", () => {
-    const model = readyModel({ creationMode: "transcript", screen: "progress" });
+    const model = readyModel({
+      creationMode: "transcript",
+      nextRequestId: 2,
+      pending: { kind: "transcript", requestId: 1 },
+      screen: "progress",
+    });
     expect(update(model, { type: "back" })).toEqual({
-      effects: [{ type: "cancel-operation" }],
+      effects: [{ requestId: 1, type: "cancel-operation" }],
       model: expect.objectContaining({ screen: "home" }),
     });
   });
@@ -284,10 +300,15 @@ describe("navigation", () => {
   });
 
   test("Home cancels an active operation before navigating", () => {
-    const model = readyModel({ creationMode: "digest", screen: "progress" });
+    const model = readyModel({
+      creationMode: "digest",
+      nextRequestId: 2,
+      pending: { kind: "ingest", requestId: 1 },
+      screen: "progress",
+    });
 
     expect(update(model, { type: "go-home" })).toEqual({
-      effects: [{ type: "cancel-operation" }],
+      effects: [{ requestId: 1, type: "cancel-operation" }],
       model: expect.objectContaining({ screen: "home" }),
     });
   });
@@ -295,5 +316,185 @@ describe("navigation", () => {
   test("Escape from home and first-run onboarding requests a clean quit", () => {
     expect(update(readyModel(), { type: "back" }).effects).toEqual([{ type: "quit" }]);
     expect(update(initialModel({ artifactLibrary: null }), { type: "back" }).effects).toEqual([{ type: "quit" }]);
+  });
+});
+
+describe("asynchronous effect correlation", () => {
+  test("allocates monotonic request IDs and ignores every late event from a cancelled operation", () => {
+    const input = readyModel({ creationMode: "transcript", screen: "enter-url" });
+    const first = update(input, { type: "submit-url", url: "https://youtu.be/abc123_DEF4" });
+    expect(first.effects).toEqual([
+      { requestId: 1, type: "transcript", url: "https://www.youtube.com/watch?v=abc123_DEF4" },
+    ]);
+
+    const cancelled = update(first.model, { type: "back" });
+    expect(cancelled.effects).toEqual([{ requestId: 1, type: "cancel-operation" }]);
+    expect(cancelled.model.pending).toBeNull();
+
+    const secondInput = update(update(cancelled.model, { type: "choose-transcript" }).model, {
+      type: "submit-url",
+      url: "https://youtu.be/XYZ987_abc1",
+    });
+    expect(secondInput.model.pending).toEqual({ kind: "transcript", requestId: 2 });
+
+    const lateProgress = update(secondInput.model, {
+      message: "stale progress",
+      requestId: 1,
+      type: "operation-progress",
+    });
+    expect(lateProgress.model).toBe(secondInput.model);
+
+    const lateSuccess = update(secondInput.model, {
+      requestId: 1,
+      result: transcriptResult,
+      type: "operation-succeeded",
+    });
+    expect(lateSuccess.model).toBe(secondInput.model);
+
+    const lateFailure = update(secondInput.model, {
+      message: "stale failure",
+      requestId: 1,
+      type: "operation-failed",
+    });
+    expect(lateFailure.model).toBe(secondInput.model);
+
+    const completed = update(secondInput.model, {
+      requestId: 2,
+      result: transcriptResult,
+      type: "operation-succeeded",
+    });
+    expect(completed.model).toMatchObject({ pending: null, screen: "result" });
+  });
+
+  test("deduplicates repeated submissions for every async effect category", () => {
+    const cases = [
+      {
+        event: { path: "/new-library", type: "save-library" } as const,
+        model: readyModel({ librarySelectionOrigin: "settings", screen: "choose-library" }),
+      },
+      {
+        event: { type: "prepare-runtime" } as const,
+        model: readyModel({ runtimeReadiness: { remediation: "setup", status: "missing" }, screen: "runtime-required" }),
+      },
+      {
+        event: { type: "save-credential", value: " secret " } as const,
+        model: readyModel({ credentialConfigured: false, screen: "credential-required" }),
+      },
+      {
+        event: { type: "submit-url", url: "https://youtu.be/abc123_DEF4" } as const,
+        model: readyModel({ creationMode: "transcript", screen: "enter-url" }),
+      },
+      { event: { type: "browse-library" } as const, model: readyModel() },
+      {
+        event: { type: "read-result" } as const,
+        model: readyModel({ result: transcriptResult, screen: "result" }),
+      },
+      { event: { type: "open-doctor" } as const, model: readyModel() },
+      {
+        event: { type: "copy-result" } as const,
+        model: readyModel({ result: transcriptResult, screen: "result" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const first = update(item.model, item.event);
+      expect(first.effects).toHaveLength(1);
+      expect(first.model.pending?.requestId).toBe(1);
+
+      const duplicate = update(first.model, item.event);
+      expect(duplicate.effects).toEqual([]);
+      expect(duplicate.model).toBe(first.model);
+      expect(duplicate.model.nextRequestId).toBe(2);
+    }
+  });
+
+  test("correlates completion for save, setup, credential, Library, reader, doctor, and system effects", () => {
+    const staleRequestId = 99;
+    const report = { checks: [], ok: true };
+    const cases = [
+      {
+        completion: { path: "/saved", requestId: staleRequestId, type: "library-saved" } as const,
+        event: { path: "/saved", type: "save-library" } as const,
+        model: readyModel({ screen: "choose-library" }),
+      },
+      {
+        completion: { requestId: staleRequestId, type: "runtime-ready" } as const,
+        event: { type: "prepare-runtime" } as const,
+        model: readyModel({ runtimeReadiness: { remediation: "setup", status: "missing" }, screen: "runtime-required" }),
+      },
+      {
+        completion: { requestId: staleRequestId, type: "credential-saved" } as const,
+        event: { type: "save-credential", value: "secret" } as const,
+        model: readyModel({ credentialConfigured: false, screen: "credential-required" }),
+      },
+      {
+        completion: { entries: [entry] as LibraryEntry[], requestId: staleRequestId, type: "library-loaded" } as const,
+        event: { type: "browse-library" } as const,
+        model: readyModel(),
+      },
+      {
+        completion: {
+          content: "body",
+          path: entry.paths.digestPath!,
+          requestId: staleRequestId,
+          title: "Title",
+          type: "reader-loaded",
+        } as const,
+        event: { type: "read-result" } as const,
+        model: readyModel({ result: transcriptResult, screen: "result" }),
+      },
+      {
+        completion: { report, requestId: staleRequestId, type: "doctor-completed" } as const,
+        event: { type: "open-doctor" } as const,
+        model: readyModel(),
+      },
+      {
+        completion: { requestId: staleRequestId, type: "system-action-completed" } as const,
+        event: { type: "copy-result" } as const,
+        model: readyModel({ result: transcriptResult, screen: "result" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const active = update(item.model, item.event).model;
+      expect(update(active, item.completion).model).toBe(active);
+    }
+  });
+});
+
+describe("untrusted event payloads", () => {
+  test("canonicalizes YouTube URLs and rejects unsupported input inline", () => {
+    const model = readyModel({ creationMode: "transcript", screen: "enter-url" });
+    const invalid = update(model, { type: "submit-url", url: "https://example.com/video" });
+    expect(invalid.effects).toEqual([]);
+    expect(invalid.model).toMatchObject({ message: "Enter a supported YouTube URL.", screen: "enter-url" });
+
+    const valid = update(model, { type: "submit-url", url: "https://youtu.be/abc123_DEF4?t=4" });
+    expect(valid.effects).toEqual([
+      { requestId: 1, type: "transcript", url: "https://www.youtube.com/watch?v=abc123_DEF4" },
+    ]);
+    expect(valid.model.submittedUrl).toBe("https://www.youtube.com/watch?v=abc123_DEF4");
+  });
+
+  test("selects the canonical Library Entry by ID instead of trusting event paths", () => {
+    const canonical = { ...entry, paths: { ...entry.paths } };
+    const forged = {
+      ...entry,
+      paths: { ...entry.paths, digestPath: "/tmp/attacker-controlled.md" },
+    };
+    const model = readyModel({ entries: [canonical], screen: "library" });
+
+    const selected = update(model, { type: "select-entry", videoId: forged.videoId }).model.selectedEntry;
+    expect(selected).toBe(canonical);
+    expect(selected?.paths.digestPath).toBe(entry.paths.digestPath);
+  });
+
+  test("trims credential input and never retains secret material in model state", () => {
+    const model = readyModel({ credentialConfigured: false, screen: "credential-required" });
+    const started = update(model, { type: "save-credential", value: "  top-secret  " });
+
+    expect(started.effects).toEqual([{ requestId: 1, type: "save-credential", value: "top-secret" }]);
+    expect(JSON.stringify(started.model)).not.toContain("top-secret");
+    expect(update(started.model, { type: "save-credential", value: "another-secret" }).effects).toEqual([]);
   });
 });

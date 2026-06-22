@@ -1,3 +1,4 @@
+import { parseYouTubeVideoUrl } from "../video/youtube-url";
 import {
   humanReadablePath,
   resultReadablePath,
@@ -5,6 +6,8 @@ import {
   type Effect,
   type Event,
   type Model,
+  type PendingKind,
+  type RequestId,
   type Screen,
   type Transition,
 } from "./model";
@@ -20,73 +23,73 @@ export function update(model: Model, event: Event): Transition {
       return beginCreation(model, "transcript");
     case "prepare-runtime":
       return model.screen === "runtime-required"
-        ? transition(model, [{ type: "prepare-runtime" }])
+        ? startRequest(model, "prepare-runtime", (requestId) => ({ requestId, type: "prepare-runtime" }))
         : unchanged(model);
     case "runtime-ready": {
-      if (model.screen !== "runtime-required") return unchanged(model);
-      const ready = { ...model, message: null, runtimeReadiness: { status: "ready" } as const };
-      if (model.gateOrigin === "settings") return transition({ ...ready, screen: "settings" });
-      return transition(continueCreation(ready));
+      if (!matchesPending(model, "prepare-runtime", event.requestId) || model.screen !== "runtime-required") {
+        return unchanged(model);
+      }
+      const ready = clearPending({ ...model, message: null, runtimeReadiness: { status: "ready" } as const });
+      return model.gateOrigin === "settings"
+        ? transition({ ...ready, screen: "settings" })
+        : transition(continueCreation(ready));
     }
     case "runtime-failed":
-      return model.screen === "runtime-required"
-        ? transition({ ...model, message: event.message, runtimeReadiness: event.readiness })
+      return matchesPending(model, "prepare-runtime", event.requestId) && model.screen === "runtime-required"
+        ? transition(clearPending({ ...model, message: event.message, runtimeReadiness: event.readiness }))
         : unchanged(model);
-    case "save-credential":
-      return model.screen === "credential-required" && event.value.trim().length > 0
-        ? transition(model, [{ type: "save-credential", value: event.value }])
-        : unchanged(model);
-    case "credential-saved": {
+    case "save-credential": {
       if (model.screen !== "credential-required") return unchanged(model);
-      const configured = { ...model, credentialConfigured: true, message: null };
-      return transition({
-        ...configured,
+      const value = event.value.trim();
+      if (value.length === 0) return transition({ ...model, message: "Enter an OpenCode API key." });
+      return startRequest(model, "save-credential", (requestId) => ({
+        requestId,
+        type: "save-credential",
+        value,
+      }));
+    }
+    case "credential-saved": {
+      if (!matchesPending(model, "save-credential", event.requestId) || model.screen !== "credential-required") {
+        return unchanged(model);
+      }
+      return transition(clearPending({
+        ...model,
+        credentialConfigured: true,
+        message: null,
         screen: model.gateOrigin === "settings" ? "settings" : "enter-url",
-      });
+      }));
     }
     case "credential-failed":
-      return model.screen === "credential-required"
-        ? transition({ ...model, message: event.message })
+      return matchesPending(model, "save-credential", event.requestId) && model.screen === "credential-required"
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
-    case "submit-url": {
-      if (model.screen !== "enter-url" || model.creationMode === null) return unchanged(model);
-      const url = event.url.trim();
-      if (url.length === 0) {
-        return transition({ ...model, message: "Enter a YouTube URL." });
-      }
-      const effect: Effect = model.creationMode === "digest"
-        ? { type: "ingest", url }
-        : { type: "transcript", url };
-      return transition(
-        {
-          ...model,
-          message: model.creationMode === "digest" ? "Creating digest…" : "Getting transcript…",
-          progress: null,
-          screen: "progress",
-          submittedUrl: url,
-        },
-        [effect],
-      );
-    }
+    case "submit-url":
+      return submitUrl(model, event.url);
     case "operation-progress":
-      return model.screen === "progress"
+      return matchesOperation(model, event.requestId) && model.screen === "progress"
         ? transition({ ...model, progress: event.message })
         : unchanged(model);
-    case "operation-succeeded":
-      return model.screen === "progress"
-        ? transition({
-            ...model,
-            message: null,
-            progress: null,
-            reader: null,
-            readerOrigin: null,
-            result: event.result,
-            screen: "result",
-          })
-        : unchanged(model);
+    case "operation-succeeded": {
+      if (
+        !matchesOperation(model, event.requestId) ||
+        model.screen !== "progress" ||
+        !resultMatchesOperation(model.pending!.kind, event.result.kind)
+      ) {
+        return unchanged(model);
+      }
+      return transition(clearPending({
+        ...model,
+        message: null,
+        progress: null,
+        reader: null,
+        readerOrigin: null,
+        result: event.result,
+        screen: "result",
+      }));
+    }
     case "operation-failed":
-      return model.screen === "progress"
-        ? transition({ ...model, message: event.message, progress: null, screen: "enter-url" })
+      return matchesOperation(model, event.requestId) && model.screen === "progress"
+        ? transition(clearPending({ ...model, message: event.message, progress: null, screen: "enter-url" }))
         : unchanged(model);
     case "copy-result":
       return resultTextEffect(model, "copy");
@@ -96,42 +99,48 @@ export function update(model: Model, event: Event): Transition {
       return resultPathEffect(model, "reveal");
     case "read-result":
       return readResult(model);
-    case "browse-library":
-      return model.screen === "home"
-        ? transition({ ...model, entries: [], message: null, screen: "library", selectedEntry: null }, [
-            { type: "load-library" },
-          ])
-        : unchanged(model);
+    case "browse-library": {
+      if (model.screen !== "home") return unchanged(model);
+      const libraryModel = { ...model, entries: [], message: null, screen: "library" as const, selectedEntry: null };
+      return startRequest(libraryModel, "load-library", (requestId) => ({ requestId, type: "load-library" }));
+    }
     case "library-loaded":
-      return model.screen === "library"
-        ? transition({ ...model, entries: event.entries, message: null, selectedEntry: null })
+      return matchesPending(model, "load-library", event.requestId) && model.screen === "library"
+        ? transition(clearPending({ ...model, entries: event.entries, message: null, selectedEntry: null }))
         : unchanged(model);
     case "library-failed":
-      return model.screen === "library"
-        ? transition({ ...model, message: event.message })
+      return matchesPending(model, "load-library", event.requestId) && model.screen === "library"
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
-    case "select-entry":
-      return model.screen === "library" && model.entries.some((item) => item.videoId === event.entry.videoId)
-        ? transition({ ...model, selectedEntry: event.entry })
-        : unchanged(model);
+    case "select-entry": {
+      if (model.screen !== "library") return unchanged(model);
+      const selectedEntry = model.entries.find((item) => item.videoId === event.videoId);
+      return selectedEntry ? transition({ ...model, selectedEntry }) : unchanged(model);
+    }
     case "read-entry":
       return readEntry(model);
     case "open-entry-externally":
       return selectedEntryPathEffect(model, "open");
     case "reader-loaded": {
-      if (model.screen !== "result" && model.screen !== "library") return unchanged(model);
+      if (
+        !matchesPending(model, "read", event.requestId) ||
+        (model.screen !== "result" && model.screen !== "library")
+      ) {
+        return unchanged(model);
+      }
       const origin = model.readerOrigin ?? model.screen;
-      return transition({
+      return transition(clearPending({
         ...model,
         message: null,
         reader: { content: event.content, path: event.path, title: event.title },
         readerOrigin: origin,
         screen: "reader",
-      });
+      }));
     }
     case "reader-failed":
-      return model.screen === "result" || model.screen === "library"
-        ? transition({ ...model, message: event.message })
+      return matchesPending(model, "read", event.requestId) &&
+        (model.screen === "result" || model.screen === "library")
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "open-settings":
       return model.screen === "home"
@@ -145,21 +154,21 @@ export function update(model: Model, event: Event): Transition {
       if (model.screen !== "choose-library") return unchanged(model);
       const path = event.path.trim();
       return path.length > 0
-        ? transition(model, [{ path, type: "save-library" }])
+        ? startRequest(model, "save-library", (requestId) => ({ path, requestId, type: "save-library" }))
         : transition({ ...model, message: "Choose an Artifact Library folder." });
     }
     case "library-saved":
-      return model.screen === "choose-library"
-        ? transition({
+      return matchesPending(model, "save-library", event.requestId) && model.screen === "choose-library"
+        ? transition(clearPending({
             ...model,
             config: { artifactLibrary: event.path },
             message: null,
             screen: model.librarySelectionOrigin === "onboarding" ? "home" : "settings",
-          })
+          }))
         : unchanged(model);
     case "library-save-failed":
-      return model.screen === "choose-library"
-        ? transition({ ...model, message: event.message })
+      return matchesPending(model, "save-library", event.requestId) && model.screen === "choose-library"
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "open-runtime-setup":
       return model.screen === "settings"
@@ -171,24 +180,22 @@ export function update(model: Model, event: Event): Transition {
         : unchanged(model);
     case "open-doctor": {
       if (model.screen !== "home" && model.screen !== "settings") return unchanged(model);
-      return transition(
-        {
-          ...model,
-          doctorOrigin: model.screen,
-          doctorReport: null,
-          message: null,
-          screen: "doctor",
-        },
-        [{ type: "run-doctor" }],
-      );
+      const doctorModel = {
+        ...model,
+        doctorOrigin: model.screen,
+        doctorReport: null,
+        message: null,
+        screen: "doctor" as const,
+      };
+      return startRequest(doctorModel, "run-doctor", (requestId) => ({ requestId, type: "run-doctor" }));
     }
     case "doctor-completed":
-      return model.screen === "doctor"
-        ? transition({ ...model, doctorReport: event.report, message: null })
+      return matchesPending(model, "run-doctor", event.requestId) && model.screen === "doctor"
+        ? transition(clearPending({ ...model, doctorReport: event.report, message: null }))
         : unchanged(model);
     case "doctor-failed":
-      return model.screen === "doctor"
-        ? transition({ ...model, message: event.message })
+      return matchesPending(model, "run-doctor", event.requestId) && model.screen === "doctor"
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "open-agent-skill":
       return model.screen === "settings"
@@ -196,23 +203,57 @@ export function update(model: Model, event: Event): Transition {
         : unchanged(model);
     case "copy-text":
       return event.text.length > 0
-        ? transition(model, [{ text: event.text, type: "copy" }])
+        ? startRequest(model, "copy", (requestId) => ({ requestId, text: event.text, type: "copy" }))
+        : unchanged(model);
+    case "system-action-completed":
+      return matchesSystemAction(model, event.requestId)
+        ? transition(clearPending({ ...model, message: null }))
+        : unchanged(model);
+    case "system-action-failed":
+      return matchesSystemAction(model, event.requestId)
+        ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "back":
       return navigateBack(model);
-    case "go-home":
+    case "go-home": {
       if (model.config.artifactLibrary === null) return unchanged(model);
-      return transition(
-        goHome(model),
-        model.screen === "progress" ? [{ type: "cancel-operation" }] : [],
-      );
+      const cancellation = cancellationEffect(model);
+      return transition(goHome(model), cancellation ? [cancellation] : []);
+    }
     default:
       return assertNever(event);
   }
 }
 
+function submitUrl(model: Model, input: string): Transition {
+  if (model.screen !== "enter-url" || model.creationMode === null || model.pending) return unchanged(model);
+  const candidate = input.trim();
+  if (candidate.length === 0) return transition({ ...model, message: "Enter a YouTube URL." });
+
+  let canonicalUrl: string;
+  try {
+    canonicalUrl = parseYouTubeVideoUrl(candidate).canonicalUrl;
+  } catch {
+    return transition({ ...model, message: "Enter a supported YouTube URL." });
+  }
+
+  const kind = model.creationMode === "digest" ? "ingest" : "transcript";
+  const progressModel = {
+    ...model,
+    message: model.creationMode === "digest" ? "Creating digest…" : "Getting transcript…",
+    progress: null,
+    screen: "progress" as const,
+    submittedUrl: canonicalUrl,
+  };
+  return startRequest(progressModel, kind, (requestId) => ({
+    requestId,
+    type: kind,
+    url: canonicalUrl,
+  }));
+}
+
 function beginCreation(model: Model, creationMode: CreationMode): Transition {
-  if (model.screen !== "home") return unchanged(model);
+  if (model.screen !== "home" || model.pending) return unchanged(model);
   return transition(continueCreation({
     ...model,
     creationMode,
@@ -233,48 +274,83 @@ function continueCreation(model: Model): Model {
 
 function resultTextEffect(model: Model, type: "copy" | "print"): Transition {
   const text = model.screen === "result" ? model.result?.cleanText : null;
-  return text ? transition(model, [{ text, type }]) : unchanged(model);
+  return text ? startRequest(model, type, (requestId) => ({ requestId, text, type })) : unchanged(model);
 }
 
 function resultPathEffect(model: Model, type: "reveal"): Transition {
-  const path = model.screen === "result" && model.result
-    ? resultReadablePath(model.result)
-    : null;
-  return path ? transition(model, [{ path, type }]) : unchanged(model);
+  const path = model.screen === "result" && model.result ? resultReadablePath(model.result) : null;
+  return path ? startRequest(model, type, (requestId) => ({ path, requestId, type })) : unchanged(model);
 }
 
 function readResult(model: Model): Transition {
-  const path = model.screen === "result" && model.result
-    ? resultReadablePath(model.result)
-    : null;
+  if (model.pending) return unchanged(model);
+  const path = model.screen === "result" && model.result ? resultReadablePath(model.result) : null;
   return path
-    ? transition({ ...model, readerOrigin: "result" }, [{ path, type: "read" }])
+    ? startRequest({ ...model, readerOrigin: "result" }, "read", (requestId) => ({ path, requestId, type: "read" }))
     : unchanged(model);
 }
 
 function readEntry(model: Model): Transition {
+  if (model.pending) return unchanged(model);
   const path = selectedEntryPath(model);
   return path
-    ? transition({ ...model, readerOrigin: "library" }, [{ path, type: "read" }])
+    ? startRequest({ ...model, readerOrigin: "library" }, "read", (requestId) => ({ path, requestId, type: "read" }))
     : unchanged(model);
 }
 
 function selectedEntryPathEffect(model: Model, type: "open"): Transition {
   const path = selectedEntryPath(model);
-  return path ? transition(model, [{ path, type }]) : unchanged(model);
+  return path ? startRequest(model, type, (requestId) => ({ path, requestId, type })) : unchanged(model);
 }
 
 function selectedEntryPath(model: Model): string | null {
-  return model.screen === "library" && model.selectedEntry
-    ? humanReadablePath(model.selectedEntry)
-    : null;
+  return model.screen === "library" && model.selectedEntry ? humanReadablePath(model.selectedEntry) : null;
+}
+
+function startRequest<K extends PendingKind>(
+  model: Model,
+  kind: K,
+  effect: (requestId: RequestId) => Extract<Effect, { type: K }>,
+): Transition {
+  if (model.pending) return unchanged(model);
+  const requestId = model.nextRequestId;
+  return transition(
+    { ...model, nextRequestId: requestId + 1, pending: { kind, requestId } },
+    [effect(requestId)],
+  );
+}
+
+function matchesPending(model: Model, kind: PendingKind, requestId: RequestId): boolean {
+  return model.pending?.kind === kind && model.pending.requestId === requestId;
+}
+
+function matchesOperation(model: Model, requestId: RequestId): boolean {
+  return (matchesPending(model, "ingest", requestId) || matchesPending(model, "transcript", requestId));
+}
+
+function matchesSystemAction(model: Model, requestId: RequestId): boolean {
+  return model.pending?.requestId === requestId && isSystemActionKind(model.pending.kind);
+}
+
+function isSystemActionKind(kind: PendingKind): kind is "copy" | "open" | "reveal" | "print" {
+  return kind === "copy" || kind === "open" || kind === "reveal" || kind === "print";
+}
+
+function resultMatchesOperation(kind: PendingKind, resultKind: CreationMode): boolean {
+  return (kind === "ingest" && resultKind === "digest") ||
+    (kind === "transcript" && resultKind === "transcript");
+}
+
+function cancellationEffect(model: Model): Extract<Effect, { type: "cancel-operation" }> | null {
+  if (!model.pending || (model.pending.kind !== "ingest" && model.pending.kind !== "transcript")) return null;
+  return { requestId: model.pending.requestId, type: "cancel-operation" };
 }
 
 function navigateBack(model: Model): Transition {
   switch (model.screen) {
     case "choose-library":
       return model.librarySelectionOrigin === "settings"
-        ? transition({ ...model, message: null, screen: "settings" })
+        ? transition(clearPending({ ...model, message: null, screen: "settings" }))
         : transition(model, [{ type: "quit" }]);
     case "home":
       return transition(model, [{ type: "quit" }]);
@@ -286,21 +362,23 @@ function navigateBack(model: Model): Transition {
     case "runtime-required":
     case "credential-required":
       return model.gateOrigin === "settings"
-        ? transition({ ...model, message: null, screen: "settings" })
+        ? transition(clearPending({ ...model, message: null, screen: "settings" }))
         : transition(goHome(model));
-    case "progress":
-      return transition(goHome(model), [{ type: "cancel-operation" }]);
+    case "progress": {
+      const cancellation = cancellationEffect(model);
+      return transition(goHome(model), cancellation ? [cancellation] : []);
+    }
     case "reader":
-      return transition({
+      return transition(clearPending({
         ...model,
         message: null,
         reader: null,
         screen: model.readerOrigin ?? "home",
-      });
+      }));
     case "doctor":
-      return transition({ ...model, message: null, screen: model.doctorOrigin });
+      return transition(clearPending({ ...model, message: null, screen: model.doctorOrigin }));
     case "agent-skill":
-      return transition({ ...model, message: null, screen: "settings" });
+      return transition(clearPending({ ...model, message: null, screen: "settings" }));
     default:
       return assertNever(model.screen);
   }
@@ -312,6 +390,7 @@ function goHome(model: Model): Model {
     creationMode: null,
     gateOrigin: "creation",
     message: null,
+    pending: null,
     progress: null,
     reader: null,
     readerOrigin: null,
@@ -320,6 +399,10 @@ function goHome(model: Model): Model {
     selectedEntry: null,
     submittedUrl: null,
   };
+}
+
+function clearPending(model: Model): Model {
+  return { ...model, pending: null };
 }
 
 function assertNever(value: never): never {
