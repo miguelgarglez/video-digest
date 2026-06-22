@@ -434,6 +434,7 @@ describe("runCli", () => {
 
     expect(exitCode).toBe(0);
     expect(ingestCalls).toBe(0);
+    expect(logs[0]).toBe("Video Digest");
     expect(logs.join("\n")).toContain("Usage:");
     expect(logs.join("\n")).toContain("--email-preview");
     expect(logs.join("\n")).toContain("<Artifact Library>/emails/");

@@ -28,7 +28,9 @@ describe("handleRequest", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Personal Video Digest");
+    const html = await response.text();
+    expect(html).toContain("Video Digest");
+    expect(html).not.toContain("Personal Video Digest");
   });
 
   test("redirects after creating an ingestion", async () => {

@@ -54,13 +54,29 @@ Video Digest manages its own Python 3.12 runtime. It does not modify system Pyth
 
 ## Install
 
-Install from the npm registry with Bun:
+Video Digest `0.1.0` is being prepared for npm publication but has not been published.
+To run the current source, clone this repository and install its locked JavaScript
+dependencies:
+
+```sh
+git clone https://github.com/miguelgarglez/personal-video-digest.git
+cd personal-video-digest
+bun install --frozen-lockfile
+bun run video-digest --version
+bun run video-digest --help
+```
+
+Commands elsewhere in this README use the eventual installed command
+`video-digest`. From a source checkout, replace that prefix with
+`bun run video-digest`; for example, run `bun run video-digest doctor`.
+
+After the package is published, the primary global installation command will be:
 
 ```sh
 bun add --global video-digest
 ```
 
-Or install through npm when npm is already available:
+The npm alternative after publication will be:
 
 ```sh
 npm install --global video-digest
@@ -69,15 +85,15 @@ npm install --global video-digest
 Both installations expose `video-digest`; Bun must remain available on `PATH` because
 the executable uses Bun at runtime.
 
-Confirm the installation:
+After publication, confirm a global installation with:
 
 ```sh
 video-digest --version
 video-digest --help
 ```
 
-Package installation has no `postinstall` step and does not prepare Python or install
-Transcript dependencies.
+Dependency installation has no `postinstall` setup step: it does not prepare Python or
+install Transcript dependencies.
 
 ## First run
 
@@ -211,11 +227,21 @@ video-digest ingest '<youtube-url>' --json
 video-digest list --json
 ```
 
-Automation should inspect `schemaVersion`, `status`, the process exit code, and the
-returned Library Entry paths. It must not parse human output. See the public
-[JSON contracts](docs/cli/json-contracts.md) and [exit-code reference](docs/cli/exit-codes.md).
+Automation must validate each command's own schema rather than assuming common fields:
 
-The release also contains a portable, independently installed agent skill at
+- `doctor` returns `doctor-report.v0` with top-level `ok` and a `checks` array;
+- `ingest` and `transcript` return `cli-result.v0`, where completed results contain
+  `status` and artifact `paths`;
+- `list` returns `library-list.v0` with an `items` array and no `status`; and
+- `open` returns `open-result.v0` with Library Entry fields and `openPath` on success.
+
+Consumers should also inspect the process exit status, reject unknown schema versions,
+and never parse human output. The exact success and failure shapes are defined in the
+[JSON contracts](docs/cli/json-contracts.md), with numeric meanings in the
+[exit-code reference](docs/cli/exit-codes.md).
+
+The prepared `0.1.0` release will also contain a portable, independently installed
+agent skill at
 [`.agents/skills/video-digest/SKILL.md`](.agents/skills/video-digest/SKILL.md). Review
 that file before installing it; package installation never modifies an agent host.
 
@@ -230,8 +256,15 @@ access happens only for an operation you request:
 
 Public metadata lookup is best-effort and needs no YouTube API key. A failed lookup
 does not block processing. OpenCode credentials resolve from `OPENCODE_API_KEY` when
-explicitly set in the environment, then from macOS Keychain. Stored credentials are
-never included in JSON output, logs, artifacts, or `config get` output.
+explicitly set in the environment, then from macOS Keychain. Credential values are
+intentionally excluded from configuration files and the documented JSON contracts;
+`config get` reports only whether and where a credential is configured. OpenCode HTTP
+failures expose the HTTP status while redacting the remote response body.
+
+Advanced environments can override the OpenCode endpoint with `OPENCODE_BASE_URL` and
+the model with `OPENCODE_MODEL`. `VIDEO_DIGEST_OUTPUT_DIR` temporarily selects the
+Artifact Library. These variables and the optional `OPENCODE_API_KEY` are the supported
+CLI environment settings shown in [`.env.example`](.env.example).
 
 `--json` is non-interactive: it never prompts, opens an application, copies to the
 clipboard, animates, or performs setup.

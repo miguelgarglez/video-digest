@@ -25,10 +25,10 @@ export function renderHomePage(records: IngestionRecord[]): string {
     : "<li class=\"empty\">No ingestions yet.</li>";
 
   return renderPage(
-    "Personal Video Digest",
+    "Video Digest",
     `
       <section class="card">
-        <h1>Personal Video Digest</h1>
+        <h1>Video Digest</h1>
         <p class="subtitle">Paste a YouTube URL to fetch a transcript and generate a digest.</p>
         <form method="post" action="/ingestions">
           <label for="url">YouTube URL</label>

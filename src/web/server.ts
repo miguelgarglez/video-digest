@@ -32,7 +32,7 @@ const localUrl =
     ? `http://127.0.0.1:${server.port}`
     : `http://${hostname}:${server.port}`;
 
-console.log(`Personal Video Digest web server running at ${localUrl}`);
+console.log(`Video Digest web server running at ${localUrl}`);
 if (recoveredCount > 0) {
   console.log(`Marked ${recoveredCount} interrupted ingestion(s) as failed`);
 }
