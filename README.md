@@ -1,181 +1,299 @@
-# Personal Video Digest
+# Video Digest
 
-A personal knowledge-ingestion system for turning selected YouTube videos into structured digests, emails, and future knowledge-base entries.
+Turn an explicitly selected YouTube video into a readable Digest, a reproducible
+Transcript, or both. Video Digest provides a guided terminal interface for people and
+versioned JSON contracts for agents and shell automation.
 
-Current direction:
+## What it creates
+
+Each video becomes one Library Entry in your Artifact Library. A full run creates a
+Markdown Digest alongside three Transcript representations:
 
 ```text
-YouTube playlist "Resumir"
--> transcript service
--> digest generation
--> email delivery
--> markdown/knowledge-base storage
+Video Digest/
+├── digests/1ZgUcrR0K7I.md
+├── metadata/1ZgUcrR0K7I.json
+└── transcripts/
+    ├── 1ZgUcrR0K7I.json   # canonical segments and timestamps
+    ├── 1ZgUcrR0K7I.md     # human-readable transcript
+    └── 1ZgUcrR0K7I.txt    # clean text for copying and pipelines
 ```
 
-See:
+A Digest is structured Markdown designed for review rather than a raw model response:
 
-- `CONTEXT.md` for domain language.
-- `docs/adr/` for architectural decisions.
-- `docs/agents/` for agent skill configuration.
+```markdown
+# Building Reliable CLI Products
 
-## Local prerequisites
+## TL;DR
+A concise account of the video's argument and its practical implications.
 
-- Bun 1.3.14
-- Python 3
-- uv 0.11.17
+## Key ideas
+- Stable machine contracts let people and agents share the same tool safely.
+```
 
-If `uv` is installed but not visible in the current shell, load its environment:
+Transcript-only processing creates the metadata and Transcript files without calling
+OpenCode. Reprocessing a video atomically replaces its current Library Entry; Video
+Digest does not keep processing history.
+
+## Status and support
+
+Video Digest `0.1.0` is public, experimental, English-only software licensed under
+MIT. The supported platform is macOS on Apple Silicon. macOS Intel, Linux, and Windows
+are not supported in this release.
+
+Compatibility may change before `1.0.0`. Human-facing behavior can evolve during
+`0.x`; machine-facing changes are versioned and documented in the
+[compatibility policy](docs/cli/compatibility.md).
+
+## Prerequisites
+
+- [Bun](https://bun.sh/) to run the TypeScript CLI.
+- [`uv`](https://docs.astral.sh/uv/) to prepare the isolated Transcript runtime.
+
+Video Digest manages its own Python 3.12 runtime. It does not modify system Python.
+
+## Install
+
+Install from the npm registry with Bun:
 
 ```sh
-source "$HOME/.local/bin/env"
+bun add --global video-digest
 ```
 
-## Local setup
+Or install through npm when npm is already available:
 
-Install Bun dependencies:
+```sh
+npm install --global video-digest
+```
+
+Both installations expose `video-digest`; Bun must remain available on `PATH` because
+the executable uses Bun at runtime.
+
+Confirm the installation:
+
+```sh
+video-digest --version
+video-digest --help
+```
+
+Package installation has no `postinstall` step and does not prepare Python or install
+Transcript dependencies.
+
+## First run
+
+Start the guided terminal interface:
+
+```sh
+video-digest
+```
+
+On first run, choose an Artifact Library folder. The default is
+`~/Documents/Video Digest`. The TUI then lets you create a Digest, retrieve a
+Transcript, browse the Library, change settings, or run diagnostics.
+
+Transcript capabilities require a one-time, explicit setup:
+
+```sh
+video-digest setup
+```
+
+Before making changes, setup explains that it may install an isolated Python 3.12
+runtime and the locked Transcript dependencies, then asks for confirmation. For a
+non-interactive session, consent must be explicit:
+
+```sh
+video-digest setup --yes
+```
+
+Setup uses the shipped `uv.lock` and replaces the managed runtime only after a
+successful build. Normal commands never install or update Python dependencies.
+
+Digest generation also needs an OpenCode API key. Store it securely with an
+interactive prompt:
+
+```sh
+video-digest config set opencode-api-key
+```
+
+The key is stored in macOS Keychain under the `video-digest` service. It is not written
+to the application configuration or printed by the CLI. You can then create a first
+Digest:
+
+```sh
+video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
+```
+
+Quote YouTube URLs in the shell because characters such as `?` and `&` have special
+meaning in shells including zsh.
+
+## Direct commands
+
+The TUI is the primary human interface. Direct commands are stable for scripts and
+advanced workflows:
+
+```sh
+# Create a Digest and all Transcript representations.
+video-digest ingest '<youtube-url>'
+
+# Also create a Markdown email preview.
+video-digest ingest '<youtube-url>' --email-preview
+
+# Retrieve the Transcript without requiring OpenCode.
+video-digest transcript '<youtube-url>'
+
+# Inspect and prepare local readiness.
+video-digest doctor
+video-digest setup
+
+# Inspect configuration and manage the Artifact Library.
+video-digest config get
+video-digest config set output-dir '/absolute/path/to/Video Digest'
+
+# Browse and open Library Entries.
+video-digest list
+video-digest open latest
+video-digest open 1ZgUcrR0K7I
+```
+
+Use `video-digest <command> --help` for command-specific syntax.
+
+Transcript presentation flags always write the Library Entry first:
+
+```sh
+video-digest transcript '<youtube-url>' --copy    # copy clean text to the clipboard
+video-digest transcript '<youtube-url>' --open    # open the Markdown Transcript
+video-digest transcript '<youtube-url>' --stdout  # print only clean text to stdout
+```
+
+`--stdout` disables progress output so it is safe in a pipeline. It cannot be combined
+with `--json`. The `--copy` and `--open` actions are macOS-specific and never run in
+JSON mode.
+
+`ingest`, `transcript`, `list`, and `open` also accept
+`--output-dir '/absolute/path'` for a one-command Artifact Library override.
+
+## Artifact Library
+
+Video Digest resolves the Artifact Library in this order, from highest to lowest
+precedence:
+
+1. `--output-dir <path>` for the current command;
+2. `VIDEO_DIGEST_OUTPUT_DIR` for the current environment;
+3. the path saved by `video-digest config set output-dir <path>`; and
+4. `~/Documents/Video Digest`.
+
+The flag and environment variable do not modify saved configuration. `config get`
+shows both the effective path and its source. The TUI changes the saved location from
+Setup & Settings.
+
+Application state is kept separate from user content:
+
+```text
+Artifacts       ~/Documents/Video Digest (or your selected folder)
+Configuration   ~/Library/Application Support/video-digest/config.json
+Python runtime  ~/Library/Application Support/video-digest/runtime/python
+Dependencies    uv's standard cache
+Credential      macOS Keychain, service video-digest
+```
+
+Pre-release files under this repository's former `./outputs` folder are not migrated
+automatically.
+
+## Use with agents
+
+Agents should use `--json`, which emits exactly one versioned JSON value to stdout and
+sends diagnostics to stderr:
+
+```sh
+video-digest doctor --json
+video-digest transcript '<youtube-url>' --json
+video-digest ingest '<youtube-url>' --json
+video-digest list --json
+```
+
+Automation should inspect `schemaVersion`, `status`, the process exit code, and the
+returned Library Entry paths. It must not parse human output. See the public
+[JSON contracts](docs/cli/json-contracts.md) and [exit-code reference](docs/cli/exit-codes.md).
+
+The release also contains a portable, independently installed agent skill at
+[`.agents/skills/video-digest/SKILL.md`](.agents/skills/video-digest/SKILL.md). Review
+that file before installing it; package installation never modifies an agent host.
+
+## Privacy and security
+
+Video Digest includes no telemetry and performs no automatic update checks. Network
+access happens only for an operation you request:
+
+- YouTube oEmbed metadata and Transcript retrieval while processing a video;
+- Digest generation through OpenCode; or
+- consented runtime preparation through `uv`.
+
+Public metadata lookup is best-effort and needs no YouTube API key. A failed lookup
+does not block processing. OpenCode credentials resolve from `OPENCODE_API_KEY` when
+explicitly set in the environment, then from macOS Keychain. Stored credentials are
+never included in JSON output, logs, artifacts, or `config get` output.
+
+`--json` is non-interactive: it never prompts, opens an application, copies to the
+clipboard, animates, or performs setup.
+
+## Troubleshooting
+
+Start with the readiness report:
+
+```sh
+video-digest doctor
+```
+
+For machine-readable diagnostics:
+
+```sh
+video-digest doctor --json
+```
+
+Common remediations:
+
+- **Transcript runtime is missing or obsolete:** run `video-digest setup` and approve
+  the explained changes. In non-interactive use, rerun with `--yes` only after a human
+  has authorized setup.
+- **`uv` is missing:** install `uv`, ensure it is available on `PATH`, then rerun
+  `doctor`. Video Digest does not install prerequisites silently.
+- **Digest credential is missing:** run
+  `video-digest config set opencode-api-key`, or use `transcript` when no Digest is
+  needed.
+- **Artifact Library is not writable:** choose another absolute path with
+  `video-digest config set output-dir <path>` or use `--output-dir` temporarily.
+- **The TUI cannot use the terminal:** resize the terminal or use direct commands. A
+  non-TTY invocation without arguments prints help instead of launching full screen.
+
+Machine error payloads and numeric meanings are documented in the
+[exit-code reference](docs/cli/exit-codes.md).
+
+## Development
+
+Clone the repository on a supported Mac, then install JavaScript dependencies:
 
 ```sh
 bun install
 ```
 
-Install Python sidecar dependencies:
-
-```sh
-cd python
-uv sync
-```
-
-Create local environment config:
-
-```sh
-cp .env.example .env
-```
-
-Then set `OPENCODE_API_KEY` in `.env`.
-
-The default model in `.env.example` is `gpt-5.4-nano`, which is available through OpenCode Zen.
-
-## Usage
-
-Run a single-video digest:
-
-```sh
-bun run video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
-```
-
-In an interactive terminal, the CLI shows a small ASCII banner and animated spinner while it fetches the transcript, scores quality, generates the digest, and writes output artifacts. In non-TTY environments, it falls back to plain progress logs.
-
-Transcript lookup currently tries English first and Spanish second. Spanish auto-generated transcripts are accepted and then scored by the transcript-quality heuristic before digest generation.
-
-Generate an email preview too:
-
-```sh
-bun run video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --email-preview
-```
-
-Use agent-safe JSON output:
-
-```sh
-bun --silent run video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --json
-```
-
-Fetch only a transcript without requiring `OPENCODE_API_KEY`:
-
-```sh
-bun run video-digest transcript 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
-bun --silent run video-digest transcript 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --json
-```
-
-Check local readiness:
-
-```sh
-bun run video-digest doctor
-```
-
-Manage the OpenCode token securely:
-
-```sh
-bun run video-digest config get
-bun run video-digest config set opencode-api-key
-bun run video-digest config unset opencode-api-key
-```
-
-List and open local digests:
-
-```sh
-bun run video-digest list
-bun run video-digest open latest
-```
-
-Run without arguments to enter interactive mode:
-
-```sh
-bun run video-digest
-```
-
-Interactive mode asks whether to create a full digest or transcript-only artifacts. If
-you choose a digest and no OpenCode token is configured, the CLI shows the OpenCode
-setup link, lets you paste a token, offers to save it in macOS Keychain, and continues
-the digest in the same run. If you skip token setup, it offers transcript-only mode
-instead.
-
-Show CLI help:
+Run the source CLI and explicitly prepare its managed Transcript runtime:
 
 ```sh
 bun run video-digest --help
+bun run video-digest setup
 ```
 
-Quote YouTube URLs in the shell because `?` and `&` can be interpreted by zsh.
-
-## Local CLI install
-
-Expose the `video-digest` command globally on your Mac:
+Run the quality gates before contributing:
 
 ```sh
-bun link
+bun test
+bun run typecheck
 ```
 
-Then run it from any directory:
+Implementation decisions live in [`docs/adr/`](docs/adr/), and the domain language is
+defined in [`CONTEXT.md`](CONTEXT.md). Bug reports and contributions are welcome in
+the [GitHub repository](https://github.com/miguelgarglez/personal-video-digest).
 
-```sh
-video-digest doctor
-video-digest config get
-video-digest config set opencode-api-key
-video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I'
-video-digest ingest 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --json
-video-digest transcript 'https://www.youtube.com/watch?v=1ZgUcrR0K7I' --json
-```
+## License
 
-Remove the global link:
-
-```sh
-bun unlink personal-video-digest
-```
-
-Public npm publishing is intentionally out of scope for now.
-
-For global `video-digest ingest`, the recommended local setup is macOS Keychain:
-
-```sh
-video-digest config set opencode-api-key
-```
-
-The CLI resolves credentials in this order:
-
-```text
-1. OPENCODE_API_KEY from the shell environment
-2. macOS Keychain
-3. Not configured
-```
-
-You can still expose the token in your shell environment if you prefer:
-
-```sh
-export OPENCODE_API_KEY="..."
-```
-
-Without that token, use `video-digest transcript <youtube-url>` to fetch transcript
-artifacts only. Transcript mode does not call OpenCode.
-
-The CLI never prints stored token values. `config get` only reports where the token is
-configured.
+Video Digest is available under the [MIT License](LICENSE).
