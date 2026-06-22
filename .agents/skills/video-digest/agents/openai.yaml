@@ -1,0 +1,4 @@
+interface:
+  display_name: "Video Digest"
+  short_description: "Process YouTube videos with Video Digest"
+  default_prompt: "Use $video-digest to retrieve a transcript from this YouTube URL safely."
