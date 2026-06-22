@@ -129,7 +129,6 @@ describe("TUI controller", () => {
     const running = beginTranscript(controller);
     while (!signal) await Promise.resolve();
     await controller.dispatch({ type: "back" });
-    await controller.runEffect({ type: "cancel-operation", requestId: 1 });
     progress?.("Too late");
     operation.resolve(result);
     await running;
@@ -182,21 +181,36 @@ describe("TUI controller", () => {
         copy: async (text) => { calls.push(`copy:${text}`); },
       },
     });
-    const controller = createTuiController(homeModel(), ports);
+    const runtimeController = createTuiController(homeModel({
+      runtimeReadiness: { remediation: "Run setup.", status: "missing" },
+    }), ports);
+    await runtimeController.dispatch({ type: "choose-transcript" });
+    await runtimeController.dispatch({ type: "prepare-runtime" });
 
-    await controller.runEffect({ requestId: 10, type: "prepare-runtime" });
-    await controller.runEffect({ requestId: 11, type: "load-library" });
-    await controller.runEffect({ requestId: 12, target: { preference: "digest", videoId: entry.videoId }, type: "read" });
-    await controller.runEffect({ requestId: 13, type: "run-doctor" });
-    await controller.runEffect({ requestId: 14, text: "copy", type: "copy" });
-    await controller.runEffect({ requestId: 15, target: { preference: "digest", videoId: entry.videoId }, type: "open" });
-    await controller.runEffect({ requestId: 16, target: { preference: "digest", videoId: entry.videoId }, type: "reveal" });
-    await controller.runEffect({ requestId: 17, text: "stdout", type: "print" });
-    await controller.runEffect({ type: "quit" });
+    const readerController = createTuiController(homeModel(), ports);
+    await readerController.dispatch({ type: "browse-library" });
+    await readerController.dispatch({ type: "select-entry", videoId: entry.videoId });
+    await readerController.dispatch({ type: "read-entry" });
+
+    const openController = createTuiController(homeModel(), ports);
+    await openController.dispatch({ type: "browse-library" });
+    await openController.dispatch({ type: "select-entry", videoId: entry.videoId });
+    await openController.dispatch({ type: "open-entry-externally" });
+
+    const doctorController = createTuiController(homeModel(), ports);
+    await doctorController.dispatch({ type: "open-doctor" });
+
+    const resultController = createTuiController(homeModel({ result, screen: "result" }), ports);
+    await resultController.dispatch({ type: "copy-result" });
+    await resultController.dispatch({ type: "reveal-result" });
+    await resultController.dispatch({ type: "print-result" });
+
+    const quitController = createTuiController(homeModel(), ports);
+    await quitController.dispatch({ type: "back" });
 
     expect(calls).toEqual([
-      "prepare", "list", "read:abc123_DEF4", "doctor", "copy:copy", "open:abc123_DEF4",
-      "reveal:abc123_DEF4", "print:stdout", "quit",
+      "prepare", "list", "read:abc123_DEF4", "list", "open:abc123_DEF4", "doctor",
+      "copy:A clean transcript.", "reveal:abc123_DEF4", "print:A clean transcript.", "quit",
     ]);
   });
 

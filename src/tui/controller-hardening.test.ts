@@ -68,6 +68,28 @@ async function startTranscript(controller: ReturnType<typeof createTuiController
 }
 
 describe("TUI controller hardening", () => {
+  test("exposes Events, never an effect-injection surface", async () => {
+    let ingestCalls = 0;
+    let transcriptCalls = 0;
+    const controller = createTuiController(ready(), ports({
+      create: {
+        ingest: async () => { ingestCalls += 1; return { ...transcriptResult, kind: "digest" }; },
+        transcript: async () => { transcriptCalls += 1; return transcriptResult; },
+      },
+    }));
+
+    expect("runEffect" in controller).toBe(false);
+    if (false) {
+      // @ts-expect-error Effects are controller-owned and cannot be injected from Home.
+      await controller.runEffect({ requestId: 1, type: "ingest", url: "https://youtube.com/watch?v=abc123_DEF4" });
+    }
+    await startTranscript(controller);
+
+    expect(ingestCalls).toBe(0);
+    expect(transcriptCalls).toBe(1);
+    expect(controller.getModel().screen).toBe("result");
+  });
+
   test("uses only an opaque Library target even when model paths are forged", async () => {
     const targets: unknown[] = [];
     const forged = structuredClone(entry);
@@ -203,10 +225,9 @@ describe("TUI controller hardening", () => {
       lifecycle: { quit: async () => { quits += 1; } },
     }));
 
-    const first = controller.runEffect({ requestId: 91, type: "ingest", url: "https://youtube.com/watch?v=abc123_DEF4" });
-    const second = controller.runEffect({ requestId: 92, type: "transcript", url: "https://youtube.com/watch?v=abc123_DEF4" });
-    while (signals.length < 2) await Promise.resolve();
-    await Promise.all([controller.dispose(), controller.dispose(), first, second]);
+    const running = startTranscript(controller);
+    while (signals.length < 1) await Promise.resolve();
+    await Promise.all([controller.dispose(), controller.dispose(), running]);
     await controller.dispatch({ type: "go-home" });
 
     expect(signals.every((signal) => signal.aborted)).toBe(true);
@@ -229,15 +250,39 @@ describe("TUI controller hardening", () => {
 
     const loading = controller.dispatch({ type: "browse-library" });
     await Promise.resolve();
-    await controller.runEffect({ type: "quit" });
+    await controller.dispatch({ type: "back" });
+    await controller.dispatch({ type: "back" });
     const countAtQuit = observed.length;
     listing.resolve([entry]);
     await loading;
     await controller.dispatch({ type: "go-home" });
 
     expect(observed).toHaveLength(countAtQuit);
-    expect(controller.getModel()).toMatchObject({ pending: { kind: "load-library" }, screen: "library" });
+    expect(controller.getModel()).toMatchObject({ pending: null, screen: "home" });
     expect(quits).toBe(1);
+  });
+
+  test("does not notify observers for a dismissed request's stale completion", async () => {
+    const listing = deferred<LibraryEntry[]>();
+    const observed: Model[] = [];
+    const controller = createTuiController(ready(), ports({
+      library: {
+        list: async () => listing.promise,
+        open: async () => undefined,
+        read: async () => ({ content: "", displayPath: "", title: "" }),
+        reveal: async () => undefined,
+      },
+    }), { onModelChange: (model) => { observed.push(model); } });
+
+    const loading = controller.dispatch({ type: "browse-library" });
+    await Promise.resolve();
+    await controller.dispatch({ type: "back" });
+    const countAtDismissal = observed.length;
+    listing.resolve([entry]);
+    await loading;
+
+    expect(observed).toHaveLength(countAtDismissal);
+    expect(controller.getModel().screen).toBe("home");
   });
 
   test("shares and preserves one lifecycle rejection across quit and dispose", async () => {
@@ -247,9 +292,9 @@ describe("TUI controller hardening", () => {
       lifecycle: { quit: async () => { quits += 1; throw failure; } },
     }));
 
-    await expect(controller.runEffect({ type: "quit" })).rejects.toBe(failure);
+    await expect(controller.dispatch({ type: "back" })).rejects.toBe(failure);
     await expect(controller.dispose()).rejects.toBe(failure);
-    await expect(controller.runEffect({ type: "quit" })).rejects.toBe(failure);
+    await expect(controller.dispose()).rejects.toBe(failure);
     expect(quits).toBe(1);
   });
 
@@ -277,55 +322,26 @@ describe("TUI controller hardening", () => {
     expect(quits).toBe(1);
   });
 
-  test("claims a duplicate operation request exactly once", async () => {
-    const work = deferred<ResultData>();
-    let calls = 0;
-    const controller = createTuiController(ready(), ports({
-      create: {
-        ingest: async () => ({ ...transcriptResult, kind: "digest" }),
-        transcript: async () => { calls += 1; return work.promise; },
-      },
-    }));
-    const effect = {
-      requestId: 77,
-      type: "transcript" as const,
-      url: "https://youtube.com/watch?v=abc123_DEF4",
-    };
-
-    const first = controller.runEffect(effect);
-    const duplicate = controller.runEffect(effect);
-    while (calls === 0) await Promise.resolve();
-    await controller.runEffect({ requestId: 77, type: "cancel-operation" });
-    await Promise.all([first, duplicate]);
-
-    expect(calls).toBe(1);
-  });
-
-  test("ignores a wrong-kind collision without stealing the legitimate request", async () => {
+  test("deduplicates reentrant operation submissions through Events", async () => {
     let controller!: ReturnType<typeof createTuiController>;
-    let ingestCalls = 0;
-    let transcriptCalls = 0;
+    let calls = 0;
+    let resubmitted = false;
     controller = createTuiController(ready(), ports({
       create: {
-        ingest: async () => { ingestCalls += 1; return { ...transcriptResult, kind: "digest" }; },
-        transcript: async () => { transcriptCalls += 1; return transcriptResult; },
+        ingest: async () => ({ ...transcriptResult, kind: "digest" }),
+        transcript: async () => { calls += 1; return transcriptResult; },
       },
     }), {
       onModelChange: (model) => {
-        if (model.screen === "progress" && model.pending) {
-          void controller.runEffect({
-            requestId: model.pending.requestId,
-            type: "ingest",
-            url: "https://youtube.com/watch?v=abc123_DEF4",
-          });
+        if (model.screen === "progress" && !resubmitted) {
+          resubmitted = true;
+          void controller.dispatch({ type: "submit-url", url: "https://youtu.be/abc123_DEF4" });
         }
       },
     });
 
     await startTranscript(controller);
 
-    expect(ingestCalls).toBe(0);
-    expect(transcriptCalls).toBe(1);
-    expect(controller.getModel()).toMatchObject({ pending: null, screen: "result" });
+    expect(calls).toBe(1);
   });
 });

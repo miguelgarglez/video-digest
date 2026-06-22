@@ -21,15 +21,15 @@ export type TuiController = Readonly<{
   dispatch(event: Event): Promise<void>;
   dispose(): Promise<void>;
   getModel(): Model;
-  runEffect(effect: Effect): Promise<void>;
 }>;
 
 type Operation = {
   controller: AbortController;
-  effectType: "ingest" | "transcript";
   requestId: RequestId;
-  started: boolean;
 };
+
+type RequestEffect = Exclude<Effect, { type: "cancel-operation" | "quit" }>;
+type RequestOwnership = { effectType: RequestEffect["type"]; requestId: RequestId; started: boolean };
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
@@ -42,7 +42,7 @@ export function createTuiController(
   let model = clone(initial);
   let shutdownPromise: Promise<void> | null = null;
   const operations = new Map<RequestId, Operation>();
-  const cancelledOperations = new Set<RequestId>();
+  const ownedRequests = new Map<RequestId, RequestOwnership>();
 
   const reportObserverFailure = (): void => {
     try {
@@ -66,11 +66,12 @@ export function createTuiController(
   const applyEvent = async (event: Event, observable: boolean): Promise<void> => {
     if (disposed) return;
     const transition = update(model, event);
+    if (transition.model === model && transition.effects.length === 0) return;
     const nextModel = clone(transition.model);
 
     // Cancellation ownership exists before observers see the pending model. A
     // synchronous reentrant Back/Home can therefore abort or tombstone the work.
-    for (const effect of transition.effects) preRegisterOperation(effect, nextModel);
+    for (const effect of transition.effects) registerTransitionEffect(effect, model, nextModel);
     model = nextModel;
 
     // Quit is an irreversible lifecycle boundary, not an observable background
@@ -84,28 +85,51 @@ export function createTuiController(
     notify(() => options.onModelChange?.(clone(model)));
     if (disposed) return;
 
-    await Promise.all(transition.effects.map(runEffect));
+    await Promise.all(transition.effects.map(executeEffect));
   };
 
   const emit = (event: Event): Promise<void> => applyEvent(event, true);
 
-  function preRegisterOperation(effect: Effect, prospectiveModel: Model = model): void {
-    if ((effect.type !== "ingest" && effect.type !== "transcript") || operations.has(effect.requestId)) return;
-    if (!operationMatchesPending(effect, prospectiveModel)) return;
-    operations.set(effect.requestId, {
-      controller: new AbortController(),
+  function registerTransitionEffect(effect: Effect, previousModel: Model, nextModel: Model): void {
+    if (effect.type === "cancel-operation") {
+      if (previousModel.pending?.requestId === effect.requestId &&
+        (previousModel.pending.kind === "ingest" || previousModel.pending.kind === "transcript")) {
+        cancelOperation(effect.requestId);
+      }
+      return;
+    }
+    if (!isRequestEffect(effect) || !effectMatchesPending(effect, nextModel) || ownedRequests.has(effect.requestId)) {
+      return;
+    }
+    ownedRequests.set(effect.requestId, {
       effectType: effect.type,
       requestId: effect.requestId,
       started: false,
     });
+    if (effect.type === "ingest" || effect.type === "transcript") {
+      operations.set(effect.requestId, { controller: new AbortController(), requestId: effect.requestId });
+    }
   }
 
-  async function runEffect(effect: Effect): Promise<void> {
+  async function executeEffect(effect: Effect): Promise<void> {
     if (effect.type === "quit") {
       await shutdown();
       return;
     }
+    if (effect.type === "cancel-operation") return;
     if (disposed) return;
+    const ownership = claimOwnership(effect);
+    if (!ownership) return;
+    try {
+      await executeOwnedEffect(effect);
+    } finally {
+      if (ownedRequests.get(effect.requestId) === ownership && model.pending?.requestId !== effect.requestId) {
+        ownedRequests.delete(effect.requestId);
+      }
+    }
+  }
+
+  async function executeOwnedEffect(effect: RequestEffect): Promise<void> {
     switch (effect.type) {
       case "save-library":
         try {
@@ -127,7 +151,7 @@ export function createTuiController(
         return;
       case "ingest":
       case "transcript": {
-        const operation = claimOperation(effect);
+        const operation = operations.get(effect.requestId);
         if (!operation) return;
         await runCreateOperation(effect, operation);
         return;
@@ -167,9 +191,6 @@ export function createTuiController(
           });
         }
         return;
-      case "cancel-operation":
-        cancelOperation(effect.requestId);
-        return;
       default:
         return assertNever(effect);
     }
@@ -179,19 +200,23 @@ export function createTuiController(
     const operation = operations.get(requestId);
     if (!operation) return;
     operations.delete(requestId);
-    cancelledOperations.add(requestId);
+    ownedRequests.delete(requestId);
     operation.controller.abort();
   }
 
-  function claimOperation(
-    effect: Extract<Effect, { type: "ingest" | "transcript" }>,
-  ): Operation | null {
-    if (cancelledOperations.delete(effect.requestId)) return null;
-    preRegisterOperation(effect);
-    const operation = operations.get(effect.requestId);
-    if (!operation || operation.effectType !== effect.type || operation.started) return null;
-    operation.started = true;
-    return operation;
+  function claimOwnership(effect: RequestEffect): RequestOwnership | null {
+    const ownership = ownedRequests.get(effect.requestId);
+    if (!ownership || ownership.effectType !== effect.type || ownership.started || !effectMatchesPending(effect, model)) {
+      if (ownership && !effectMatchesPending(effect, model)) {
+        ownedRequests.delete(effect.requestId);
+        const operation = operations.get(effect.requestId);
+        operations.delete(effect.requestId);
+        operation?.controller.abort();
+      }
+      return null;
+    }
+    ownership.started = true;
+    return ownership;
   }
 
   async function prepareRuntime(requestId: RequestId): Promise<void> {
@@ -265,7 +290,6 @@ export function createTuiController(
     try {
       const outcome = await raceAbort(work, operation.controller.signal);
       if (outcome.aborted || !isCurrent()) {
-        cancelledOperations.delete(effect.requestId);
         return;
       }
       const result = validateResult(outcome.value, effect.type === "ingest" ? "digest" : "transcript");
@@ -280,7 +304,6 @@ export function createTuiController(
       });
     } catch {
       if (!isCurrent()) {
-        cancelledOperations.delete(effect.requestId);
         return;
       }
       await settleOperation(operation, operationFailure(effect.type, effect.requestId));
@@ -373,7 +396,7 @@ export function createTuiController(
       });
       for (const operation of operations.values()) operation.controller.abort();
       operations.clear();
-      cancelledOperations.clear();
+      ownedRequests.clear();
       void Promise.resolve()
         .then(() => ports.lifecycle.quit())
         .then(resolveShutdown, rejectShutdown);
@@ -389,17 +412,19 @@ export function createTuiController(
     dispatch: (event) => applyEvent(clone(event), false),
     dispose,
     getModel: () => clone(model),
-    runEffect,
   };
 }
 
-function operationMatchesPending(
-  effect: Extract<Effect, { type: "ingest" | "transcript" }>,
+function effectMatchesPending(
+  effect: RequestEffect,
   candidate: Model,
 ): boolean {
   const pending = candidate.pending;
-  if (!pending || pending.requestId !== effect.requestId) return true;
-  return pending.kind === effect.type;
+  return pending?.requestId === effect.requestId && pending.kind === effect.type;
+}
+
+function isRequestEffect(effect: Effect): effect is RequestEffect {
+  return effect.type !== "cancel-operation" && effect.type !== "quit";
 }
 
 function operationFailure(
