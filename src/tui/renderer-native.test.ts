@@ -34,23 +34,99 @@ function readyModel(overrides: Partial<Model> = {}): Model {
 }
 
 describe("native OpenTUI adapter", () => {
+  test("submits the accepted absolute onboarding default when Enter is pressed unchanged", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 80 });
+    const events: Event[] = [];
+    const model = initialModel({
+      artifactLibrary: null,
+      defaultArtifactLibrary: "/Users/test/Documents/Video Digest",
+    });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer);
+    const tui = createTuiRenderer({ dispatch: async (event) => { events.push(event); }, facade, getModel: () => model });
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      setup.mockInput.pressEnter();
+      await setup.flush();
+      expect(events).toContainEqual({ path: "/Users/test/Documents/Video Digest", type: "save-library" });
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
+  test("preserves a non-secret input draft across a resize", async () => {
+    const setup = await createTestRenderer({ height: 20, width: 80 });
+    const events: Event[] = [];
+    const model = readyModel({ creationMode: "transcript", screen: "enter-url" });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer);
+    const tui = createTuiRenderer({ dispatch: async (event) => { events.push(event); }, facade, getModel: () => model });
+    const url = "https://youtu.be/abc123_DEF4";
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      await setup.mockInput.typeText(url);
+      setup.resize(82, 21);
+      await setup.flush();
+
+      expect(setup.captureCharFrame()).toContain(url);
+      setup.mockInput.pressEnter();
+      await setup.flush();
+      expect(events.at(-1)).toEqual({ type: "submit-url", url });
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
   test("prints through a suspend/write/resume scrollback transaction", async () => {
     const setup = await createTestRenderer({ height: 18, width: 60 });
     const writes: string[] = [];
     const lifecycle: string[] = [];
+    let settleWrite!: () => void;
+    const writeSettled = new Promise<void>((resolve) => { settleWrite = resolve; });
     const suspend = setup.renderer.suspend.bind(setup.renderer);
     const resume = setup.renderer.resume.bind(setup.renderer);
     setup.renderer.suspend = () => { lifecycle.push("suspend"); suspend(); };
     setup.renderer.resume = () => { lifecycle.push("resume"); resume(); };
     const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, {
       env: { NO_COLOR: "1" },
-      writeExternal: (text) => { lifecycle.push("write"); writes.push(text); },
+      writeExternal: async (text) => {
+        lifecycle.push("write-start");
+        writes.push(text);
+        await writeSettled;
+        lifecycle.push("write-settled");
+      },
     });
 
     try {
-      facade.print("Clean transcript");
-      expect(lifecycle).toEqual(["suspend", "write", "resume"]);
+      const printing = facade.print("Clean transcript");
+      await Promise.resolve();
+      expect(lifecycle).toEqual(["suspend", "write-start"]);
+      settleWrite();
+      await printing;
+      expect(lifecycle).toEqual(["suspend", "write-start", "write-settled", "resume"]);
       expect(writes).toEqual(["Clean transcript\n"]);
+    } finally {
+      facade.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
+  test("resumes exactly once when scrollback writing rejects", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 60 });
+    let resumes = 0;
+    const resume = setup.renderer.resume.bind(setup.renderer);
+    setup.renderer.resume = () => { resumes += 1; resume(); };
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, {
+      writeExternal: async () => { throw Object.assign(new Error("broken pipe"), { code: "EPIPE" }); },
+    });
+
+    try {
+      await expect(facade.print("Clean transcript")).rejects.toMatchObject({ code: "EPIPE" });
+      expect(resumes).toBe(1);
     } finally {
       facade.destroy();
       setup.renderer.destroy();

@@ -45,7 +45,7 @@ function deferred<T>() {
 
 function fakePorts(overrides: Partial<TuiPorts> = {}): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async () => undefined },
+    config: { saveArtifactLibrary: async (path) => path },
     create: {
       ingest: async () => ({ ...result, kind: "digest" }),
       transcript: async () => result,
@@ -81,14 +81,15 @@ describe("TUI controller", () => {
     const saved: string[] = [];
     const events: Event[] = [];
     const controller = createTuiController(initialModel({ artifactLibrary: null }), fakePorts({
-      config: { saveArtifactLibrary: async (path) => { saved.push(path); } },
+      config: { saveArtifactLibrary: async (path) => { saved.push(path); return "/normalized/library"; } },
     }), { onEvent: (event) => events.push(event) });
 
     await controller.dispatch({ type: "save-library", path: "/tmp/library" });
 
     expect(saved).toEqual(["/tmp/library"]);
-    expect(events).toContainEqual({ type: "library-saved", path: "/tmp/library", requestId: 1 });
+    expect(events).toContainEqual({ type: "library-saved", path: "/normalized/library", requestId: 1 });
     expect(controller.getModel().screen).toBe("home");
+    expect(controller.getModel().config.artifactLibrary).toBe("/normalized/library");
   });
 
   test("forwards progress and completion with the operation request id", async () => {
@@ -108,6 +109,28 @@ describe("TUI controller", () => {
     expect(events).toContainEqual({ type: "operation-progress", message: "Fetching transcript…", requestId: 1 });
     expect(events).toContainEqual({ type: "operation-succeeded", result, requestId: 1 });
     expect(controller.getModel()).toMatchObject({ pending: null, result, screen: "result" });
+  });
+
+  test("does not prepare the runtime until explicit confirmation and Back remains side-effect free", async () => {
+    let prepares = 0;
+    const controller = createTuiController(homeModel({
+      runtimeReadiness: { remediation: "Run setup.", status: "missing" },
+    }), fakePorts({
+      runtime: {
+        prepare: async () => { prepares += 1; },
+        readiness: async () => ({ status: "ready" }),
+      },
+    }));
+
+    await controller.dispatch({ type: "choose-transcript" });
+    expect(controller.getModel().screen).toBe("runtime-required");
+    expect(prepares).toBe(0);
+    await controller.dispatch({ type: "back" });
+    expect(prepares).toBe(0);
+
+    await controller.dispatch({ type: "choose-transcript" });
+    await controller.dispatch({ type: "prepare-runtime" });
+    expect(prepares).toBe(1);
   });
 
   test("cancels an operation idempotently and fences late callbacks", async () => {
@@ -155,6 +178,17 @@ describe("TUI controller", () => {
     expect(JSON.stringify(events)).not.toContain(secret);
     expect(JSON.stringify(controller.getModel())).not.toContain(secret);
     expect(controller.getModel().message).toBe("Could not save the OpenCode API key. Try again.");
+  });
+
+  test("maps asynchronous scrollback failures to a stable safe message", async () => {
+    const controller = createTuiController(homeModel({ result, screen: "result" }), fakePorts({
+      output: { print: async () => { throw new Error("EPIPE private terminal detail"); } },
+    }));
+
+    await controller.dispatch({ type: "print-result" });
+
+    expect(controller.getModel().message).toBe("Could not print the text to the terminal. Try again.");
+    expect(JSON.stringify(controller.getModel())).not.toContain("private terminal detail");
   });
 
   test("maps every persistent and dismissible service effect", async () => {

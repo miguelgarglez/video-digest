@@ -47,6 +47,7 @@ export type PendingRequest = Readonly<{
 
 export type TuiConfig = Readonly<{
   artifactLibrary: string | null;
+  defaultArtifactLibrary: string;
 }>;
 
 export type LibraryEntrySnapshot = Readonly<
@@ -95,6 +96,7 @@ export type Model = Readonly<{
 export type InitialModelInput = {
   artifactLibrary: string | null;
   credentialConfigured?: boolean;
+  defaultArtifactLibrary?: string;
   runtimeReadiness?: RuntimeReadiness;
 };
 
@@ -102,7 +104,10 @@ export function initialModel(input: InitialModelInput): Model {
   const configured = input.artifactLibrary !== null;
 
   return {
-    config: { artifactLibrary: input.artifactLibrary },
+    config: {
+      artifactLibrary: input.artifactLibrary,
+      defaultArtifactLibrary: input.defaultArtifactLibrary ?? input.artifactLibrary ?? "/Documents/Video Digest",
+    },
     credentialConfigured: input.credentialConfigured ?? false,
     creationMode: null,
     doctorOrigin: "home",

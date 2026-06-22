@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { relative } from "node:path";
+import { isAbsolute, join, normalize, relative } from "node:path";
 import {
   listLibraryEntries,
   readLibraryOpenTarget,
@@ -61,6 +61,7 @@ export type DefaultTuiDependencies = Readonly<{
   credentialStore?: CredentialStore;
   doctor?(outputDir: string): Promise<DoctorReport>;
   env?: Record<string, string | undefined>;
+  homeDir?: string;
   ingest?(input: IngestVideoInput): Promise<IngestVideoResult>;
   libraryFactory?: LibraryFactory;
   metadataSourceFactory?(): VideoMetadataSource;
@@ -89,7 +90,8 @@ export async function createDefaultTuiSession(
   dependencies: DefaultTuiDependencies = {},
 ): Promise<TuiBootstrapResult> {
   const env = dependencies.env ?? process.env;
-  const appPaths = dependencies.appPaths ?? resolveAppPaths(homedir());
+  const homeDir = dependencies.homeDir ?? homedir();
+  const appPaths = dependencies.appPaths ?? resolveAppPaths(homeDir);
   const configStore = dependencies.configStore ?? new FileConfigStore(appPaths.configPath);
   const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
   const runtime = dependencies.runtimeManager ?? defaultRuntimeManager(appPaths, env);
@@ -98,7 +100,9 @@ export async function createDefaultTuiSession(
   const transcriptSourceFactory = dependencies.transcriptSourceFactory ?? (() => new PythonYoutubeTranscriptSource());
   const metadataSourceFactory = dependencies.metadataSourceFactory ?? (() => new YouTubeOEmbedMetadataSource());
   const config = await configStore.load();
-  let savedArtifactLibrary = config?.artifactLibrary ?? null;
+  let savedArtifactLibrary = config
+    ? normalizeArtifactLibraryPath(config.artifactLibrary, homeDir)
+    : null;
 
   const getOutputDir = (): string => resolveArtifactLibrary({
     defaultArtifactLibrary: appPaths.defaultArtifactLibrary,
@@ -128,10 +132,12 @@ export async function createDefaultTuiSession(
   const ports: TuiPorts = {
     config: {
       saveArtifactLibrary: async (path) => {
-        const next = { artifactLibrary: path, schemaVersion: "config.v0" } as const;
+        const artifactLibrary = normalizeArtifactLibraryPath(path, homeDir);
+        const next = { artifactLibrary, schemaVersion: "config.v0" } as const;
         await configStore.save(next);
         // Mutate the effective resolver only after persistence succeeds.
         savedArtifactLibrary = next.artifactLibrary;
+        return next.artifactLibrary;
       },
     },
     create: {
@@ -197,11 +203,24 @@ export async function createDefaultTuiSession(
   return {
     model: initialModel({
       artifactLibrary: savedArtifactLibrary,
+      defaultArtifactLibrary: appPaths.defaultArtifactLibrary,
       credentialConfigured,
       runtimeReadiness,
     }),
     ports,
   };
+}
+
+export function normalizeArtifactLibraryPath(input: string, homeDir: string): string {
+  const value = input.trim();
+  let expanded: string;
+  if (value === "~") expanded = homeDir;
+  else if (value.startsWith("~/")) expanded = join(homeDir, value.slice(2));
+  else if (value.startsWith("~")) throw new Error("Artifact Library uses an unsupported home shorthand.");
+  else expanded = value;
+
+  if (!isAbsolute(expanded)) throw new Error("Artifact Library must be an absolute path.");
+  return normalize(expanded);
 }
 
 export function createArtifactLibraryPort(options: ArtifactLibraryPortOptions): TuiLibraryPort {

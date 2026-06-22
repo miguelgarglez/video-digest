@@ -28,7 +28,7 @@ function fakeFacade(dimensions = { height: 30, width: 100 }): OpenTuiFacade & {
     dimensions,
     frame: null,
     destroy() { this.destroyCalls += 1; },
-    print() {},
+    async print() {},
     render(frame) { this.frame = frame; },
   };
 }

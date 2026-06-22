@@ -6,7 +6,11 @@ import type { LibraryEntry, LibraryFileOperations } from "../cli/artifacts";
 import { withRecoveredOutputLibrary, writeTranscriptOnlyOutputs } from "../output/output-writer";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
-import { createArtifactLibraryPort, createDefaultTuiSession } from "./default-ports";
+import {
+  createArtifactLibraryPort,
+  createDefaultTuiSession,
+  normalizeArtifactLibraryPath,
+} from "./default-ports";
 
 const video = {
   canonicalUrl: "https://www.youtube.com/watch?v=abc123_DEF4",
@@ -51,11 +55,23 @@ function entry(root: string): LibraryEntry {
 }
 
 describe("default TUI ports", () => {
+  test("normalizes only exact home shorthands and absolute paths without consulting cwd", () => {
+    const home = "/Users/isolated";
+    expect(normalizeArtifactLibraryPath("~", home)).toBe(home);
+    expect(normalizeArtifactLibraryPath("~/Documents/Video Digest", home))
+      .toBe("/Users/isolated/Documents/Video Digest");
+    expect(normalizeArtifactLibraryPath("/Volumes/Library/../Video Digest", home))
+      .toBe("/Volumes/Video Digest");
+    expect(() => normalizeArtifactLibraryPath("~other/Library", home)).toThrow("unsupported home shorthand");
+    expect(() => normalizeArtifactLibraryPath("relative/library", home)).toThrow("absolute path");
+    expect(() => normalizeArtifactLibraryPath("", home)).toThrow("absolute path");
+  });
+
   test("initializes without network access and resolves the Artifact Library again after saving config", async () => {
     const roots: string[] = [];
     let metadataSources = 0;
     let saved: unknown;
-    const session = await createDefaultTuiSession({ print: () => undefined, quit: () => undefined }, {
+    const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
       appPaths: {
         configPath: "/app/config.json",
         defaultArtifactLibrary: "/default/library",
@@ -71,6 +87,7 @@ describe("default TUI ports", () => {
         setOpenCodeApiKey: async () => undefined,
       },
       env: {},
+      homeDir: "/Users/isolated",
       libraryFactory: (getOutputDir) => ({
         list: async () => { roots.push(getOutputDir()); return []; },
         open: async () => undefined,
@@ -85,24 +102,24 @@ describe("default TUI ports", () => {
     });
 
     expect(session.model).toMatchObject({
-      config: { artifactLibrary: null },
+      config: { artifactLibrary: null, defaultArtifactLibrary: "/default/library" },
       credentialConfigured: false,
       runtimeReadiness: { status: "missing" },
       screen: "choose-library",
     });
     expect(metadataSources).toBe(0);
 
-    await session.ports.config.saveArtifactLibrary("/new/library");
+    expect(await session.ports.config.saveArtifactLibrary("~/Library")).toBe("/Users/isolated/Library");
     await session.ports.library.list();
-    expect(saved).toEqual({ artifactLibrary: "/new/library", schemaVersion: "config.v0" });
-    expect(roots).toEqual(["/new/library"]);
+    expect(saved).toEqual({ artifactLibrary: "/Users/isolated/Library", schemaVersion: "config.v0" });
+    expect(roots).toEqual(["/Users/isolated/Library"]);
   });
 
   test("creates metadata source only for an explicit operation and resolves the result entry from the Library", async () => {
     let metadataSources = 0;
     let resolvedUnderLock = false;
     const canonical = entry("/library");
-    const session = await createDefaultTuiSession({ print: () => undefined, quit: () => undefined }, {
+    const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
       appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
       configStore: {
         load: async () => ({ artifactLibrary: "/library", schemaVersion: "config.v0" }),

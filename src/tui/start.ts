@@ -11,9 +11,10 @@ import {
 
 const LAUNCH_ERROR = "Video Digest could not start its terminal interface. Run video-digest doctor and try again.";
 const RUNTIME_ERROR = "Video Digest encountered a terminal interface error. The terminal was restored safely.";
+const STARTUP_CANCELLED = Symbol("startup-cancelled");
 
 export type TuiLifecycle = Readonly<{
-  print(text: string): void | Promise<void>;
+  print(text: string): Promise<void>;
   quit(): void;
 }>;
 
@@ -91,18 +92,53 @@ export async function startTui(options: StartTuiOptions = {}): Promise<number> {
   };
   const abortListener = (): void => dispatchQuit();
   const signalListener = (): void => dispatchQuit();
+  const awaitStartup = async <T>(promise: Promise<T>): Promise<
+    | { type: "exit" }
+    | { type: "rejected"; error: unknown }
+    | { type: "resolved"; value: T }
+  > => Promise.race([
+    promise.then(
+      (value) => ({ type: "resolved" as const, value }),
+      (error: unknown) => ({ error, type: "rejected" as const }),
+    ),
+    exit.then(() => ({ type: "exit" as const })),
+  ]);
 
   signalSource.on("SIGINT", signalListener);
   signalSource.on("SIGTERM", signalListener);
   options.signal?.addEventListener("abort", abortListener, { once: true });
+  if (options.signal?.aborted) requestExit();
 
   try {
-    facade = await createFacade();
+    if (settled) throw STARTUP_CANCELLED;
+    const facadePromise = Promise.resolve().then(() => createFacade());
+    const facadeStartup = await awaitStartup(facadePromise);
+    if (facadeStartup.type === "exit") {
+      // A native facade that appears after shutdown still owns terminal state.
+      // Destroy it asynchronously and absorb both late resolution failures and
+      // the original startup rejection.
+      void facadePromise.then(
+        (lateFacade) => {
+          try { lateFacade.destroy(); } catch { /* The caller has already exited. */ }
+        },
+        () => undefined,
+      );
+      throw STARTUP_CANCELLED;
+    }
+    if (facadeStartup.type === "rejected") throw facadeStartup.error;
+    facade = facadeStartup.value;
     const bootstrap = options.bootstrap ?? defaultBootstrap;
-    const session = await bootstrap({
+    const bootstrapPromise = Promise.resolve().then(() => bootstrap({
       print: (text) => facade!.print(text),
       quit: requestQuit,
-    });
+    }));
+    const bootstrapStartup = await awaitStartup(bootstrapPromise);
+    if (bootstrapStartup.type === "exit") {
+      void bootstrapPromise.catch(() => undefined);
+      throw STARTUP_CANCELLED;
+    }
+    if (bootstrapStartup.type === "rejected") throw bootstrapStartup.error;
+    const session = bootstrapStartup.value;
     controller = createController(session.model, session.ports, {
       onModelChange: (model) => renderer?.render(model),
       onObserverError: requestRuntimeFailure,
@@ -119,9 +155,11 @@ export async function startTui(options: StartTuiOptions = {}): Promise<number> {
 
     if (options.signal?.aborted) dispatchQuit();
     await exit;
-  } catch {
-    report(initialized ? RUNTIME_ERROR : LAUNCH_ERROR);
-    exitCode = 1;
+  } catch (error) {
+    if (error !== STARTUP_CANCELLED) {
+      report(initialized ? RUNTIME_ERROR : LAUNCH_ERROR);
+      exitCode = 1;
+    }
   } finally {
     signalSource.off("SIGINT", signalListener);
     signalSource.off("SIGTERM", signalListener);

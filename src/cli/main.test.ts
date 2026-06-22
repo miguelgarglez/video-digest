@@ -1507,14 +1507,15 @@ describe("runCli", () => {
     expect(errors.join("\n")).not.toContain("github.com");
   });
 
-  test("launches the TUI for no arguments only when stdout is a TTY", async () => {
+  test("launches the TUI for no arguments only when stdin and stdout are TTYs", async () => {
     let starts = 0;
     let prompts = 0;
     const exitCode = await runCli(
       [],
       {
         error: () => {},
-        isTTY: true,
+        inputIsTTY: true,
+        outputIsTTY: true,
         log: () => {},
         prompt: async () => { prompts += 1; return ""; },
       },
@@ -1526,7 +1527,11 @@ describe("runCli", () => {
     expect(prompts).toBe(0);
   });
 
-  test("prints help with a nonzero exit and never prompts for no arguments outside a TTY", async () => {
+  test.each([
+    [true, false],
+    [false, true],
+    [false, false],
+  ] as const)("prints help and never initializes the TUI with stdinTTY=%s stdoutTTY=%s", async (inputIsTTY, outputIsTTY) => {
     const logs: string[] = [];
     let starts = 0;
     let prompts = 0;
@@ -1534,7 +1539,8 @@ describe("runCli", () => {
       [],
       {
         error: () => {},
-        isTTY: false,
+        inputIsTTY,
+        outputIsTTY,
         log: (message) => logs.push(message),
         prompt: async () => { prompts += 1; return ""; },
       },
@@ -1547,11 +1553,25 @@ describe("runCli", () => {
     expect(prompts).toBe(0);
   });
 
+  test("does not infer full interactivity from the legacy output-only TTY hint", async () => {
+    const logs: string[] = [];
+    let starts = 0;
+    const exitCode = await runCli([], {
+      error: () => {},
+      isTTY: true,
+      log: (message) => logs.push(message),
+    }, { startTui: async () => { starts += 1; return 0; } });
+
+    expect(exitCode).toBe(1);
+    expect(starts).toBe(0);
+    expect(logs.join("\n")).toContain("Usage:");
+  });
+
   test("direct commands never initialize the TUI", async () => {
     let starts = 0;
     const exitCode = await runCli(
       ["--help"],
-      { error: () => {}, isTTY: true, log: () => {} },
+      { error: () => {}, inputIsTTY: true, log: () => {}, outputIsTTY: true },
       { startTui: async () => { starts += 1; return 0; } },
     );
 

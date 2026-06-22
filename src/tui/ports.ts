@@ -37,7 +37,7 @@ export type TuiLibraryPort = {
 /** Narrow application boundary used by the TUI controller and its renderer. */
 export type TuiPorts = {
   config: {
-    saveArtifactLibrary(path: string): Promise<void>;
+    saveArtifactLibrary(path: string): Promise<string>;
   };
   create: TuiCreatePort;
   credential: {

@@ -174,7 +174,7 @@ export function update(model: Model, event: Event): Transition {
       return matchesPending(model, "save-library", event.requestId) && model.screen === "choose-library"
         ? transition(clearPending({
             ...model,
-            config: { artifactLibrary: event.path },
+            config: { ...model.config, artifactLibrary: event.path },
             message: null,
             screen: model.librarySelectionOrigin === "onboarding" ? "home" : "settings",
           }))

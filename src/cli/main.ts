@@ -45,8 +45,11 @@ import { createMacOSSystemActions, SystemActionError, type SystemActions } from 
 
 export type CliIO = {
   error: (message: string) => void;
+  inputIsTTY?: boolean;
+  /** @deprecated Use outputIsTTY. Retained for direct-command progress compatibility. */
   isTTY?: boolean;
   log: (message: string) => void;
+  outputIsTTY?: boolean;
   prompt?: (question: string) => Promise<string>;
   supportsHyperlinks?: boolean;
   write?: (message: string) => void;
@@ -91,7 +94,7 @@ export async function runCli(
 ): Promise<number> {
   try {
     if (args.length === 0) {
-      if (io.isTTY !== true) {
+      if (io.inputIsTTY !== true || io.outputIsTTY !== true) {
         printHelp(io);
         return 1;
       }
@@ -491,8 +494,10 @@ const COMMAND_HELP_TEXT: Record<string, string> = {
 
 const defaultCliIO: CliIO = {
   error: (message) => console.error(message),
+  inputIsTTY: stdin.isTTY,
   isTTY: stdout.isTTY,
   log: (message) => console.log(message),
+  outputIsTTY: stdout.isTTY,
   prompt: promptFromTerminal,
   supportsHyperlinks: Boolean(stdout.isTTY && (
     process.env.TERM_PROGRAM || process.env.VTE_VERSION || process.env.WT_SESSION

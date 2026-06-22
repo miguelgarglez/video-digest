@@ -14,7 +14,7 @@ function model(): Model {
 
 function ports(quit: () => void | Promise<void>): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async () => undefined },
+    config: { saveArtifactLibrary: async (path) => path },
     create: {
       ingest: async () => { throw new Error("unused"); },
       transcript: async () => { throw new Error("unused"); },
@@ -48,7 +48,7 @@ function facade(overrides: Partial<OpenTuiFacade> = {}): OpenTuiFacade & {
     frame: null,
     printCalls: [],
     destroy() { this.destroyCalls += 1; },
-    print(text) { this.printCalls.push(text); },
+    async print(text) { this.printCalls.push(text); },
     render(frame) { this.frame = frame; },
     ...overrides,
   };
@@ -63,17 +63,115 @@ function renderer(onRender?: () => void): TuiRenderer & { destroyCalls: number; 
   };
 }
 
-function signals(): TuiSignalSource & { emit(): void; listenerCount: number } {
-  const listeners = new Set<() => void>();
+function signals(): TuiSignalSource & { emit(signal: "SIGINT" | "SIGTERM"): void; listenerCount: number } {
+  const listeners = new Map<"SIGINT" | "SIGTERM", Set<() => void>>([
+    ["SIGINT", new Set()],
+    ["SIGTERM", new Set()],
+  ]);
   return {
-    emit() { for (const listener of [...listeners]) listener(); },
-    get listenerCount() { return listeners.size; },
-    off(_signal, listener) { listeners.delete(listener); },
-    on(_signal, listener) { listeners.add(listener); },
+    emit(signal) { for (const listener of [...listeners.get(signal)!]) listener(); },
+    get listenerCount() { return [...listeners.values()].reduce((count, values) => count + values.size, 0); },
+    off(signal, listener) { listeners.get(signal)!.delete(listener); },
+    on(signal, listener) { listeners.get(signal)!.add(listener); },
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+async function promptly<T>(promise: Promise<T>): Promise<T | "timed-out"> {
+  return Promise.race([
+    promise,
+    new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 30)),
+  ]);
+}
+
 describe("startTui", () => {
+  test("SIGINT stops a non-cooperative facade startup and destroys a late facade once", async () => {
+    const pending = deferred<OpenTuiFacade>();
+    const source = signals();
+    const lateFacade = facade();
+    const running = startTui({ createFacade: () => pending.promise, signals: source });
+
+    source.emit("SIGINT");
+
+    expect(await promptly(running)).toBe(0);
+    expect(source.listenerCount).toBe(0);
+    pending.resolve(lateFacade);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(lateFacade.destroyCalls).toBe(1);
+  });
+
+  test("SIGTERM stops a non-cooperative bootstrap and fences its late session", async () => {
+    const pending = deferred<{ model: Model; ports: TuiPorts }>();
+    const source = signals();
+    const native = facade();
+    let controllerCreations = 0;
+    const running = startTui({
+      bootstrap: () => pending.promise,
+      createController: (...args) => {
+        controllerCreations += 1;
+        return {
+          dispatch: async () => undefined,
+          dispose: async () => undefined,
+          getModel: () => args[0],
+        };
+      },
+      createFacade: async () => native,
+      signals: source,
+    });
+    while (source.listenerCount === 0) await Promise.resolve();
+
+    source.emit("SIGTERM");
+
+    expect(await promptly(running)).toBe(0);
+    expect(native.destroyCalls).toBe(1);
+    expect(source.listenerCount).toBe(0);
+    pending.resolve({ model: model(), ports: ports(() => undefined) });
+    await Promise.resolve();
+    expect(controllerCreations).toBe(0);
+  });
+
+  test("AbortSignal stops facade startup and absorbs a late rejection", async () => {
+    const pending = deferred<OpenTuiFacade>();
+    const abort = new AbortController();
+    const source = signals();
+    const running = startTui({ createFacade: () => pending.promise, signal: abort.signal, signals: source });
+
+    abort.abort();
+
+    expect(await promptly(running)).toBe(0);
+    expect(source.listenerCount).toBe(0);
+    pending.reject(new Error("late private failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  test("an already-aborted signal never waits for facade startup", async () => {
+    const abort = AbortSignal.abort();
+    const source = signals();
+    let facadeCalls = 0;
+
+    expect(await promptly(startTui({
+      createFacade: async () => {
+        facadeCalls += 1;
+        return facade();
+      },
+      signal: abort,
+      signals: source,
+    }))).toBe(0);
+    expect(source.listenerCount).toBe(0);
+    expect(facadeCalls).toBe(0);
+  });
+
   test("routes Ctrl-C through the real controller and renderer before restoring the terminal", async () => {
     const native = facade();
     const running = startTui({
@@ -114,7 +212,7 @@ describe("startTui", () => {
       signals: signals(),
     });
 
-    while (!requestQuit) await Promise.resolve();
+    while (!requestQuit || view.renderCalls === 0) await Promise.resolve();
     requestQuit();
 
     expect(await running).toBe(0);

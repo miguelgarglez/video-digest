@@ -28,6 +28,7 @@ export type ScreenInput = Readonly<{
   label: string;
   placeholder: string;
   secret: boolean;
+  value: string;
 }>;
 
 export type AccessibilityKey = Readonly<{
@@ -130,7 +131,12 @@ function viewForScreen(model: Model): MutableView {
     case "choose-library":
       return {
         body: ["Choose where Video Digest will keep Transcripts, Digests, and metadata."],
-        input: { label: "Artifact Library folder", placeholder: "~/Documents/Video Digest", secret: false },
+        input: {
+          label: "Artifact Library folder",
+          placeholder: model.config.defaultArtifactLibrary,
+          secret: false,
+          value: model.config.artifactLibrary ?? model.config.defaultArtifactLibrary,
+        },
         title: "Choose your Artifact Library",
       };
     case "home":
@@ -148,23 +154,23 @@ function viewForScreen(model: Model): MutableView {
       };
     case "enter-url":
       return {
-        input: { label: "YouTube URL", placeholder: "https://www.youtube.com/watch?v=…", secret: false },
+        input: { label: "YouTube URL", placeholder: "https://www.youtube.com/watch?v=…", secret: false, value: "" },
         title: model.creationMode === "digest" ? "Create Digest" : "Get Transcript",
       };
     case "runtime-required":
       return {
         actions: [{ type: "prepare-runtime" }],
         body: [
-          "Transcript support uses an isolated managed Python runtime.",
+          "Setup may install an isolated Python 3.12 runtime and locked Transcript dependencies in Video Digest's application data.",
           runtimeRemediation(model),
         ],
-        options: ["Set Up Transcript Runtime"],
+        options: ["Confirm Runtime Setup"],
         title: "Transcript runtime required",
       };
     case "credential-required":
       return {
         body: ["Digest creation needs an OpenCode API key. It is stored in macOS Keychain."],
-        input: { label: "OpenCode API key", placeholder: "Paste API key", secret: true },
+        input: { label: "OpenCode API key", placeholder: "Paste API key", secret: true, value: "" },
         title: "OpenCode credential required",
       };
     case "progress":
@@ -242,7 +248,7 @@ function resultView(model: Model): MutableView {
 
   const actions: ScreenAction[] = [{ type: "read-result" }];
   const options = ["Open Artifact"];
-  if (result.kind === "transcript" && result.cleanText) {
+  if (result.cleanText) {
     actions.push({ type: "copy-result" }, { type: "print-result" });
     options.push("Copy Transcript", "Print Transcript");
   }

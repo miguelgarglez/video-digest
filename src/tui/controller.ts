@@ -133,8 +133,8 @@ export function createTuiController(
     switch (effect.type) {
       case "save-library":
         try {
-          await ports.config.saveArtifactLibrary(effect.path);
-          await emit({ path: effect.path, requestId: effect.requestId, type: "library-saved" });
+          const savedPath = await ports.config.saveArtifactLibrary(effect.path);
+          await emit({ path: savedPath, requestId: effect.requestId, type: "library-saved" });
         } catch {
           await emit({
             message: "Could not save the Artifact Library. Choose another folder and try again.",

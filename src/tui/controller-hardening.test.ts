@@ -41,7 +41,7 @@ function deferred<T>() {
 
 function ports(overrides: Record<string, unknown> = {}): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async () => undefined },
+    config: { saveArtifactLibrary: async (path: string) => path },
     create: {
       ingest: async () => ({ ...transcriptResult, kind: "digest" }),
       transcript: async () => transcriptResult,

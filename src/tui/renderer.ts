@@ -1,4 +1,5 @@
 import type { CliRenderer, KeyEvent, Renderable } from "@opentui/core";
+import { writeFileSync } from "node:fs";
 import type { Event, Model } from "./model";
 import { createSecretEditor, type SecretEditor } from "./secret-editor";
 import { buildScreenView, type ScreenAction, type ScreenStatusTone, type ScreenView } from "./screens";
@@ -23,7 +24,7 @@ export interface OpenTuiFacade {
   dimensions: { height: number; width: number };
   destroy(): void;
   /** Write durable output to terminal scrollback without corrupting full-screen state. */
-  print(text: string): void;
+  print(text: string): Promise<void>;
   render(frame: RenderFrame): void;
 }
 
@@ -138,7 +139,7 @@ function inputEvent(model: Model, value: string): Event | null {
 export type CreateOpenTuiFacadeOptions = Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
   ownsRenderer?: boolean;
-  writeExternal?(text: string): void;
+  writeExternal?(text: string): void | Promise<void>;
 }>;
 
 /**
@@ -176,11 +177,12 @@ function bindOpenTuiFacade(
 ): OpenTuiFacade {
   const theme = createTheme(options.env ?? process.env);
   const ownsRenderer = options.ownsRenderer ?? false;
-  const writeExternal = options.writeExternal ?? ((text: string) => { process.stdout.write(text); });
+  const writeExternal = options.writeExternal ?? ((text: string) => { writeFileSync(process.stdout.fd, text); });
   let destroyed = false;
   let currentRoot: Renderable | null = null;
   let currentFrame: RenderFrame | null = null;
   let secretEditor: SecretEditor | null = null;
+  let inputDraft: { key: string; value: string } | null = null;
   const noColorPostProcess = theme.colorEnabled ? null : createNoColorPostProcess(core);
 
   const keyHandler = (key: KeyEvent): void => {
@@ -207,6 +209,7 @@ function bindOpenTuiFacade(
       currentFrame = null;
       secretEditor?.clear();
       secretEditor = null;
+      inputDraft = null;
       try {
         renderer.keyInput.off("keypress", keyHandler);
         renderer.off(core.CliRenderEvents.RESIZE, resizeHandler);
@@ -217,11 +220,11 @@ function bindOpenTuiFacade(
         if (ownsRenderer) renderer.destroy();
       }
     },
-    print(text) {
+    async print(text) {
       if (destroyed) throw new Error("The terminal renderer is unavailable.");
       renderer.suspend();
       try {
-        writeExternal(text.endsWith("\n") ? text : `${text}\n`);
+        await writeExternal(text.endsWith("\n") ? text : `${text}\n`);
       } finally {
         renderer.resume();
         renderer.requestRender();
@@ -232,12 +235,19 @@ function bindOpenTuiFacade(
       currentFrame = frame;
       if (frame.view.input?.secret) {
         secretEditor ??= createSecretEditor();
+        inputDraft = null;
       } else {
         secretEditor?.clear();
         secretEditor = null;
+        if (frame.view.input) {
+          const key = `${frame.view.kind}:${frame.view.input.label}`;
+          if (inputDraft?.key !== key) inputDraft = { key, value: frame.view.input.value };
+        } else {
+          inputDraft = null;
+        }
       }
       destroyCurrentRoot(renderer, currentRoot);
-      currentRoot = renderOpenTuiFrame(core, renderer, frame, theme, secretEditor);
+      currentRoot = renderOpenTuiFrame(core, renderer, frame, theme, secretEditor, inputDraft);
       renderer.root.add(currentRoot);
       renderer.requestRender();
     },
@@ -252,6 +262,7 @@ function renderOpenTuiFrame(
   frame: RenderFrame,
   theme: TuiTheme,
   secretEditor: SecretEditor | null,
+  inputDraft: { key: string; value: string } | null,
 ): Renderable {
   const root = new core.BoxRenderable(renderer, {
     flexDirection: "column",
@@ -340,11 +351,15 @@ function renderOpenTuiFrame(
         id: "screen-input",
         maxLength: 2048,
         placeholder: frame.view.input.placeholder,
+        value: inputDraft?.value ?? frame.view.input.value,
         width: "100%",
         ...colorOption("backgroundColor", theme.surface),
         ...colorOption("focusedBackgroundColor", theme.surface),
         ...colorOption("focusedTextColor", theme.foreground),
         ...colorOption("textColor", theme.foreground),
+      });
+      input.on(core.InputRenderableEvents.INPUT, (value: string) => {
+        if (inputDraft) inputDraft.value = value;
       });
       input.on(core.InputRenderableEvents.ENTER, (value: string) => void frame.onSubmit(value).catch(() => undefined));
       input.focusable = !frame.view.input.disabled;

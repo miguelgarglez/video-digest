@@ -53,11 +53,14 @@ describe("buildScreenView", () => {
   });
 
   test("first-run onboarding asks only for the Artifact Library", () => {
-    expect(buildScreenView(initialModel({ artifactLibrary: null }))).toMatchObject({
+    expect(buildScreenView(initialModel({
+      artifactLibrary: null,
+      defaultArtifactLibrary: "/Users/test/Documents/Video Digest",
+    }))).toMatchObject({
       focus: "input",
       input: {
         label: "Artifact Library folder",
-        placeholder: "~/Documents/Video Digest",
+        value: "/Users/test/Documents/Video Digest",
         secret: false,
       },
       options: [],
@@ -71,8 +74,12 @@ describe("buildScreenView", () => {
       runtimeReadiness: { remediation: "Run setup.", status: "missing" },
       screen: "runtime-required",
     }))).toMatchObject({
+      body: [
+        "Setup may install an isolated Python 3.12 runtime and locked Transcript dependencies in Video Digest's application data.",
+        "Run setup.",
+      ],
       focus: "options",
-      options: ["Set Up Transcript Runtime"],
+      options: ["Confirm Runtime Setup"],
       title: "Transcript runtime required",
     });
 
@@ -91,6 +98,15 @@ describe("buildScreenView", () => {
       input: expect.objectContaining({ label: "YouTube URL", secret: false }),
       title: "Create Digest",
     });
+  });
+
+  test("Settings reuses the persisted absolute Library path as its editable value", () => {
+    const chooser = {
+      ...readyModel(),
+      librarySelectionOrigin: "settings" as const,
+      screen: "choose-library" as const,
+    };
+    expect(buildScreenView(chooser).input?.value).toBe("/library");
   });
 
   test("progress reports one safe status without choices", () => {
@@ -128,7 +144,14 @@ describe("buildScreenView", () => {
     })).status).toEqual({ text: "Could not copy the Transcript.", tone: "error" });
   });
 
-  test("digest results omit transcript-only actions", () => {
+  test("digest results expose Copy and Print whenever clean transcript text is available", () => {
+    expect(buildScreenView(readyModel({
+      result: { cleanText: "Digest transcript text", entry, kind: "digest" },
+      screen: "result",
+    })).options).toEqual([
+      "Open Artifact", "Copy Transcript", "Print Transcript", "Reveal in Finder", "Return Home",
+    ]);
+
     expect(buildScreenView(readyModel({
       result: { cleanText: null, entry, kind: "digest" },
       screen: "result",

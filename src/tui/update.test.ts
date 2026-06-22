@@ -173,6 +173,17 @@ describe("creation and results", () => {
       screen: "result",
     });
     expect(update(digestWithoutText, { type: "copy-result" }).effects).toEqual([]);
+
+    const digestWithText = readyModel({
+      result: { cleanText: "Digest transcript text", entry, kind: "digest" },
+      screen: "result",
+    });
+    expect(update(digestWithText, { type: "copy-result" }).effects).toEqual([
+      { requestId: 1, text: "Digest transcript text", type: "copy" },
+    ]);
+    expect(update(digestWithText, { type: "print-result" }).effects).toEqual([
+      { requestId: 1, text: "Digest transcript text", type: "print" },
+    ]);
   });
 
   test("loads the human-readable artifact into a separate reader", () => {
