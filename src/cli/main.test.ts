@@ -454,6 +454,7 @@ describe("runCli", () => {
       },
       {
         ingestVideo: async ({ emailPreview, video }) => ({
+          cleanText: "Hello from the transcript.\n",
           exitCode: 0,
           paths: {
             digestPath: "outputs/digests/1ZgUcrR0K7I.md",
@@ -1368,6 +1369,7 @@ describe("runCli", () => {
           input.onProgress?.({ stage: "completed", videoId: input.video.videoId });
 
           return {
+            cleanText: "Hello from the transcript.\n",
             exitCode: 0,
             paths: {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
@@ -1421,6 +1423,7 @@ describe("runCli", () => {
           input.onProgress?.({ stage: "completed", videoId: input.video.videoId });
 
           return {
+            cleanText: "Hello from the transcript.\n",
             exitCode: 0,
             paths: {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
@@ -1462,7 +1465,7 @@ describe("runCli", () => {
     const logs: string[] = [];
     const errors: string[] = [];
 
-    const exitCode = await runCli([], {
+    const exitCode = await runCli(["ingest"], {
       error: (message) => errors.push(message),
       log: (message) => logs.push(message),
     });
@@ -1504,275 +1507,62 @@ describe("runCli", () => {
     expect(errors.join("\n")).not.toContain("github.com");
   });
 
-  test("prompts for URL and email preview when run interactively", async () => {
-    const prompts: string[] = [];
+  test("launches the TUI for no arguments only when stdout is a TTY", async () => {
+    let starts = 0;
+    let prompts = 0;
+    const exitCode = await runCli(
+      [],
+      {
+        error: () => {},
+        isTTY: true,
+        log: () => {},
+        prompt: async () => { prompts += 1; return ""; },
+      },
+      { startTui: async () => { starts += 1; return 0; } },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(starts).toBe(1);
+    expect(prompts).toBe(0);
+  });
+
+  test("prints help with a nonzero exit and never prompts for no arguments outside a TTY", async () => {
     const logs: string[] = [];
-    const answers = [
-      "1",
-      "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
-      "y",
-    ];
-
+    let starts = 0;
+    let prompts = 0;
     const exitCode = await runCli(
       [],
       {
         error: () => {},
+        isTTY: false,
         log: (message) => logs.push(message),
-        prompt: async (question) => {
-          prompts.push(question);
-          return answers.shift() ?? "";
-        },
+        prompt: async () => { prompts += 1; return ""; },
       },
-      {
-        ingestVideo: async ({ emailPreview }) => ({
-          exitCode: 0,
-          paths: {
-            digestPath: "outputs/digests/1ZgUcrR0K7I.md",
-            emailPreviewPath: emailPreview ? "outputs/emails/1ZgUcrR0K7I.md" : null,
-            metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-            transcriptJsonPath: "outputs/transcripts/1ZgUcrR0K7I.json",
-            transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
-            transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
-          },
-          status: "completed",
-          transcriptQuality: {
-            averageCharsPerMinute: 720,
-            durationSeconds: 300,
-            language: "en",
-            qualitySchemaVersion: "transcript-quality.v0",
-            segmentCount: 60,
-            status: "usable",
-            totalTextLength: 3600,
-            warnings: [],
-          },
-        }),
-      },
+      { startTui: async () => { starts += 1; return 0; } },
     );
 
-    expect(exitCode).toBe(0);
-    expect(prompts).toEqual([
-      "What do you want to create? [1] Digest [2] Transcript only: ",
-      "YouTube URL: ",
-      "Create email preview? [y/N]: ",
-    ]);
-    expect(logs).toContain("Email preview: outputs/emails/1ZgUcrR0K7I.md");
+    expect(exitCode).toBe(1);
+    expect(logs.join("\n")).toContain("video-digest ingest <youtube-url>");
+    expect(starts).toBe(0);
+    expect(prompts).toBe(0);
   });
 
-  test("preserves output-dir when prompting for an ingest URL", async () => {
-    const answers = ["1", "https://www.youtube.com/watch?v=1ZgUcrR0K7I", "n"];
-    let outputDir = "";
-
+  test("direct commands never initialize the TUI", async () => {
+    let starts = 0;
     const exitCode = await runCli(
-      ["ingest", "--output-dir", "/cli"],
-      {
-        error: () => {},
-        log: () => {},
-        prompt: async () => answers.shift() ?? "",
-      },
-      {
-        credentialStore: fakeCredentialStore({ storedKey: "stored-key" }),
-        ingestVideo: async (input) => {
-          outputDir = input.outputDir;
-          return completedIngestion();
-        },
-      },
+      ["--help"],
+      { error: () => {}, isTTY: true, log: () => {} },
+      { startTui: async () => { starts += 1; return 0; } },
     );
 
     expect(exitCode).toBe(0);
-    expect(outputDir).toBe("/cli");
-  });
-
-  test("interactive mode can choose transcript only", async () => {
-    const prompts: string[] = [];
-    const logs: string[] = [];
-    const transcriptCalls: string[] = [];
-    const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
-
-    const exitCode = await runCli(
-      [],
-      {
-        error: () => {},
-        log: (message) => logs.push(message),
-        prompt: async (question) => {
-          prompts.push(question);
-          return answers.shift() ?? "";
-        },
-      },
-      {
-        fetchTranscriptOnly: async ({ video }) => {
-          transcriptCalls.push(video.videoId);
-          return completedTranscriptOnly();
-        },
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(prompts).toEqual([
-      "What do you want to create? [1] Digest [2] Transcript only: ",
-      "YouTube URL: ",
-    ]);
-    expect(transcriptCalls).toEqual(["1ZgUcrR0K7I"]);
-    expect(logs).toContain("Fetched transcript for 1ZgUcrR0K7I");
-  });
-
-  test.each(["--copy", "--open", "--stdout"])("preserves interactive transcript action %s", async (flag) => {
-    const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
-    const actions: string[] = [];
-    const writes: string[] = [];
-    const exitCode = await runCli(
-      [flag],
-      {
-        error: () => {},
-        log: () => {},
-        prompt: async () => answers.shift() ?? "",
-        write: (text) => writes.push(text),
-      },
-      {
-        fetchTranscriptOnly: async () => completedTranscriptOnly(),
-        openGeneratedTranscript: async ({ open, path }) => open(path),
-        systemActions: {
-          copy: async () => { actions.push("copy"); },
-          open: async () => { actions.push("open"); },
-          reveal: async () => {},
-        },
-      },
-    );
-    expect(exitCode).toBe(0);
-    expect(actions).toEqual(flag === "--copy" ? ["copy"] : flag === "--open" ? ["open"] : []);
-    expect(writes).toEqual(flag === "--stdout" ? ["Hello from the transcript.\n"] : []);
-  });
-
-  test("preserves output-dir when interactively selecting transcript", async () => {
-    const answers = ["2", "https://www.youtube.com/watch?v=1ZgUcrR0K7I"];
-    let outputDir = "";
-
-    const exitCode = await runCli(
-      ["ingest", "--output-dir", "/cli"],
-      {
-        error: () => {},
-        log: () => {},
-        prompt: async () => answers.shift() ?? "",
-      },
-      {
-        fetchTranscriptOnly: async (input) => {
-          outputDir = input.outputDir;
-          return completedTranscriptOnly();
-        },
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(outputDir).toBe("/cli");
-  });
-
-  test("interactive digest setup can store a token and continue", async () => {
-    const prompts: string[] = [];
-    const logs: string[] = [];
-    const stored: string[] = [];
-    const seenApiKeys: string[] = [];
-    const answers = [
-      "1",
-      "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
-      "n",
-      "y",
-      "secret-key",
-      "y",
-    ];
-
-    const exitCode = await runCli(
-      [],
-      {
-        error: (message) => logs.push(`error:${message}`),
-        log: (message) => logs.push(message),
-        prompt: async (question) => {
-          prompts.push(question);
-          return answers.shift() ?? "";
-        },
-      },
-      {
-        credentialStore: fakeCredentialStore({ setKey: async (value) => { stored.push(value); } }),
-        env: {},
-        ingestVideo: async ({ summarizer }) => {
-          await summarizer.generateDigest({
-            transcript: transcriptFixture(),
-            transcriptQuality: usableQualityFixture(),
-            video: {
-              canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
-              videoId: "1ZgUcrR0K7I",
-            },
-          });
-          return completedIngestion();
-        },
-        summarizerFactory: (apiKey) => ({
-          generateDigest: async () => {
-            seenApiKeys.push(apiKey ?? "");
-            return digestDraftFixture();
-          },
-        }),
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(prompts).toEqual([
-      "What do you want to create? [1] Digest [2] Transcript only: ",
-      "YouTube URL: ",
-      "Create email preview? [y/N]: ",
-      "Paste API key now? [Y/n]: ",
-      "OpenCode API key: ",
-      "Save this key in macOS Keychain for future runs? [Y/n]: ",
-    ]);
-    expect(logs.join("\n")).toContain("Get an OpenCode API key:");
-    expect(logs.join("\n")).toContain("https://opencode.ai/zen");
-    expect(stored).toEqual(["secret-key"]);
-    expect(seenApiKeys).toEqual(["secret-key"]);
-    expect(logs.join("\n")).not.toContain("secret-key");
-  });
-
-  test("interactive digest setup can fall back to transcript only", async () => {
-    const prompts: string[] = [];
-    const transcriptCalls: string[] = [];
-    const answers = [
-      "1",
-      "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
-      "n",
-      "n",
-      "y",
-    ];
-
-    const exitCode = await runCli(
-      [],
-      {
-        error: () => {},
-        log: () => {},
-        prompt: async (question) => {
-          prompts.push(question);
-          return answers.shift() ?? "";
-        },
-      },
-      {
-        credentialStore: fakeCredentialStore({ storedKey: null }),
-        env: {},
-        fetchTranscriptOnly: async ({ video }) => {
-          transcriptCalls.push(video.videoId);
-          return completedTranscriptOnly();
-        },
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(prompts).toEqual([
-      "What do you want to create? [1] Digest [2] Transcript only: ",
-      "YouTube URL: ",
-      "Create email preview? [y/N]: ",
-      "Paste API key now? [Y/n]: ",
-      "Continue with transcript only instead? [Y/n]: ",
-    ]);
-    expect(transcriptCalls).toEqual(["1ZgUcrR0K7I"]);
+    expect(starts).toBe(0);
   });
 });
 
 function completedIngestion(): IngestVideoResult {
   return {
+    cleanText: "Hello from the transcript.\n",
     exitCode: 0,
     paths: {
       digestPath: "outputs/digests/1ZgUcrR0K7I.md",

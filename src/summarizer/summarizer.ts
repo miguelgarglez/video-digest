@@ -4,6 +4,7 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 
 export type SummarizerInput = {
+  signal?: AbortSignal;
   transcript: Transcript;
   transcriptQuality: TranscriptQuality;
   video: YouTubeVideo;

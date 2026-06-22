@@ -69,6 +69,14 @@ export type LibraryOpenTarget = {
   root: LibraryRootIdentity;
 };
 
+export type LibraryArtifactPreference = "digest" | "transcript";
+
+export type ResolvedLibraryArtifact = Readonly<{
+  item: LibraryEntry;
+  openPath: string;
+  openTarget: LibraryOpenTarget;
+}>;
+
 export type ResolvedLibraryEntry = {
   item: LibraryEntry;
   ok: true;
@@ -173,6 +181,34 @@ export async function resolveLibraryEntry(
 }
 
 /**
+ * Resolves an identifier to a validated artifact gathered from canonical Library
+ * metadata. Callers must hold the Artifact Library recovery lock for the entire
+ * resolution and subsequent read/open/reveal operation.
+ */
+export async function resolveLibraryArtifact(
+  outputDir: string,
+  videoId: string,
+  preference: LibraryArtifactPreference,
+  fileOperations: Partial<LibraryFileOperations> = {},
+): Promise<ResolvedLibraryArtifact> {
+  if (!VIDEO_ID_PATTERN.test(videoId)) {
+    throw new LibraryIntegrityError("Library target has an invalid Video ID.");
+  }
+  const item = (await listLibraryEntries(outputDir, fileOperations))
+    .find((candidate) => candidate.videoId === videoId);
+  if (!item) throw new LibraryIntegrityError(`Library Entry ${videoId} was not found.`);
+
+  const openPath = preference === "transcript"
+    ? item.paths.transcriptMarkdownPath ?? item.paths.digestPath
+    : item.paths.digestPath ?? item.paths.transcriptMarkdownPath;
+  const openTarget = openPath ? entryOpenTargets.get(item)?.get(openPath) : undefined;
+  if (!openPath || !openTarget) {
+    throw new LibraryIntegrityError(`Library Entry ${videoId} has no readable human artifact.`);
+  }
+  return { item, openPath, openTarget };
+}
+
+/**
  * Revalidates the selected inode immediately before a path-based system opener is
  * invoked. A same-user process can still replace the path in the syscall-sized gap
  * between this check and `open(1)`; macOS does not offer an fd-based Finder opener.
@@ -186,6 +222,25 @@ export async function revalidateLibraryOpenTarget(
   await assertFileIdentity(target.path, target.root, target.fileIdentity, operations);
   await inspectOpenFile(target.path, target.fileIdentity, operations, async () => undefined);
   await assertLibraryRootIdentity(target.root, operations);
+}
+
+/** Reads the already-resolved inode through O_NOFOLLOW after full identity checks. */
+export async function readLibraryOpenTarget(
+  target: LibraryOpenTarget,
+  fileOperations: Partial<LibraryFileOperations> = {},
+): Promise<string> {
+  const operations = { ...defaultFileOperations, ...fileOperations };
+  await assertDirectoryIdentity(target.parentPath, target.root, target.parentIdentity, operations);
+  await assertFileIdentity(target.path, target.root, target.fileIdentity, operations);
+  await assertLibraryRootIdentity(target.root, operations);
+  const contents = await inspectOpenFile(
+    target.path,
+    target.fileIdentity,
+    operations,
+    (handle) => handle.readFile({ encoding: "utf8" }),
+  );
+  await assertLibraryRootIdentity(target.root, operations);
+  return contents;
 }
 
 async function readLibraryEntry(

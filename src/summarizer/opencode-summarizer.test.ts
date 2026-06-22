@@ -6,6 +6,22 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 
 describe("OpenCodeSummarizer", () => {
+  test("forwards cancellation to the provider request", async () => {
+    const abort = new AbortController();
+    let received: AbortSignal | null | undefined;
+    const summarizer = new OpenCodeSummarizer({
+      apiKey: "test-key",
+      fetch: async (_url, init) => {
+        received = init?.signal;
+        return Response.json({ output_text: JSON.stringify(digestDraft()) });
+      },
+    });
+
+    await summarizer.generateDigest({ ...input(), signal: abort.signal });
+
+    expect(received).toBe(abort.signal);
+  });
+
   test("fails before provider call when API key is missing", async () => {
     let called = false;
     const fetch: FetchLike = async () => {

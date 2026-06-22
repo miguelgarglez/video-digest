@@ -35,5 +35,5 @@ export class TranscriptSourceError extends Error {
 }
 
 export type TranscriptSource = {
-  fetch(video: YouTubeVideo): Promise<Transcript>;
+  fetch(video: YouTubeVideo, options?: { signal?: AbortSignal }): Promise<Transcript>;
 };

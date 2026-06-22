@@ -17,7 +17,10 @@ export type CommandResult = {
   stdout: string;
 };
 
-export type CommandRunner = (command: string[], options: { cwd: string }) => Promise<CommandResult>;
+export type CommandRunner = (
+  command: string[],
+  options: { cwd: string; signal?: AbortSignal },
+) => Promise<CommandResult>;
 
 export type PythonYoutubeTranscriptSourceOptions = {
   pythonDir?: string;
@@ -49,10 +52,11 @@ export class PythonYoutubeTranscriptSource implements TranscriptSource {
     this.sidecarScript = options.sidecarScript ?? resources.sidecarScript;
   }
 
-  async fetch(video: YouTubeVideo): Promise<Transcript> {
+  async fetch(video: YouTubeVideo, options: { signal?: AbortSignal } = {}): Promise<Transcript> {
+    options.signal?.throwIfAborted();
     const result = await this.runner(
       [this.runtimePython, this.sidecarScript, video.videoId],
-      { cwd: this.pythonDir },
+      { cwd: this.pythonDir, ...(options.signal ? { signal: options.signal } : {}) },
     );
 
     if (result.exitCode !== 0) {
@@ -129,9 +133,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function runCommand(command: string[], options: { cwd: string }): Promise<CommandResult> {
+async function runCommand(
+  command: string[],
+  options: { cwd: string; signal?: AbortSignal },
+): Promise<CommandResult> {
   const process = Bun.spawn(command, {
     cwd: options.cwd,
+    signal: options.signal,
     stderr: "pipe",
     stdout: "pipe",
   });

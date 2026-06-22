@@ -34,6 +34,29 @@ function readyModel(overrides: Partial<Model> = {}): Model {
 }
 
 describe("native OpenTUI adapter", () => {
+  test("prints through a suspend/write/resume scrollback transaction", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 60 });
+    const writes: string[] = [];
+    const lifecycle: string[] = [];
+    const suspend = setup.renderer.suspend.bind(setup.renderer);
+    const resume = setup.renderer.resume.bind(setup.renderer);
+    setup.renderer.suspend = () => { lifecycle.push("suspend"); suspend(); };
+    setup.renderer.resume = () => { lifecycle.push("resume"); resume(); };
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, {
+      env: { NO_COLOR: "1" },
+      writeExternal: (text) => { lifecycle.push("write"); writes.push(text); },
+    });
+
+    try {
+      facade.print("Clean transcript");
+      expect(lifecycle).toEqual(["suspend", "write", "resume"]);
+      expect(writes).toEqual(["Clean transcript\n"]);
+    } finally {
+      facade.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
   test("edits and submits a secret without putting real characters in renderables or spans", async () => {
     const setup = await createTestRenderer({ height: 20, kittyKeyboard: true, width: 70 });
     const events: Event[] = [];

@@ -6,6 +6,26 @@ import { fetchTranscriptOnly } from "./transcript-only";
 import type { Transcript } from "../transcript/transcript-source";
 
 describe("fetchTranscriptOnly", () => {
+  test("stops before writing when cancellation reaches metadata enrichment", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-cancel-"));
+    const abort = new AbortController();
+    const pending = fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          abort.abort(new Error("cancelled"));
+          throw abort.signal.reason;
+        },
+      },
+      outputDir,
+      signal: abort.signal,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    await expect(pending).rejects.toThrow("cancelled");
+    await expect(readFile(join(outputDir, "metadata", `${video.videoId}.json`), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   test("fetches transcript, scores quality, and writes transcript artifacts", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
     const progressStages: string[] = [];

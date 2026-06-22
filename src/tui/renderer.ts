@@ -22,6 +22,8 @@ export type RenderFrame = Readonly<{
 export interface OpenTuiFacade {
   dimensions: { height: number; width: number };
   destroy(): void;
+  /** Write durable output to terminal scrollback without corrupting full-screen state. */
+  print(text: string): void;
   render(frame: RenderFrame): void;
 }
 
@@ -136,6 +138,7 @@ function inputEvent(model: Model, value: string): Event | null {
 export type CreateOpenTuiFacadeOptions = Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
   ownsRenderer?: boolean;
+  writeExternal?(text: string): void;
 }>;
 
 /**
@@ -173,6 +176,7 @@ function bindOpenTuiFacade(
 ): OpenTuiFacade {
   const theme = createTheme(options.env ?? process.env);
   const ownsRenderer = options.ownsRenderer ?? false;
+  const writeExternal = options.writeExternal ?? ((text: string) => { process.stdout.write(text); });
   let destroyed = false;
   let currentRoot: Renderable | null = null;
   let currentFrame: RenderFrame | null = null;
@@ -211,6 +215,16 @@ function bindOpenTuiFacade(
         currentRoot = null;
       } finally {
         if (ownsRenderer) renderer.destroy();
+      }
+    },
+    print(text) {
+      if (destroyed) throw new Error("The terminal renderer is unavailable.");
+      renderer.suspend();
+      try {
+        writeExternal(text.endsWith("\n") ? text : `${text}\n`);
+      } finally {
+        renderer.resume();
+        renderer.requestRender();
       }
     },
     render(frame) {

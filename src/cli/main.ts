@@ -75,6 +75,7 @@ export type CliDependencies = {
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
+  startTui?: () => Promise<number>;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
 };
 
@@ -89,7 +90,17 @@ export async function runCli(
   dependencies: CliDependencies = {},
 ): Promise<number> {
   try {
-    const result = await resolveCliOptions(args, io);
+    if (args.length === 0) {
+      if (io.isTTY !== true) {
+        printHelp(io);
+        return 1;
+      }
+      if (dependencies.startTui) return await dependencies.startTui();
+      const { startTui } = await import("../tui/start");
+      return await startTui({ onError: io.error });
+    }
+
+    const result = parseCliArgs(args);
 
     if (!result.ok) {
       if (args.includes("--json")) {
@@ -427,7 +438,7 @@ const HELP_TEXT = [
   "  --help, -h       Show this help message.",
   "",
   "Interactive mode:",
-  "  Run without arguments to choose Digest or Transcript only.",
+  "  Run without arguments in a terminal to open the guided interface.",
   "",
   "Environment:",
   "  OPENCODE_API_KEY      Required for digest generation with ingest.",
@@ -492,33 +503,6 @@ const defaultCliIO: CliIO = {
 if (import.meta.main) {
   const exitCode = await runCli(Bun.argv.slice(2));
   process.exit(exitCode);
-}
-
-async function resolveCliOptions(args: string[], io: CliIO): Promise<ReturnType<typeof parseCliArgs>> {
-  const parsed = parseCliArgs(args);
-
-  if (parsed.ok || parsed.error.code !== "missing-url" || !io.prompt || args.includes("--json")) {
-    return parsed;
-  }
-
-  const mode = (await io.prompt("What do you want to create? [1] Digest [2] Transcript only: ")).trim();
-  const url = (await io.prompt("YouTube URL: ")).trim();
-  const outputDirIndex = args.indexOf("--output-dir");
-  const outputDirArgs = outputDirIndex === -1
-    ? []
-    : ["--output-dir", args[outputDirIndex + 1]!];
-  const sharedArgs = args.includes("--json") ? ["--json"] : [];
-
-  if (mode === "2" || mode.toLowerCase() === "transcript") {
-    const presentationArgs = ["--copy", "--open", "--stdout"].filter((flag) => args.includes(flag));
-    return parseCliArgs(["transcript", url, ...presentationArgs, ...sharedArgs, ...outputDirArgs]);
-  }
-
-  const emailPreview = args.includes("--email-preview") || isAffirmative(
-    await io.prompt("Create email preview? [y/N]: "),
-  );
-
-  return parseCliArgs(["ingest", url, ...(emailPreview ? ["--email-preview"] : []), ...sharedArgs, ...outputDirArgs]);
 }
 
 async function runConfigCommand(

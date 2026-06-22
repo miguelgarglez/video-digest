@@ -11,6 +11,25 @@ const video = {
 };
 
 describe("PythonYoutubeTranscriptSource", () => {
+  test("forwards cancellation to the managed sidecar process", async () => {
+    const abort = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const source = new PythonYoutubeTranscriptSource({
+      runner: async (_command, options) => {
+        receivedSignal = options.signal;
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify({ segments: [], source: "youtube-transcript-api", videoId: video.videoId }),
+        };
+      },
+    });
+
+    await source.fetch(video, { signal: abort.signal });
+
+    expect(receivedSignal).toBe(abort.signal);
+  });
+
   test("invokes the managed interpreter directly with packaged paths", async () => {
     let invocation: { command: string[]; cwd: string } | undefined;
     const runner: CommandRunner = async (command, options) => {

@@ -54,6 +54,7 @@ export class OpenCodeSummarizer implements Summarizer {
         "Content-Type": "application/json",
       },
       method: "POST",
+      signal: input.signal,
     });
 
     if (!response.ok) {

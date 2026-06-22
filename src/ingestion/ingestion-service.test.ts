@@ -175,6 +175,7 @@ async function completedResult(outputDir: string): Promise<IngestVideoResult> {
   );
 
   return {
+    cleanText: "Hello from the transcript.\n",
     exitCode: 0,
     paths: {
       digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),

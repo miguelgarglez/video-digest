@@ -82,6 +82,27 @@ describe("YouTubeOEmbedMetadataSource", () => {
     expect(abortSignal?.aborted).toBe(true);
     expect(clearedHandle).toBe(timerHandle);
   });
+
+  test("combines caller cancellation with the bounded request", async () => {
+    const caller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const source = new YouTubeOEmbedMetadataSource(
+      async (_request, init) => new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined;
+          requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), { once: true });
+        }),
+      { timer: { cancel: () => undefined, schedule: () => Symbol("unused-timeout") } },
+    );
+
+    const pending = fetchVideoMetadataBestEffort(source, video, { signal: caller.signal });
+    caller.abort();
+
+    expect(await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(() => resolve("still-pending"), 20)),
+    ])).toEqual({ channel: null, title: null });
+    expect(requestSignal?.aborted).toBe(true);
+  });
 });
 
 const video: YouTubeVideo = {

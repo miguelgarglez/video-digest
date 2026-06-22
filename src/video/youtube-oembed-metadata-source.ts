@@ -37,7 +37,7 @@ export class YouTubeOEmbedMetadataSource implements VideoMetadataSource {
     this.timer = options.timer ?? defaultTimer;
   }
 
-  async fetch(video: YouTubeVideo): Promise<VideoMetadata> {
+  async fetch(video: YouTubeVideo, options: { signal?: AbortSignal } = {}): Promise<VideoMetadata> {
     const endpoint = new URL("https://www.youtube.com/oembed");
     endpoint.search = new URLSearchParams({
       format: "json",
@@ -45,6 +45,9 @@ export class YouTubeOEmbedMetadataSource implements VideoMetadataSource {
     }).toString();
 
     const controller = new AbortController();
+    const cancelFromCaller = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", cancelFromCaller, { once: true });
+    if (options.signal?.aborted) cancelFromCaller();
     const timeoutHandle = this.timer.schedule(() => {
       controller.abort(new Error(`YouTube oEmbed timed out after ${this.timeoutMs}ms`));
     }, this.timeoutMs);
@@ -62,6 +65,7 @@ export class YouTubeOEmbedMetadataSource implements VideoMetadataSource {
         title: normalizedOptionalText(payload.title),
       };
     } finally {
+      options.signal?.removeEventListener("abort", cancelFromCaller);
       this.timer.cancel(timeoutHandle);
     }
   }

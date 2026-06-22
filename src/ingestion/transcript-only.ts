@@ -17,6 +17,7 @@ export type FetchTranscriptOnlyInput = {
   metadataSource?: VideoMetadataSource;
   onProgress?: (event: IngestionProgressEvent) => void;
   outputDir: string;
+  signal?: AbortSignal;
   transcriptSource: TranscriptSource;
   video: YouTubeVideo;
 };
@@ -33,8 +34,9 @@ export async function fetchTranscriptOnly(
   input: FetchTranscriptOnlyInput,
 ): Promise<FetchTranscriptOnlyResult> {
   emitProgress(input, "fetching-transcript");
-  const transcript = await input.transcriptSource.fetch(input.video);
-  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video);
+  const transcript = await input.transcriptSource.fetch(input.video, { signal: input.signal });
+  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video, { signal: input.signal });
+  input.signal?.throwIfAborted();
 
   emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);

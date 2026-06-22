@@ -8,6 +8,31 @@ import type { Transcript, TranscriptSource } from "../transcript/transcript-sour
 import type { YouTubeVideo } from "../video/youtube-url";
 
 describe("ingestVideo", () => {
+  test("stops before summarization and writes when cancellation reaches metadata enrichment", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-cancel-"));
+    const abort = new AbortController();
+    let summarizerCalls = 0;
+    const pending = ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          abort.abort(new Error("cancelled"));
+          throw abort.signal.reason;
+        },
+      },
+      outputDir,
+      signal: abort.signal,
+      summarizer: {
+        async generateDigest() { summarizerCalls += 1; return fakeDigestDraft(); },
+      },
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(summarizerCalls).toBe(0);
+  });
+
   test("writes outputs for usable transcripts", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
     const progressStages: string[] = [];
@@ -26,6 +51,7 @@ describe("ingestVideo", () => {
     if (result.status === "completed") {
       expect(result.paths.emailPreviewPath).toBe(join(outputDir, "emails", "1ZgUcrR0K7I.md"));
       expect(await readFile(result.paths.digestPath, "utf8")).toContain("# Useful Digest");
+      expect(result.cleanText).toBe(await readFile(result.paths.transcriptTextPath, "utf8"));
     }
     expect(progressStages).toEqual([
       "fetching-transcript",

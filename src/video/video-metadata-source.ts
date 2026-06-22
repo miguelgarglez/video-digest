@@ -6,7 +6,7 @@ export type VideoMetadata = {
 };
 
 export interface VideoMetadataSource {
-  fetch(video: YouTubeVideo): Promise<VideoMetadata>;
+  fetch(video: YouTubeVideo, options?: { signal?: AbortSignal }): Promise<VideoMetadata>;
 }
 
 export const EMPTY_VIDEO_METADATA: VideoMetadata = {
@@ -17,11 +17,12 @@ export const EMPTY_VIDEO_METADATA: VideoMetadata = {
 export async function fetchVideoMetadataBestEffort(
   source: VideoMetadataSource | undefined,
   video: YouTubeVideo,
+  options: { signal?: AbortSignal } = {},
 ): Promise<VideoMetadata> {
   if (!source) return EMPTY_VIDEO_METADATA;
 
   try {
-    return await source.fetch(video);
+    return await source.fetch(video, options);
   } catch {
     return EMPTY_VIDEO_METADATA;
   }

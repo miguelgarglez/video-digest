@@ -13,12 +13,14 @@ import {
   fetchVideoMetadataBestEffort,
   type VideoMetadataSource,
 } from "../video/video-metadata-source";
+import { renderTranscriptText } from "../output/transcript-renderer";
 
 export type IngestVideoInput = {
   emailPreview: boolean;
   metadataSource?: VideoMetadataSource;
   onProgress?: (event: IngestionProgressEvent) => void;
   outputDir: string;
+  signal?: AbortSignal;
   summarizer: Summarizer;
   transcriptSource: TranscriptSource;
   video: YouTubeVideo;
@@ -39,6 +41,7 @@ export type IngestionProgressEvent = {
 
 export type IngestVideoResult =
   | {
+      cleanText: string;
       exitCode: 0;
       paths: IngestionOutputPaths;
       status: "completed";
@@ -53,8 +56,9 @@ export type IngestVideoResult =
 
 export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoResult> {
   emitProgress(input, "fetching-transcript");
-  const transcript = await input.transcriptSource.fetch(input.video);
-  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video);
+  const transcript = await input.transcriptSource.fetch(input.video, { signal: input.signal });
+  const metadata = await fetchVideoMetadataBestEffort(input.metadataSource, input.video, { signal: input.signal });
+  input.signal?.throwIfAborted();
 
   emitProgress(input, "scoring-transcript");
   const transcriptQuality = scoreTranscriptQuality(transcript);
@@ -81,15 +85,17 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   }
 
   emitProgress(input, "generating-digest");
-  const digest = createDigest(
-    await input.summarizer.generateDigest({
-      transcript,
-      transcriptQuality,
-      video: input.video,
-    }),
-  );
+  const draft = await input.summarizer.generateDigest({
+    signal: input.signal,
+    transcript,
+    transcriptQuality,
+    video: input.video,
+  });
+  input.signal?.throwIfAborted();
+  const digest = createDigest(draft);
 
   emitProgress(input, "writing-outputs");
+  const cleanText = renderTranscriptText(transcript);
   const paths = await writeIngestionOutputs({
     digest,
     emailPreview: input.emailPreview,
@@ -103,6 +109,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   emitProgress(input, "completed");
 
   return {
+    cleanText,
     exitCode: 0,
     paths,
     status: "completed",
