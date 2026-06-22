@@ -154,6 +154,33 @@ describe("native OpenTUI adapter", () => {
     }
   });
 
+  test("scrolls a minimum-size reader to its complete tail while retaining the footer", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 60 });
+    const content = `${Array.from({ length: 40 }, (_, index) => `Reader line ${index + 1}`).join("\n")}\nTAIL-SENTINEL`;
+    const model = readyModel({
+      reader: { content, displayPath: "transcripts/abc123_DEF4.md", title: "Reader" },
+      readerOrigin: "library",
+      screen: "reader",
+    });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
+    const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
+
+    try {
+      tui.render(model);
+      await setup.flush();
+      expect(setup.captureCharFrame()).not.toContain("TAIL-SENTINEL");
+
+      setup.mockInput.pressKey("END");
+      await setup.flush();
+      const tail = setup.captureCharFrame();
+      expect(tail).toContain("TAIL-SENTINEL");
+      expect(tail).toContain("Esc Back");
+    } finally {
+      tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
   test("uses renderer default color intents under NO_COLOR", async () => {
     const setup = await createTestRenderer({ height: 18, width: 60 });
     const model = readyModel();

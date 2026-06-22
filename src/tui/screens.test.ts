@@ -148,10 +148,34 @@ describe("buildScreenView", () => {
 
     expect(view).toMatchObject({
       body: ["# Heading\n\nBody"],
+      bodyKind: "document",
       focus: "body",
       scrollable: true,
       title: "Example title",
     });
+  });
+
+  test("reader preserves complete sanitized document content without display truncation", () => {
+    const source = [
+      `Long ${"x".repeat(500)}`,
+      "second line",
+      "before\u001b[31mred\u001b[0mafter\u202Eunsafe\u202C",
+      "TAIL",
+    ].join("\n");
+    const view = buildScreenView(readyModel({
+      reader: { content: source, displayPath: "entry.md", title: "Entry" },
+      readerOrigin: "library",
+      screen: "reader",
+    }), { height: 18, width: 60 });
+
+    expect(view.bodyKind).toBe("document");
+    expect(view.body.join("\n")).toBe([
+      `Long ${"x".repeat(500)}`,
+      "second line",
+      "beforeredafterunsafe",
+      "TAIL",
+    ].join("\n"));
+    expect(view.body.join("\n")).not.toContain("…");
   });
 
   test("library lists sanitized entries and a clear empty state", () => {

@@ -21,6 +21,7 @@ export const TUI_COPY = Object.freeze({
 
 export type ScreenFocus = "body" | "input" | "none" | "options";
 export type ScreenStatusTone = "error" | "info" | "pending" | "success";
+export type ScreenBodyKind = "document" | "summary";
 
 export type ScreenInput = Readonly<{
   disabled: boolean;
@@ -56,6 +57,7 @@ export type ScreenAction =
 export type ScreenView = Readonly<{
   actions: readonly ScreenAction[];
   body: readonly string[];
+  bodyKind: ScreenBodyKind;
   focus: ScreenFocus;
   footer: string;
   input: ScreenInput | null;
@@ -74,6 +76,7 @@ export type ScreenDimensions = Readonly<{ height: number; width: number }>;
 type MutableView = {
   actions?: ScreenAction[];
   body?: string[];
+  bodyKind?: ScreenBodyKind;
   focus?: ScreenFocus;
   footer?: string;
   input?: Omit<ScreenInput, "disabled">;
@@ -104,7 +107,10 @@ export function buildScreenView(model: Model, dimensions?: ScreenDimensions): Sc
 
   return Object.freeze({
     actions: Object.freeze(source.actions ?? []),
-    body: Object.freeze((source.body ?? []).map((text) => sanitizeDisplayText(text, lineLimit))),
+    body: Object.freeze((source.body ?? []).map((text) => source.bodyKind === "document"
+      ? sanitizeTerminalText(text)
+      : sanitizeSummaryText(text, lineLimit))),
+    bodyKind: source.bodyKind ?? "summary",
     focus,
     footer: source.footer ?? defaultFooter(focus),
     input,
@@ -176,6 +182,7 @@ function viewForScreen(model: Model): MutableView {
     case "reader":
       return {
         body: model.reader ? [model.reader.content] : ["The artifact could not be loaded."],
+        bodyKind: "document",
         focus: "body",
         footer: TUI_COPY.footer.reader,
         keys: [
@@ -331,6 +338,7 @@ function smallTerminalView(): ScreenView {
     body: Object.freeze([
       `Video Digest needs at least ${MIN_TERMINAL_SIZE.width}×${MIN_TERMINAL_SIZE.height} characters. Enlarge the terminal to continue.`,
     ]),
+    bodyKind: "summary",
     focus: "none",
     footer: TUI_COPY.footer.quit,
     input: null,
@@ -361,7 +369,7 @@ function sanitizeLine(value: string): string {
   return sanitizeTerminalText(value).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function sanitizeDisplayText(value: string, limit: number): string {
+function sanitizeSummaryText(value: string, limit: number): string {
   return sanitizeTerminalText(value)
     .split(/\r?\n/)
     .map((line) => boundLine(line, limit))
