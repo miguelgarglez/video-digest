@@ -8,6 +8,7 @@ import {
   type ScreenBodyLink,
   type ScreenStatusTone,
   type ScreenView,
+  sanitizeTerminalText,
 } from "./screens";
 import { createTheme, type TuiTheme } from "./theme";
 
@@ -429,17 +430,33 @@ function renderBodyContent(
   links: readonly ScreenBodyLink[],
   hyperlinks: boolean,
 ): string | import("@opentui/core").StyledText {
-  if (!hyperlinks || links.length === 0) return lines.join("\n");
+  const safeLines = lines.map(sanitizeTerminalText);
+  if (!hyperlinks || links.length === 0) return safeLines.join("\n");
 
   const linksByText = new Map(links.map((bodyLink) => [bodyLink.text, bodyLink.url]));
-  const chunks = lines.flatMap((line, index) => {
+  const chunks = safeLines.flatMap((line, index) => {
     const url = linksByText.get(line);
-    const lineChunks = url ? [core.link(url)(line)] : core.stringToStyledText(line).chunks;
-    return index === lines.length - 1
+    const lineChunks = url && isSafeHttpsLink(url) && !hasControlCharacters(line)
+      ? [core.link(url)(line)]
+      : core.stringToStyledText(line).chunks;
+    return index === safeLines.length - 1
       ? lineChunks
       : [...lineChunks, ...core.stringToStyledText("\n").chunks];
   });
   return new core.StyledText(chunks);
+}
+
+function isSafeHttpsLink(value: string): boolean {
+  if (hasControlCharacters(value)) return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001F\u007F-\u009F]/u.test(value);
 }
 
 function isTerminalExitKey(key: KeyEvent): boolean {

@@ -6,8 +6,8 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "graphem
 
 export const TUI_COPY = Object.freeze({
   agentSkill: {
-    install: "gh skill install miguelgarglez/personal-video-digest video-digest",
-    preview: "gh skill preview miguelgarglez/personal-video-digest video-digest",
+    install: "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
+    preview: "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
     source: "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md",
   },
   footer: {
@@ -238,7 +238,7 @@ function viewForScreen(model: Model): MutableView {
         ],
         body: [
           "Review the skill before installing it.",
-          "Preview feature; unavailable in some gh versions.",
+          "Requires a gh version with gh skill; some versions do not include it.",
           "The TUI copies commands; it never runs them.",
           TUI_COPY.agentSkill.source,
           TUI_COPY.agentSkill.preview,

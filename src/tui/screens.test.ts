@@ -239,15 +239,15 @@ describe("buildScreenView", () => {
     });
 
     const skill = buildScreenView(readyModel({ screen: "agent-skill" }));
-    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest";
-    const install = "gh skill install miguelgarglez/personal-video-digest video-digest";
+    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
+    const install = "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
     const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
     expect(skill.body).toContain(preview);
     expect(skill.body).toContain(install);
     expect(skill.body).toContain(source);
     expect(skill.body.join(" ")).toContain("Review the skill before installing it");
-    expect(skill.body.join(" ")).toContain("Preview feature");
-    expect(skill.body.join(" ")).toContain("unavailable in some gh versions");
+    expect(skill.body.join(" ")).toContain("Requires a gh version with gh skill");
+    expect(skill.body.join(" ")).toContain("some versions do not include it");
     expect(skill.body.join(" ")).toContain("never runs");
     expect(skill.bodyLinks).toEqual([{ text: source, url: source }]);
     expect(skill.actions).toEqual([

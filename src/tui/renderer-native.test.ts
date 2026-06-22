@@ -4,6 +4,7 @@ import { CliRenderEvents, SelectRenderable, TextRenderable, type Renderable } fr
 import type { LibraryEntry } from "../cli/artifacts";
 import { initialModel, type Event, type Model, type ResultData } from "./model";
 import { createOpenTuiFacadeFromRenderer, createTuiRenderer } from "./renderer";
+import { buildScreenView } from "./screens";
 
 const entry: LibraryEntry = {
   channel: "Example Channel",
@@ -100,6 +101,46 @@ describe("native OpenTUI adapter", () => {
       );
     } finally {
       tui.destroy();
+      setup.renderer.destroy();
+    }
+  });
+
+  test("renders unsafe link targets as plain text without OSC 8 metadata", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 120 });
+    setRendererCapabilities(setup.renderer, { hyperlinks: true });
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
+    const rawText = "raw\u001b]8;;https://evil.invalid\u0007 text\nnext";
+    const view = {
+      ...buildScreenView(readyModel({ screen: "agent-skill" })),
+      body: ["javascript link", "escape link", "newline link", "C1 link", rawText],
+      bodyLinks: [
+        { text: "javascript link", url: "javascript:alert(1)" },
+        { text: "escape link", url: "https://example.invalid/\u001b]8;;https://evil.invalid\u0007" },
+        { text: "newline link", url: "https://example.invalid/\nnext" },
+        { text: "C1 link", url: "https://example.invalid/\u009b31m" },
+        { text: rawText, url: "https://example.invalid/safe-target" },
+      ],
+    };
+
+    try {
+      facade.render({
+        onKey: () => false,
+        onResize: () => undefined,
+        onSelect: async () => undefined,
+        onSubmit: async () => undefined,
+        view,
+      });
+      await setup.flush();
+
+      const body = setup.renderer.root.findDescendantById("screen-reader-content");
+      expect(body).toBeInstanceOf(TextRenderable);
+      expect((body as TextRenderable).content.chunks.every((chunk) => chunk.link === undefined)).toBe(true);
+      expect((body as TextRenderable).content.chunks.map((chunk) => chunk.text).join(""))
+        .toBe("javascript link\nescape link\nnewline link\nC1 link\nraw text\nnext");
+      expect(setup.captureCharFrame()).toContain("javascript link");
+      expect(setup.captureCharFrame()).not.toContain("evil.invalid");
+    } finally {
+      facade.destroy();
       setup.renderer.destroy();
     }
   });

@@ -287,9 +287,13 @@ modifies an agent host.
 Documentation shows a review-first flow using GitHub CLI and a manual fallback:
 
 ```text
-gh skill preview miguelgarglez/personal-video-digest video-digest
-gh skill install miguelgarglez/personal-video-digest video-digest
+gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
+gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
 ```
+
+The flag is required because the canonical skill lives under the hidden `.agents`
+directory. These commands require a GitHub CLI version that includes the preview
+`gh skill` feature; Video Digest never installs or updates GitHub CLI.
 
 The skill instructs an agent to:
 

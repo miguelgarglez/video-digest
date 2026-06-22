@@ -245,13 +245,15 @@ The prepared `0.1.0` release will also contain a portable, independently install
 Review the source first, then copy the command you intend to run:
 
 ```bash
-gh skill preview miguelgarglez/personal-video-digest video-digest
-gh skill install miguelgarglez/personal-video-digest video-digest
+gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
+gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
 ```
 
-`gh skill` is a GitHub CLI preview feature and may not be available in every GitHub
-CLI version. The TUI only displays and copies these commands; it never runs them.
-Package installation also never modifies an agent host.
+The `.agents` directory is hidden, so both commands require `--allow-hidden-dirs`.
+Use a GitHub CLI version that includes `gh skill`; some versions do not provide this
+preview feature. Video Digest never installs or updates GitHub CLI. The TUI only
+displays and copies these commands; it never runs them. Package installation also
+never modifies an agent host.
 
 ## Privacy and security
 

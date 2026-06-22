@@ -11,6 +11,25 @@ const HOSTILE_PATH = "/tmp/video-$('injected')\nnext";
 const HOSTILE_TARGET = "latest';printf injected";
 
 describe("portable Video Digest agent skill", () => {
+  test("documents review-first discovery of the hidden skill directory", async () => {
+    const [readme, specification, plan] = await Promise.all([
+      readFile("README.md", "utf8"),
+      readFile("docs/superpowers/specs/2026-06-18-video-digest-public-cli-design.md", "utf8"),
+      readFile("docs/superpowers/plans/2026-06-18-cli-docs-agent-skill.md", "utf8"),
+    ]);
+    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
+    const install = "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
+
+    for (const document of [readme, specification, plan]) {
+      expect(document).toContain(preview);
+      expect(document).toContain(install);
+      expect(document).not.toMatch(/^gh skill (?:preview|install) .* video-digest$/m);
+    }
+    expect(readme).toContain("https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md");
+    expect(readme).toMatch(/GitHub CLI version that includes `gh skill`/);
+    expect(readme).toMatch(/never (?:installs|updates).*GitHub CLI/i);
+  });
+
   test("is portable, review-first, and requires explicit human consent for setup", async () => {
     const [skill, contracts, metadata] = await Promise.all([
       readFile(SKILL_PATH, "utf8"),
