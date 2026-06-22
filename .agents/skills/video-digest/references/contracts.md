@@ -2,22 +2,31 @@
 
 Always pass `--json`, inspect the process exit status, require the exact documented `schemaVersion`, and then validate fields for that command. Reject an unknown schemaVersion instead of guessing. Do not parse stderr; it contains diagnostics for humans.
 
+## Invocation safety
+
+Use a process or tool API and pass dynamic values as distinct argv elements. In the patterns below, `userSuppliedUrl`, `userSuppliedPath`, and `requestedTarget` each represent one unmodified string element, regardless of punctuation or newlines. Never concatenate a command string.
+
+If forced to use shell text, require a proven POSIX shell-escaping function or tool for every dynamic argument. Do not hand-roll quoting or rely on surrounding single or double quotes; preferably stop and request a safer execution surface. Never construct an environment assignment from a raw value.
+
+Read `openPath` or another returned artifact path through a filesystem read tool's path parameter. Never use `cat`, `open`, shell redirection, or execution.
+
 ## Commands and schemas
 
-| Intent | Invocation | Success schema and fields |
+| Intent | Static invocation or argv pattern | Success schema and fields |
 | --- | --- | --- |
 | Diagnose | `video-digest doctor --json` | `doctor-report.v0`: `ok`, `checks[]`; no top-level `status` |
 | Prepare runtime, after human approval only | `video-digest setup --yes --json` | `setup-result.v0`: `status: "ready"` |
-| Retrieve Transcript | `video-digest transcript '<youtube-url>' --json` | `cli-result.v0`: `status`, `videoId`, `canonicalUrl`, `transcriptQuality`, `paths` |
-| Create Digest | `video-digest ingest '<youtube-url>' --json` | `cli-result.v0`: completed results have `status`, `videoId`, `canonicalUrl`, `transcriptQuality`, `paths` |
+| Retrieve Transcript | `["video-digest", "transcript", userSuppliedUrl, "--json"]` | `cli-result.v0`: `status`, `videoId`, `canonicalUrl`, `transcriptQuality`, `paths` |
+| Create Digest | `["video-digest", "ingest", userSuppliedUrl, "--json"]` | `cli-result.v0`: completed results have `status`, `videoId`, `canonicalUrl`, `transcriptQuality`, `paths` |
 | List Library | `video-digest list --json` | `library-list.v0`: `items[]`; no top-level `status` or `paths` |
-| Resolve an artifact | `video-digest open <latest-or-video-id> --json` | `open-result.v0`: Library Entry fields plus `openPath`; no `status` on success and no application is opened |
+| List another Library | `["video-digest", "list", "--output-dir", userSuppliedPath, "--json"]` | `library-list.v0` |
+| Resolve an artifact | `["video-digest", "open", requestedTarget, "--json"]` | `open-result.v0`: Library Entry fields plus `openPath`; no `status` on success and no application is opened |
 | Inspect configuration | `video-digest config get --json` | `config-status.v0`: `artifactLibrary`, credential presence/source only |
-| Save output location | `video-digest config set output-dir '<path>' --json` | `config-result.v0`: `status: "saved"`, `artifactLibrary` |
+| Save output location | `["video-digest", "config", "set", "output-dir", userSuppliedPath, "--json"]` | `config-result.v0`: `status: "saved"`, `artifactLibrary` |
 
-`ingest`, `transcript`, `list`, and `open` may add `--output-dir '<path>'` for a single invocation. Do not combine JSON mode with Transcript presentation flags.
+`ingest`, `transcript`, `list`, and `open` may receive `--output-dir` followed by `userSuppliedPath` as two distinct argv elements. Do not combine JSON mode with Transcript presentation flags.
 
-There is no output-location unset command. Change the saved location by running `video-digest config set output-dir '<path>' --json` with user authorization.
+There is no output-location unset command. Change it with the save-output-location argv pattern after user authorization.
 
 Credential changes are private, user-only interactions. Ask the user to run `video-digest config set opencode-api-key` or `video-digest config unset opencode-api-key` in their own terminal. The agent must not invoke these commands, request the value, or observe the interaction.
 
