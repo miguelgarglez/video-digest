@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -418,6 +418,62 @@ describe("bounded command execution", () => {
     } catch (error) {
       expect(String(error)).toContain("Command output exceeded limit");
       expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  test("kills a detached descendant before returning from a bounded timeout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-process-group-tests-"));
+    const marker = join(root, "descendant-survived");
+    const ready = join(root, "descendant-ready");
+    const groupPidFile = join(root, "group.pid");
+    const childPidFile = join(root, "child.pid");
+    const childProgram = [
+      'const { writeFileSync } = require("node:fs");',
+      'process.on("SIGTERM", () => {});',
+      `writeFileSync(${JSON.stringify(ready)}, "ready");`,
+      `setTimeout(() => writeFileSync(${JSON.stringify(marker)}, "survived"), 500);`,
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    const parentProgram = [
+      'const { writeFileSync } = require("node:fs");',
+      'const { spawn } = require("node:child_process");',
+      `writeFileSync(${JSON.stringify(groupPidFile)}, String(process.pid));`,
+      `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(childProgram)}], { stdio: ["ignore", "inherit", "inherit"] });`,
+      `writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid));`,
+      "child.unref();",
+    ].join(" ");
+    const startedAt = performance.now();
+    try {
+      await expect(
+        runBoundedProcess({
+          executable: process.execPath,
+          args: ["-e", parentProgram],
+          cwd: process.cwd(),
+          timeoutMs: 100,
+          maxOutputBytes: 1024,
+        }),
+      ).rejects.toThrow("Command timed out");
+      expect(performance.now() - startedAt).toBeLessThan(550);
+      expect(await Bun.file(ready).exists()).toBe(true);
+      expect(Number.isSafeInteger(Number(await readFile(groupPidFile, "utf8")))).toBe(true);
+      expect(Number.isSafeInteger(Number(await readFile(childPidFile, "utf8")))).toBe(true);
+      await Bun.sleep(Math.max(0, 800 - (performance.now() - startedAt)));
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      if (await Bun.file(marker).exists()) {
+        for (const [pidFile, group] of [
+          [groupPidFile, true],
+          [childPidFile, false],
+        ] as const) {
+          try {
+            const pid = Number(await readFile(pidFile, "utf8"));
+            if (Number.isSafeInteger(pid) && pid > 0) process.kill(group ? -pid : pid, "SIGKILL");
+          } catch {
+            // The still-owned process may exit between marker inspection and cleanup.
+          }
+        }
+      }
+      await rm(root, { force: true, recursive: true });
     }
   });
 });

@@ -59,6 +59,7 @@
     "test": "bun test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "verify:package": "bun --silent run scripts/verify-package.ts",
+    "smoke:package": "bun --silent run scripts/smoke-packed-cli.ts",
     "video-digest": "bun --silent run src/cli/main.ts",
     "web": "bun run src/web/server.ts",
     "start": "bun run src/web/server.ts"

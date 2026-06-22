@@ -81,6 +81,7 @@ export interface CommandInvocation {
   executable: string;
   args: string[];
   cwd: string;
+  env?: Record<string, string | undefined>;
   timeoutMs: number;
   maxOutputBytes: number;
 }
@@ -197,6 +198,8 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
   try {
     child = Bun.spawn([invocation.executable, ...invocation.args], {
       cwd: invocation.cwd,
+      detached: true,
+      env: invocation.env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -207,21 +210,34 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
   let failure: Error | null = null;
   let outputBytes = 0;
   let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+  let escalationPromise: Promise<void> | undefined;
+  const outputReaders = new Set<{ cancel(reason?: unknown): Promise<void> }>();
+  const signalOwnedProcessGroup = (signal: NodeJS.Signals): void => {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      try {
+        child.kill(signal);
+      } catch {
+        // The owned process group may already have exited.
+      }
+    }
+  };
   const terminate = (reason: Error) => {
     if (failure) return;
     failure = reason;
-    try {
-      child.kill();
-    } catch {
-      // The child may already have exited between the limit check and termination.
+    signalOwnedProcessGroup("SIGTERM");
+    escalationPromise = new Promise((resolveEscalation) => {
+      escalationTimer = setTimeout(() => {
+        signalOwnedProcessGroup("SIGKILL");
+        resolveEscalation();
+      }, TERMINATION_GRACE_MS);
+    });
+    for (const reader of outputReaders) {
+      void reader.cancel().catch(() => {
+        // Promise settlement below normalizes stream cancellation failures.
+      });
     }
-    escalationTimer = setTimeout(() => {
-      try {
-        child.kill(9);
-      } catch {
-        // A settled process needs no escalation.
-      }
-    }, TERMINATION_GRACE_MS);
   };
 
   const timeoutTimer = setTimeout(
@@ -232,15 +248,20 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
   const collect = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> => {
     const chunks: Uint8Array[] = [];
     const reader = stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) return chunks;
-      outputBytes += value.byteLength;
-      if (outputBytes > invocation.maxOutputBytes) {
-        terminate(new Error("Command output exceeded limit"));
-        continue;
+    outputReaders.add(reader);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return chunks;
+        outputBytes += value.byteLength;
+        if (outputBytes > invocation.maxOutputBytes) {
+          terminate(new Error("Command output exceeded limit"));
+          continue;
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
+    } finally {
+      outputReaders.delete(reader);
     }
   };
 
@@ -252,6 +273,7 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
     stderrPromise,
   ]);
   clearTimeout(timeoutTimer);
+  if (failure && escalationPromise) await escalationPromise;
   if (escalationTimer) clearTimeout(escalationTimer);
 
   if (failure) throw failure;
@@ -484,21 +506,7 @@ export async function packAndVerifyPackage(
     verifyPackedFileListsAgree(tarFiles, npmFiles);
     verifyPackedFileListsAgree(tarFiles, verboseTarFiles);
 
-    let cleaned = false;
-    let cleanupPromise: Promise<void> | undefined;
-    const cleanup = (): Promise<void> => {
-      if (cleaned) return Promise.resolve();
-      if (cleanupPromise) return cleanupPromise;
-      cleanupPromise = Promise.resolve()
-        .then(() => removeDirectory(temporaryDirectory))
-        .then(() => {
-          cleaned = true;
-        })
-        .finally(() => {
-          cleanupPromise = undefined;
-        });
-      return cleanupPromise;
-    };
+    const cleanup = createOwnedDirectoryCleanup(temporaryDirectory, removeDirectory);
     return {
       tarballPath,
       temporaryDirectory,
@@ -512,6 +520,28 @@ export async function packAndVerifyPackage(
     }
     throw error;
   }
+}
+
+export function createOwnedDirectoryCleanup(
+  directory: string,
+  removeDirectory: (path: string) => Promise<void> = (path) =>
+    rm(path, { recursive: true, force: true }),
+): () => Promise<void> {
+  let cleaned = false;
+  let cleanupPromise: Promise<void> | undefined;
+  return (): Promise<void> => {
+    if (cleaned) return Promise.resolve();
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = Promise.resolve()
+      .then(() => removeDirectory(directory))
+      .then(() => {
+        cleaned = true;
+      })
+      .finally(() => {
+        cleanupPromise = undefined;
+      });
+    return cleanupPromise;
+  };
 }
 
 if (import.meta.main) {
