@@ -1,5 +1,5 @@
 import type { LibraryEntry } from "../cli/artifacts";
-import type { DoctorReport } from "../cli/doctor";
+import type { DoctorCheck, DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
 
 export type Screen =
@@ -35,34 +35,43 @@ export type PendingKind =
   | "load-library"
   | "run-doctor";
 
-export type PendingRequest = {
+export type PendingRequest = Readonly<{
   kind: PendingKind;
   requestId: RequestId;
-};
+}>;
 
-export type TuiConfig = {
+export type TuiConfig = Readonly<{
   artifactLibrary: string | null;
-};
+}>;
 
-export type ResultData = {
+export type LibraryEntrySnapshot = Readonly<
+  Omit<LibraryEntry, "paths"> & { paths: Readonly<LibraryEntry["paths"]> }
+>;
+
+export type DoctorReportSnapshot = Readonly<{
+  checks: readonly Readonly<DoctorCheck>[];
+  ok: boolean;
+}>;
+
+export type ResultData = Readonly<{
   cleanText: string | null;
-  entry: LibraryEntry;
+  entry: LibraryEntrySnapshot;
   kind: CreationMode;
-};
+}>;
 
-export type ReaderData = {
+export type ReaderData = Readonly<{
   content: string;
   path: string;
   title: string;
-};
+}>;
 
-export type Model = {
+export type Model = Readonly<{
   config: TuiConfig;
   credentialConfigured: boolean;
   creationMode: CreationMode | null;
   doctorOrigin: "home" | "settings";
-  doctorReport: DoctorReport | null;
-  entries: LibraryEntry[];
+  doctorReport: DoctorReportSnapshot | null;
+  entries: readonly LibraryEntrySnapshot[];
   gateOrigin: GateOrigin;
   librarySelectionOrigin: LibrarySelectionOrigin;
   message: string | null;
@@ -74,9 +83,9 @@ export type Model = {
   result: ResultData | null;
   runtimeReadiness: RuntimeReadiness;
   screen: Screen;
-  selectedEntry: LibraryEntry | null;
+  selectedEntry: LibraryEntrySnapshot | null;
   submittedUrl: string | null;
-};
+}>;
 
 export type InitialModelInput = {
   artifactLibrary: string | null;
@@ -103,10 +112,9 @@ export function initialModel(input: InitialModelInput): Model {
     reader: null,
     readerOrigin: null,
     result: null,
-    runtimeReadiness: input.runtimeReadiness ?? {
-      remediation: "Run video-digest setup.",
-      status: "missing",
-    },
+    runtimeReadiness: input.runtimeReadiness
+      ? { ...input.runtimeReadiness }
+      : { remediation: "Run video-digest setup.", status: "missing" },
     screen: configured ? "home" : "choose-library",
     selectedEntry: null,
     submittedUrl: null,
@@ -176,7 +184,7 @@ export type Transition = {
   model: Model;
 };
 
-export function humanReadablePath(entry: LibraryEntry): string | null {
+export function humanReadablePath(entry: LibraryEntrySnapshot): string | null {
   return entry.paths.digestPath ?? entry.paths.transcriptMarkdownPath;
 }
 

@@ -485,7 +485,7 @@ describe("untrusted event payloads", () => {
     const model = readyModel({ entries: [canonical], screen: "library" });
 
     const selected = update(model, { type: "select-entry", videoId: forged.videoId }).model.selectedEntry;
-    expect(selected).toBe(canonical);
+    expect(selected).not.toBe(canonical);
     expect(selected?.paths.digestPath).toBe(entry.paths.digestPath);
   });
 
@@ -496,5 +496,159 @@ describe("untrusted event payloads", () => {
     expect(started.effects).toEqual([{ requestId: 1, type: "save-credential", value: "top-secret" }]);
     expect(JSON.stringify(started.model)).not.toContain("top-secret");
     expect(update(started.model, { type: "save-credential", value: "another-secret" }).effects).toEqual([]);
+  });
+});
+
+describe("pending state integrity", () => {
+  test("blocks Back and Home while saving the Artifact Library, then reconciles completion", () => {
+    const chooser = readyModel({ librarySelectionOrigin: "settings", screen: "choose-library" });
+    const saving = update(chooser, { path: "/new-library", type: "save-library" }).model;
+
+    expect(update(saving, { type: "back" })).toEqual({ effects: [], model: saving });
+    expect(update(saving, { type: "go-home" })).toEqual({ effects: [], model: saving });
+
+    const completed = update(saving, { path: "/new-library", requestId: 1, type: "library-saved" }).model;
+    expect(completed).toMatchObject({
+      config: { artifactLibrary: "/new-library" },
+      pending: null,
+      screen: "settings",
+    });
+  });
+
+  test("blocks Back and Home during runtime preparation, then reconciles readiness", () => {
+    const gate = readyModel({
+      creationMode: "transcript",
+      runtimeReadiness: { remediation: "setup", status: "missing" },
+      screen: "runtime-required",
+    });
+    const preparing = update(gate, { type: "prepare-runtime" }).model;
+
+    expect(update(preparing, { type: "back" })).toEqual({ effects: [], model: preparing });
+    expect(update(preparing, { type: "go-home" })).toEqual({ effects: [], model: preparing });
+
+    const completed = update(preparing, { requestId: 1, type: "runtime-ready" }).model;
+    expect(completed).toMatchObject({ pending: null, runtimeReadiness: { status: "ready" }, screen: "enter-url" });
+  });
+
+  test("blocks Back and Home while saving credentials without retaining their copy", () => {
+    const gate = readyModel({
+      creationMode: "digest",
+      credentialConfigured: false,
+      screen: "credential-required",
+    });
+    const saving = update(gate, { type: "save-credential", value: "  top-secret  " }).model;
+
+    expect(update(saving, { type: "back" })).toEqual({ effects: [], model: saving });
+    expect(update(saving, { type: "go-home" })).toEqual({ effects: [], model: saving });
+    expect(JSON.stringify(saving)).not.toContain("top-secret");
+
+    const completed = update(saving, { requestId: 1, type: "credential-saved" }).model;
+    expect(completed).toMatchObject({ credentialConfigured: true, pending: null, screen: "enter-url" });
+    expect(JSON.stringify(completed)).not.toContain("top-secret");
+  });
+
+  test("only cancellable controller operations emit cancellation and clear pending navigation", () => {
+    const doctor = update(readyModel(), { type: "open-doctor" }).model;
+    expect(update(doctor, { type: "back" })).toEqual({ effects: [], model: doctor });
+
+    const operation = update(readyModel({ creationMode: "transcript", screen: "enter-url" }), {
+      type: "submit-url",
+      url: "https://youtu.be/abc123_DEF4",
+    }).model;
+    expect(update(operation, { type: "back" })).toEqual({
+      effects: [{ requestId: 1, type: "cancel-operation" }],
+      model: expect.objectContaining({ pending: null, screen: "home" }),
+    });
+  });
+});
+
+describe("event payload snapshots", () => {
+  test("deep-snapshots Library Entries and selected entries", () => {
+    const source: LibraryEntry = {
+      ...entry,
+      paths: { ...entry.paths },
+    };
+    const loading = update(readyModel(), { type: "browse-library" }).model;
+    const loaded = update(loading, { entries: [source], requestId: 1, type: "library-loaded" }).model;
+
+    source.title = "Mutated title";
+    source.paths.digestPath = "/tmp/mutated.md";
+    expect(loaded.entries[0]).toMatchObject({
+      paths: { digestPath: "/library/digests/abc123_DEF4.md" },
+      title: "Example video",
+    });
+
+    const selected = update(loaded, { type: "select-entry", videoId: source.videoId }).model;
+    const canonical = selected.entries[0]!;
+    expect(selected.selectedEntry).not.toBe(canonical);
+    (canonical as LibraryEntry).paths.digestPath = "/tmp/second-mutation.md";
+    expect(selected.selectedEntry?.paths.digestPath).toBe("/library/digests/abc123_DEF4.md");
+
+    const opening = update(selected, { type: "open-entry-externally" });
+    (canonical as LibraryEntry).paths.digestPath = "/tmp/third-mutation.md";
+    expect(opening.effects).toEqual([
+      { path: "/library/digests/abc123_DEF4.md", requestId: 2, type: "open" },
+    ]);
+  });
+
+  test("deep-snapshots completed operation results", () => {
+    const source = {
+      cleanText: "Original text",
+      entry: { ...entry, paths: { ...entry.paths } },
+      kind: "transcript" as const,
+    };
+    const running = update(readyModel({ creationMode: "transcript", screen: "enter-url" }), {
+      type: "submit-url",
+      url: "https://youtu.be/abc123_DEF4",
+    }).model;
+    const completed = update(running, { requestId: 1, result: source, type: "operation-succeeded" }).model;
+
+    source.cleanText = "Mutated text";
+    source.entry.title = "Mutated title";
+    source.entry.paths.transcriptMarkdownPath = "/tmp/mutated.md";
+    expect(completed.result).toMatchObject({
+      cleanText: "Original text",
+      entry: {
+        paths: { transcriptMarkdownPath: "/library/transcripts/abc123_DEF4.md" },
+        title: "Example video",
+      },
+    });
+
+    const reading = update(completed, { type: "read-result" });
+    source.entry.paths.transcriptMarkdownPath = "/tmp/second-mutation.md";
+    expect(reading.effects).toEqual([
+      { path: "/library/transcripts/abc123_DEF4.md", requestId: 2, type: "read" },
+    ]);
+  });
+
+  test("deep-snapshots doctor reports", () => {
+    const report = {
+      checks: [{ capability: "transcript" as const, id: "runtime", message: "Ready", remediation: null, status: "pass" as const }],
+      ok: true,
+    };
+    const running = update(readyModel(), { type: "open-doctor" }).model;
+    const completed = update(running, { report, requestId: 1, type: "doctor-completed" }).model;
+
+    report.ok = false;
+    report.checks[0]!.message = "Mutated";
+    expect(completed.doctorReport).toEqual({
+      checks: [{ capability: "transcript", id: "runtime", message: "Ready", remediation: null, status: "pass" }],
+      ok: true,
+    });
+  });
+
+  test("snapshots runtime failure readiness", () => {
+    const readiness = { remediation: "Run setup.", status: "missing" as const };
+    const gate = readyModel({ runtimeReadiness: readiness, screen: "runtime-required" });
+    const running = update(gate, { type: "prepare-runtime" }).model;
+    const failed = update(running, {
+      message: "Setup failed",
+      readiness,
+      requestId: 1,
+      type: "runtime-failed",
+    }).model;
+
+    readiness.remediation = "Mutated remediation";
+    expect(failed.runtimeReadiness).toEqual({ remediation: "Run setup.", status: "missing" });
   });
 });

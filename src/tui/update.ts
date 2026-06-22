@@ -1,4 +1,6 @@
 import { parseYouTubeVideoUrl } from "../video/youtube-url";
+import type { DoctorReport } from "../cli/doctor";
+import type { RuntimeReadiness } from "../cli/runtime-manager";
 import {
   humanReadablePath,
   resultReadablePath,
@@ -6,8 +8,10 @@ import {
   type Effect,
   type Event,
   type Model,
+  type LibraryEntrySnapshot,
   type PendingKind,
   type RequestId,
+  type ResultData,
   type Screen,
   type Transition,
 } from "./model";
@@ -36,7 +40,11 @@ export function update(model: Model, event: Event): Transition {
     }
     case "runtime-failed":
       return matchesPending(model, "prepare-runtime", event.requestId) && model.screen === "runtime-required"
-        ? transition(clearPending({ ...model, message: event.message, runtimeReadiness: event.readiness }))
+        ? transition(clearPending({
+            ...model,
+            message: event.message,
+            runtimeReadiness: cloneRuntimeReadiness(event.readiness),
+          }))
         : unchanged(model);
     case "save-credential": {
       if (model.screen !== "credential-required") return unchanged(model);
@@ -83,7 +91,7 @@ export function update(model: Model, event: Event): Transition {
         progress: null,
         reader: null,
         readerOrigin: null,
-        result: event.result,
+        result: cloneResult(event.result),
         screen: "result",
       }));
     }
@@ -106,7 +114,12 @@ export function update(model: Model, event: Event): Transition {
     }
     case "library-loaded":
       return matchesPending(model, "load-library", event.requestId) && model.screen === "library"
-        ? transition(clearPending({ ...model, entries: event.entries, message: null, selectedEntry: null }))
+        ? transition(clearPending({
+            ...model,
+            entries: event.entries.map(cloneLibraryEntry),
+            message: null,
+            selectedEntry: null,
+          }))
         : unchanged(model);
     case "library-failed":
       return matchesPending(model, "load-library", event.requestId) && model.screen === "library"
@@ -115,7 +128,7 @@ export function update(model: Model, event: Event): Transition {
     case "select-entry": {
       if (model.screen !== "library") return unchanged(model);
       const selectedEntry = model.entries.find((item) => item.videoId === event.videoId);
-      return selectedEntry ? transition({ ...model, selectedEntry }) : unchanged(model);
+      return selectedEntry ? transition({ ...model, selectedEntry: cloneLibraryEntry(selectedEntry) }) : unchanged(model);
     }
     case "read-entry":
       return readEntry(model);
@@ -191,7 +204,7 @@ export function update(model: Model, event: Event): Transition {
     }
     case "doctor-completed":
       return matchesPending(model, "run-doctor", event.requestId) && model.screen === "doctor"
-        ? transition(clearPending({ ...model, doctorReport: event.report, message: null }))
+        ? transition(clearPending({ ...model, doctorReport: cloneDoctorReport(event.report), message: null }))
         : unchanged(model);
     case "doctor-failed":
       return matchesPending(model, "run-doctor", event.requestId) && model.screen === "doctor"
@@ -214,9 +227,12 @@ export function update(model: Model, event: Event): Transition {
         ? transition(clearPending({ ...model, message: event.message }))
         : unchanged(model);
     case "back":
-      return navigateBack(model);
+      return model.pending && !isCancellablePending(model.pending.kind)
+        ? unchanged(model)
+        : navigateBack(model);
     case "go-home": {
       if (model.config.artifactLibrary === null) return unchanged(model);
+      if (model.pending && !isCancellablePending(model.pending.kind)) return unchanged(model);
       const cancellation = cancellationEffect(model);
       return transition(goHome(model), cancellation ? [cancellation] : []);
     }
@@ -344,6 +360,39 @@ function resultMatchesOperation(kind: PendingKind, resultKind: CreationMode): bo
 function cancellationEffect(model: Model): Extract<Effect, { type: "cancel-operation" }> | null {
   if (!model.pending || (model.pending.kind !== "ingest" && model.pending.kind !== "transcript")) return null;
   return { requestId: model.pending.requestId, type: "cancel-operation" };
+}
+
+function isCancellablePending(kind: PendingKind): kind is "ingest" | "transcript" {
+  return kind === "ingest" || kind === "transcript";
+}
+
+function cloneLibraryEntry(entry: LibraryEntrySnapshot): LibraryEntrySnapshot {
+  return {
+    channel: entry.channel,
+    paths: { ...entry.paths },
+    title: entry.title,
+    updatedAt: entry.updatedAt,
+    videoId: entry.videoId,
+  };
+}
+
+function cloneResult(result: ResultData): ResultData {
+  return {
+    cleanText: result.cleanText,
+    entry: cloneLibraryEntry(result.entry),
+    kind: result.kind,
+  };
+}
+
+function cloneDoctorReport(report: DoctorReport): DoctorReport {
+  return {
+    checks: report.checks.map((check) => ({ ...check })),
+    ok: report.ok,
+  };
+}
+
+function cloneRuntimeReadiness(readiness: RuntimeReadiness): RuntimeReadiness {
+  return { ...readiness };
 }
 
 function navigateBack(model: Model): Transition {
