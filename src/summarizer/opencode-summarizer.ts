@@ -60,7 +60,7 @@ export class OpenCodeSummarizer implements Summarizer {
     if (!response.ok) {
       throw new SummarizerError(
         "provider-failed",
-        `OpenCode request failed with status ${response.status}: ${await response.text()}`,
+        `OpenCode request failed with HTTP ${response.status}.`,
       );
     }
 

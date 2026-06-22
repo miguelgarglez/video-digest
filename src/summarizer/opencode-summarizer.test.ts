@@ -74,13 +74,16 @@ describe("OpenCodeSummarizer", () => {
   });
 
   test("maps provider errors to structured errors", async () => {
-    const fetch: FetchLike = async () => new Response("bad request", { status: 400 });
+    const echoedSecret = "Bearer test-key should never leave the provider boundary";
+    const fetch: FetchLike = async () => new Response(echoedSecret, { status: 400 });
     const summarizer = new OpenCodeSummarizer({ apiKey: "test-key", fetch });
 
-    await expect(summarizer.generateDigest(input())).rejects.toMatchObject({
+    const failure = summarizer.generateDigest(input());
+    await expect(failure).rejects.toMatchObject({
       code: "provider-failed",
-      message: "OpenCode request failed with status 400: bad request",
+      message: "OpenCode request failed with HTTP 400.",
     } satisfies Partial<SummarizerError>);
+    await expect(failure).rejects.not.toThrow(echoedSecret);
   });
 });
 
