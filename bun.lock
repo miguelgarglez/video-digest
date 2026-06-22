@@ -3,9 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "personal-video-digest",
+      "name": "video-digest",
       "dependencies": {
-        "@opentui/core": "^0.4.1",
+        "@opentui/core": "0.4.1",
       },
       "devDependencies": {
         "@types/bun": "latest",
