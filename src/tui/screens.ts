@@ -2,6 +2,7 @@ import type { DoctorCheck } from "../cli/doctor";
 import type { LibraryEntrySnapshot, Model, Screen } from "./model";
 
 export const MIN_TERMINAL_SIZE = Object.freeze({ height: 18, width: 60 });
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export const TUI_COPY = Object.freeze({
   agentSkill: {
@@ -88,30 +89,33 @@ export function buildScreenView(model: Model, dimensions?: ScreenDimensions): Sc
   if (dimensions && isSmallTerminal(dimensions)) return smallTerminalView();
 
   const pending = model.pending !== null;
+  const lineLimit = dimensions ? Math.max(12, Math.min(160, dimensions.width - 8)) : 160;
   const source = viewForScreen(model);
   const messageStatus = model.message
     ? { text: sanitizeLine(model.message), tone: "error" as const }
     : null;
-  const status = pending && model.screen !== "progress"
-    ? { text: TUI_COPY.working, tone: "pending" as const }
-    : source.status ?? messageStatus;
+  const status = model.screen === "progress"
+    ? source.status
+    : pending
+      ? { text: TUI_COPY.working, tone: "pending" as const }
+      : messageStatus ?? source.status;
   const input = source.input ? { ...source.input, disabled: pending } : null;
   const focus = pending ? "none" : source.focus ?? inferFocus(source, input);
 
   return Object.freeze({
     actions: Object.freeze(source.actions ?? []),
-    body: Object.freeze((source.body ?? []).map(sanitizeTerminalText)),
+    body: Object.freeze((source.body ?? []).map((text) => sanitizeDisplayText(text, lineLimit))),
     focus,
     footer: source.footer ?? defaultFooter(focus),
     input,
     keys: Object.freeze(source.keys ?? defaultKeys(focus)),
     kind: model.screen,
-    options: Object.freeze((source.options ?? []).map(sanitizeLine)),
+    options: Object.freeze((source.options ?? []).map((text) => boundLine(sanitizeLine(text), lineLimit))),
     preview: null,
     scrollable: source.scrollable ?? false,
-    status,
-    ...(source.subtitle ? { subtitle: sanitizeLine(source.subtitle) } : {}),
-    title: sanitizeLine(source.title),
+    status: status ? { ...status, text: boundLine(sanitizeLine(status.text), lineLimit) } : null,
+    ...(source.subtitle ? { subtitle: boundLine(sanitizeLine(source.subtitle), lineLimit) } : {}),
+    title: boundLine(sanitizeLine(source.title), lineLimit),
   });
 }
 
@@ -342,17 +346,51 @@ function smallTerminalView(): ScreenView {
 
 export function sanitizeTerminalText(value: string): string {
   return value
+    .replace(/\r\n?/g, "\n")
     .replace(/[\u0090\u009D-\u009F][\s\S]*?(?:\u0007|\u009C|\u001B\\)/g, "")
     .replace(/\u001B[P^_X][\s\S]*?\u001B\\/g, "")
     .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
     .replace(/\u009B[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\u001B[ -/]*[@-~]/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .replace(/\p{Cf}/gu, (character) => character === "\u200C" || character === "\u200D" ? character : "");
 }
 
 function sanitizeLine(value: string): string {
   return sanitizeTerminalText(value).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeDisplayText(value: string, limit: number): string {
+  return sanitizeTerminalText(value)
+    .split(/\r?\n/)
+    .map((line) => boundLine(line, limit))
+    .join("\n");
+}
+
+function boundLine(value: string, limit: number): string {
+  const hardLimit = 160;
+  const targetWidth = Math.max(1, limit - 1);
+  const codePoints = Array.from(value);
+  let truncated = codePoints.length > hardLimit;
+  const hardBounded = truncated
+    ? codePoints.slice(0, hardLimit - 1).join("").replace(/[\u200C\u200D]+$/u, "")
+    : value;
+  const segments = GRAPHEME_SEGMENTER.segment(hardBounded);
+  let bounded = "";
+  let graphemes = 0;
+  let width = 0;
+  for (const { segment } of segments) {
+    const segmentWidth = Bun.stringWidth(segment);
+    if (graphemes >= targetWidth || width + segmentWidth > targetWidth) {
+      truncated = true;
+      break;
+    }
+    bounded += segment;
+    graphemes += 1;
+    width += segmentWidth;
+  }
+  return truncated ? `${bounded}…` : bounded;
 }
 
 function assertNever(value: never): never {

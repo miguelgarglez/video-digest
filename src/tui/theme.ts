@@ -23,13 +23,13 @@ export function createTheme(env: Readonly<Record<string, string | undefined>> = 
         surface: "#1a1b26",
       }
     : {
-        accent: "white",
-        background: "transparent",
+        accent: undefined,
+        background: undefined,
         colorEnabled,
-        danger: "white",
-        foreground: "white",
-        muted: "white",
-        success: "white",
-        surface: "transparent",
+        danger: undefined,
+        foreground: undefined,
+        muted: undefined,
+        success: undefined,
+        surface: undefined,
       });
 }

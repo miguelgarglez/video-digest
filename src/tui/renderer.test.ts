@@ -176,15 +176,15 @@ describe("theme", () => {
     const color = createTheme({});
 
     expect(monochrome).toMatchObject({ colorEnabled: false });
-    expect(new Set([
-      monochrome.accent,
-      monochrome.danger,
-      monochrome.foreground,
-      monochrome.muted,
-      monochrome.success,
-    ])).toEqual(new Set(["white"]));
-    expect(monochrome.background).toBe("transparent");
-    expect(monochrome.surface).toBe("transparent");
+    expect(monochrome).toMatchObject({
+      accent: undefined,
+      background: undefined,
+      danger: undefined,
+      foreground: undefined,
+      muted: undefined,
+      success: undefined,
+      surface: undefined,
+    });
     expect(Object.values(monochrome).join("")).not.toContain("\u001b");
     expect(Object.values(color).join("")).not.toContain("\u001b");
     expect(color.colorEnabled).toBe(true);

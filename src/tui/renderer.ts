@@ -1,6 +1,7 @@
 import type { CliRenderer, KeyEvent, Renderable } from "@opentui/core";
 import type { Event, Model } from "./model";
-import { buildScreenView, type ScreenAction, type ScreenView } from "./screens";
+import { createSecretEditor, type SecretEditor } from "./secret-editor";
+import { buildScreenView, type ScreenAction, type ScreenStatusTone, type ScreenView } from "./screens";
 import { createTheme, type TuiTheme } from "./theme";
 
 export type RendererKey = Readonly<{
@@ -134,6 +135,7 @@ function inputEvent(model: Model, value: string): Event | null {
 
 export type CreateOpenTuiFacadeOptions = Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
+  ownsRenderer?: boolean;
 }>;
 
 /**
@@ -151,14 +153,36 @@ export async function createOpenTuiFacade(
     screenMode: "alternate-screen",
     useMouse: false,
   });
+  return bindOpenTuiFacade(core, renderer, { ...options, ownsRenderer: true });
+}
+
+export async function createOpenTuiFacadeFromRenderer(
+  renderer: CliRenderer,
+  options: CreateOpenTuiFacadeOptions = {},
+): Promise<OpenTuiFacade> {
+  const core = await import("@opentui/core");
+  return bindOpenTuiFacade(core, renderer, options);
+}
+
+type OpenTuiModule = typeof import("@opentui/core");
+
+function bindOpenTuiFacade(
+  core: OpenTuiModule,
+  renderer: CliRenderer,
+  options: CreateOpenTuiFacadeOptions,
+): OpenTuiFacade {
   const theme = createTheme(options.env ?? process.env);
+  const ownsRenderer = options.ownsRenderer ?? false;
   let destroyed = false;
   let currentRoot: Renderable | null = null;
   let currentFrame: RenderFrame | null = null;
+  let secretEditor: SecretEditor | null = null;
+  const noColorPostProcess = theme.colorEnabled ? null : createNoColorPostProcess(core);
 
   const keyHandler = (key: KeyEvent): void => {
     const frame = currentFrame;
     if (!frame || destroyed) return;
+    if (isTerminalExitKey(key)) secretEditor?.clear();
     if (frame.onKey({ ctrl: key.ctrl, meta: key.meta, name: key.name, shift: key.shift })) {
       key.preventDefault();
       key.stopPropagation();
@@ -167,6 +191,7 @@ export async function createOpenTuiFacade(
   const resizeHandler = (): void => currentFrame?.onResize();
   renderer.keyInput.on("keypress", keyHandler);
   renderer.on(core.CliRenderEvents.RESIZE, resizeHandler);
+  if (noColorPostProcess) renderer.addPostProcessFn(noColorPostProcess);
 
   const facade: OpenTuiFacade = {
     get dimensions() {
@@ -176,20 +201,29 @@ export async function createOpenTuiFacade(
       if (destroyed) return;
       destroyed = true;
       currentFrame = null;
+      secretEditor?.clear();
+      secretEditor = null;
       try {
         renderer.keyInput.off("keypress", keyHandler);
         renderer.off(core.CliRenderEvents.RESIZE, resizeHandler);
+        if (noColorPostProcess) renderer.removePostProcessFn(noColorPostProcess);
         destroyCurrentRoot(renderer, currentRoot);
         currentRoot = null;
       } finally {
-        renderer.destroy();
+        if (ownsRenderer) renderer.destroy();
       }
     },
     render(frame) {
       if (destroyed) return;
       currentFrame = frame;
+      if (frame.view.input?.secret) {
+        secretEditor ??= createSecretEditor();
+      } else {
+        secretEditor?.clear();
+        secretEditor = null;
+      }
       destroyCurrentRoot(renderer, currentRoot);
-      currentRoot = renderOpenTuiFrame(core, renderer, frame, theme);
+      currentRoot = renderOpenTuiFrame(core, renderer, frame, theme, secretEditor);
       renderer.root.add(currentRoot);
       renderer.requestRender();
     },
@@ -198,19 +232,18 @@ export async function createOpenTuiFacade(
   return facade;
 }
 
-type OpenTuiModule = typeof import("@opentui/core");
-
 function renderOpenTuiFrame(
   core: OpenTuiModule,
   renderer: CliRenderer,
   frame: RenderFrame,
   theme: TuiTheme,
+  secretEditor: SecretEditor | null,
 ): Renderable {
   const root = new core.BoxRenderable(renderer, {
     flexDirection: "column",
     height: "100%",
     id: "video-digest-screen",
-    padding: frame.view.kind === "small-terminal" ? 1 : 2,
+    padding: 1,
     width: "100%",
     ...colorOption("backgroundColor", theme.background),
   });
@@ -231,11 +264,13 @@ function renderOpenTuiFrame(
     }));
   }
 
-  if (frame.view.scrollable) {
+  if (frame.view.body.length > 0) {
     const scroll = new core.ScrollBoxRenderable(renderer, {
       flexGrow: 1,
+      flexShrink: 1,
       id: "screen-reader",
       marginTop: 1,
+      minHeight: 1,
       scrollY: true,
     });
     scroll.add(new core.TextRenderable(renderer, {
@@ -246,15 +281,8 @@ function renderOpenTuiFrame(
       ...colorOption("fg", theme.foreground),
     }));
     root.add(scroll);
-    scroll.focus();
-  } else if (frame.view.body.length > 0) {
-    root.add(new core.TextRenderable(renderer, {
-      content: frame.view.body.join("\n\n"),
-      id: "screen-body",
-      marginTop: 1,
-      wrapMode: "word",
-      ...colorOption("fg", theme.foreground),
-    }));
+    scroll.focusable = frame.view.focus === "body";
+    if (frame.view.focus === "body") scroll.focus();
   }
 
   if (frame.view.status) {
@@ -275,43 +303,52 @@ function renderOpenTuiFrame(
       marginTop: 1,
       ...colorOption("fg", theme.muted),
     }));
-    const input = new core.InputRenderable(renderer, {
-      id: "screen-input",
-      maxLength: frame.view.input.secret ? 512 : 2048,
-      placeholder: frame.view.input.placeholder,
-      width: "100%",
-      ...colorOption("backgroundColor", theme.surface),
-      ...colorOption("focusedBackgroundColor", theme.surface),
-      ...colorOption("focusedTextColor", frame.view.input.secret ? "transparent" : theme.foreground),
-      ...colorOption("textColor", frame.view.input.secret ? "transparent" : theme.foreground),
-    });
     if (frame.view.input.secret) {
+      if (!secretEditor) throw new Error("Secret editor is unavailable.");
       const mask = new core.TextRenderable(renderer, {
-        content: "",
+        content: secretEditor.mask,
         height: 1,
-        id: "screen-input-mask",
+        id: "screen-secret-input",
+        selectable: false,
+        width: "100%",
         ...colorOption("fg", theme.foreground),
       });
-      input.on(core.InputRenderableEvents.INPUT, (value: string) => {
-        mask.content = "•".repeat(Array.from(value).length);
+      mask.focusable = !frame.view.input.disabled;
+      mask.onKeyDown = (key) => secretEditor.handleKey(key, (value) => {
+        void frame.onSubmit(value).catch(() => undefined);
       });
+      mask.onPaste = (event) => secretEditor.handlePaste(event);
+      secretEditor.attach(mask);
       root.add(mask);
+      if (frame.view.focus === "input") mask.focus();
+    } else {
+      const input = new core.InputRenderable(renderer, {
+        id: "screen-input",
+        maxLength: 2048,
+        placeholder: frame.view.input.placeholder,
+        width: "100%",
+        ...colorOption("backgroundColor", theme.surface),
+        ...colorOption("focusedBackgroundColor", theme.surface),
+        ...colorOption("focusedTextColor", theme.foreground),
+        ...colorOption("textColor", theme.foreground),
+      });
+      input.on(core.InputRenderableEvents.ENTER, (value: string) => void frame.onSubmit(value).catch(() => undefined));
+      input.focusable = !frame.view.input.disabled;
+      root.add(input);
+      if (frame.view.focus === "input") input.focus();
     }
-    input.on(core.InputRenderableEvents.ENTER, (value: string) => void frame.onSubmit(value).catch(() => undefined));
-    input.focusable = !frame.view.input.disabled;
-    root.add(input);
-    if (frame.view.focus === "input") input.focus();
   }
 
   if (frame.view.options.length > 0) {
+    const selectHeight = availableSelectHeight(renderer, frame.view);
     const select = new core.SelectRenderable(renderer, {
-      height: Math.min(frame.view.options.length * 2, 12),
+      height: selectHeight,
       id: "screen-options",
-      itemSpacing: 1,
+      itemSpacing: 0,
       marginTop: 1,
       options: frame.view.options.map((name, index) => ({ description: "", name, value: index })),
       showDescription: false,
-      showScrollIndicator: frame.view.options.length > 6,
+      showScrollIndicator: frame.view.options.length > selectHeight,
       width: "100%",
       wrapSelection: false,
       ...colorOption("backgroundColor", theme.background),
@@ -330,14 +367,25 @@ function renderOpenTuiFrame(
   }
 
   root.add(new core.TextRenderable(renderer, {
-    bottom: 1,
     content: frame.view.footer,
     height: 1,
     id: "screen-footer",
-    position: "absolute",
+    marginTop: 1,
     ...colorOption("fg", theme.muted),
   }));
   return root;
+}
+
+function isTerminalExitKey(key: KeyEvent): boolean {
+  const name = key.name.toLowerCase();
+  return (key.ctrl && name === "c") || (!key.ctrl && !key.meta && (name === "escape" || name === "esc"));
+}
+
+function availableSelectHeight(renderer: CliRenderer, view: ScreenView): number {
+  const reserved = 2 + 1 + (view.subtitle ? 2 : 0) + (view.body.length > 0 ? 2 : 0) +
+    (view.status ? 2 : 0) + (view.input ? 3 : 0) + 1 + 2;
+  const available = Math.max(1, renderer.terminalHeight - reserved);
+  return Math.min(view.options.length, available);
 }
 
 function destroyCurrentRoot(renderer: CliRenderer, root: Renderable | null): void {
@@ -347,9 +395,7 @@ function destroyCurrentRoot(renderer: CliRenderer, root: Renderable | null): voi
   renderer.requestRender();
 }
 
-function statusColor(tone: ScreenView["status"] extends infer _T
-  ? "error" | "info" | "pending" | "success"
-  : never, theme: TuiTheme): string | undefined {
+function statusColor(tone: ScreenStatusTone, theme: TuiTheme): string | undefined {
   if (tone === "error") return theme.danger;
   if (tone === "success") return theme.success;
   if (tone === "pending") return theme.accent;
@@ -358,4 +404,16 @@ function statusColor(tone: ScreenView["status"] extends infer _T
 
 function colorOption<K extends string>(key: K, value: string | undefined): Record<K, string> | Record<string, never> {
   return value === undefined ? {} : { [key]: value } as Record<K, string>;
+}
+
+function createNoColorPostProcess(core: OpenTuiModule): (buffer: import("@opentui/core").OptimizedBuffer) => void {
+  const foreground = core.RGBA.defaultForeground().buffer;
+  const background = core.RGBA.defaultBackground().buffer;
+  return (buffer) => {
+    const colors = buffer.buffers;
+    for (let index = 0; index < colors.fg.length; index += 4) {
+      colors.fg.set(foreground, index);
+      colors.bg.set(background, index);
+    }
+  };
 }

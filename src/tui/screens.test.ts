@@ -120,6 +120,14 @@ describe("buildScreenView", () => {
     expect(view.body.join(" ")).not.toContain("A clean transcript.");
   });
 
+  test("result action errors replace the static saved status", () => {
+    expect(buildScreenView(readyModel({
+      message: "Could not copy the Transcript.",
+      result: transcriptResult,
+      screen: "result",
+    })).status).toEqual({ text: "Could not copy the Transcript.", tone: "error" });
+  });
+
   test("digest results omit transcript-only actions", () => {
     expect(buildScreenView(readyModel({
       result: { cleanText: null, entry, kind: "digest" },
@@ -220,6 +228,13 @@ describe("buildScreenView", () => {
       result: transcriptResult,
       screen: "result",
     })).status).toEqual({ text: "Working…", tone: "pending" });
+
+    expect(buildScreenView(readyModel({
+      message: "Earlier copy failed.",
+      pending: { kind: "copy", requestId: 5 },
+      result: transcriptResult,
+      screen: "result",
+    })).status).toEqual({ text: "Working…", tone: "pending" });
   });
 });
 
@@ -227,5 +242,31 @@ describe("terminal text safety", () => {
   test("removes control characters without collapsing readable structure", () => {
     expect(sanitizeTerminalText("Hello\u001b]8;;https://evil.invalid\u0007\nworld\t!\u0000")).toBe("Hello\nworld\t!");
     expect(sanitizeTerminalText("safe\u001bPmalicious\u001b\\text\u009B31mend")).toBe("safetextend");
+    expect(sanitizeTerminalText("one\rtwo\r\nthree")).toBe("one\ntwo\nthree");
+  });
+
+  test("removes bidirectional and unsafe format controls while preserving intentional joiners", () => {
+    expect(sanitizeTerminalText("safe\u202Eevil\u202C \u2066isolate\u2069 a\u200Db e\u0301")).toBe(
+      "safeevil isolate a\u200Db e\u0301",
+    );
+  });
+
+  test("bounds every untrusted display line for the current terminal width", () => {
+    const longTitle = `Title ${"界".repeat(100)}`;
+    const view = buildScreenView(readyModel({
+      entries: [{ ...entry, channel: "channel", title: longTitle }],
+      screen: "library",
+    }), { height: 20, width: 60 });
+
+    expect(view.options[0]?.endsWith("…")).toBe(true);
+    expect(Bun.stringWidth(view.options[0] ?? "")).toBeLessThanOrEqual(52);
+
+    const combiningFlood = `a${"\u0301".repeat(1_000)}`;
+    const flooded = buildScreenView(readyModel({
+      entries: [{ ...entry, title: combiningFlood }],
+      screen: "library",
+    })).options[0] ?? "";
+    expect(Array.from(flooded).length).toBeLessThanOrEqual(160);
+    expect(flooded.endsWith("…")).toBe(true);
   });
 });
