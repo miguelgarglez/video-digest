@@ -165,7 +165,7 @@ describe("creation and results", () => {
       { requestId: 1, text: "A clean transcript.", type: "print" },
     ]);
     expect(update(model, { type: "reveal-result" }).effects).toEqual([
-      { path: "/library/transcripts/abc123_DEF4.md", requestId: 1, type: "reveal" },
+      { requestId: 1, target: { preference: "transcript", videoId: "abc123_DEF4" }, type: "reveal" },
     ]);
 
     const digestWithoutText = readyModel({
@@ -179,20 +179,20 @@ describe("creation and results", () => {
     const model = readyModel({ result: transcriptResult, screen: "result" });
 
     expect(update(model, { type: "read-result" })).toEqual({
-      effects: [{ path: "/library/transcripts/abc123_DEF4.md", requestId: 1, type: "read" }],
+      effects: [{ requestId: 1, target: { preference: "transcript", videoId: "abc123_DEF4" }, type: "read" }],
       model: expect.objectContaining({ readerOrigin: "result" }),
     });
 
     const reading = update(model, { type: "read-result" }).model;
     const loaded = update(reading, {
       content: "# Transcript",
-      path: "/library/transcripts/abc123_DEF4.md",
+      displayPath: "transcripts/abc123_DEF4.md",
       requestId: 1,
       title: "Example video",
       type: "reader-loaded",
     }).model;
     expect(loaded).toMatchObject({
-      reader: { content: "# Transcript", path: "/library/transcripts/abc123_DEF4.md", title: "Example video" },
+      reader: { content: "# Transcript", displayPath: "transcripts/abc123_DEF4.md", title: "Example video" },
       screen: "reader",
     });
   });
@@ -215,10 +215,10 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
     const model = readyModel({ screen: "library", selectedEntry: entry });
 
     expect(update(model, { type: "read-entry" }).effects).toEqual([
-      { path: "/library/digests/abc123_DEF4.md", requestId: 1, type: "read" },
+      { requestId: 1, target: { preference: "digest", videoId: "abc123_DEF4" }, type: "read" },
     ]);
     expect(update(model, { type: "open-entry-externally" }).effects).toEqual([
-      { path: "/library/digests/abc123_DEF4.md", requestId: 1, type: "open" },
+      { requestId: 1, target: { preference: "digest", videoId: "abc123_DEF4" }, type: "open" },
     ]);
   });
 
@@ -435,7 +435,7 @@ describe("asynchronous effect correlation", () => {
       {
         completion: {
           content: "body",
-          path: entry.paths.digestPath!,
+          displayPath: "digests/abc123_DEF4.md",
           requestId: staleRequestId,
           title: "Title",
           type: "reader-loaded",
@@ -599,7 +599,7 @@ describe("dismissible pending navigation", () => {
       });
       expect(update(dismissed.model, {
         content: "late",
-        path: entry.paths.transcriptMarkdownPath!,
+        displayPath: "transcripts/abc123_DEF4.md",
         requestId: 1,
         title: "late",
         type: "reader-loaded",
@@ -666,7 +666,7 @@ describe("event payload snapshots", () => {
     const opening = update(selected, { type: "open-entry-externally" });
     (canonical as LibraryEntry).paths.digestPath = "/tmp/third-mutation.md";
     expect(opening.effects).toEqual([
-      { path: "/library/digests/abc123_DEF4.md", requestId: 2, type: "open" },
+      { requestId: 2, target: { preference: "digest", videoId: "abc123_DEF4" }, type: "open" },
     ]);
   });
 
@@ -696,7 +696,7 @@ describe("event payload snapshots", () => {
     const reading = update(completed, { type: "read-result" });
     source.entry.paths.transcriptMarkdownPath = "/tmp/second-mutation.md";
     expect(reading.effects).toEqual([
-      { path: "/library/transcripts/abc123_DEF4.md", requestId: 2, type: "read" },
+      { requestId: 2, target: { preference: "transcript", videoId: "abc123_DEF4" }, type: "read" },
     ]);
   });
 

@@ -2,13 +2,12 @@ import { parseYouTubeVideoUrl } from "../video/youtube-url";
 import type { DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
 import {
-  humanReadablePath,
-  resultReadablePath,
   type CreationMode,
   type Effect,
   type Event,
   type Model,
   type LibraryEntrySnapshot,
+  type LibraryTarget,
   type PendingKind,
   type PendingPolicy,
   type RequestId,
@@ -146,7 +145,7 @@ export function update(model: Model, event: Event): Transition {
       return transition(clearPending({
         ...model,
         message: null,
-        reader: { content: event.content, path: event.path, title: event.title },
+        reader: { content: event.content, displayPath: event.displayPath, title: event.title },
         readerOrigin: origin,
         screen: "reader",
       }));
@@ -291,33 +290,44 @@ function resultTextEffect(model: Model, type: "copy" | "print"): Transition {
 }
 
 function resultPathEffect(model: Model, type: "reveal"): Transition {
-  const path = model.screen === "result" && model.result ? resultReadablePath(model.result) : null;
-  return path ? startRequest(model, type, (requestId) => ({ path, requestId, type })) : unchanged(model);
+  const target = resultTarget(model);
+  return target ? startRequest(model, type, (requestId) => ({ requestId, target, type })) : unchanged(model);
 }
 
 function readResult(model: Model): Transition {
   if (model.pending) return unchanged(model);
-  const path = model.screen === "result" && model.result ? resultReadablePath(model.result) : null;
-  return path
-    ? startRequest({ ...model, readerOrigin: "result" }, "read", (requestId) => ({ path, requestId, type: "read" }))
+  const target = resultTarget(model);
+  return target
+    ? startRequest({ ...model, readerOrigin: "result" }, "read", (requestId) => ({ requestId, target, type: "read" }))
     : unchanged(model);
 }
 
 function readEntry(model: Model): Transition {
   if (model.pending) return unchanged(model);
-  const path = selectedEntryPath(model);
-  return path
-    ? startRequest({ ...model, readerOrigin: "library" }, "read", (requestId) => ({ path, requestId, type: "read" }))
+  const target = selectedEntryTarget(model);
+  return target
+    ? startRequest({ ...model, readerOrigin: "library" }, "read", (requestId) => ({ requestId, target, type: "read" }))
     : unchanged(model);
 }
 
 function selectedEntryPathEffect(model: Model, type: "open"): Transition {
-  const path = selectedEntryPath(model);
-  return path ? startRequest(model, type, (requestId) => ({ path, requestId, type })) : unchanged(model);
+  const target = selectedEntryTarget(model);
+  return target ? startRequest(model, type, (requestId) => ({ requestId, target, type })) : unchanged(model);
 }
 
-function selectedEntryPath(model: Model): string | null {
-  return model.screen === "library" && model.selectedEntry ? humanReadablePath(model.selectedEntry) : null;
+function selectedEntryTarget(model: Model): LibraryTarget | null {
+  return model.screen === "library" && model.selectedEntry
+    ? { preference: "digest", videoId: model.selectedEntry.videoId }
+    : null;
+}
+
+function resultTarget(model: Model): LibraryTarget | null {
+  return model.screen === "result" && model.result
+    ? {
+        preference: model.result.kind === "transcript" ? "transcript" : "digest",
+        videoId: model.result.entry.videoId,
+      }
+    : null;
 }
 
 function startRequest<K extends PendingKind>(

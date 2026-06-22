@@ -21,6 +21,10 @@ export type ReaderOrigin = "result" | "library";
 export type GateOrigin = "creation" | "settings";
 export type LibrarySelectionOrigin = "onboarding" | "settings";
 export type RequestId = number;
+export type LibraryTarget = Readonly<{
+  preference: "digest" | "transcript";
+  videoId: string;
+}>;
 export type PendingKind =
   | "save-library"
   | "prepare-runtime"
@@ -62,7 +66,7 @@ export type ResultData = Readonly<{
 
 export type ReaderData = Readonly<{
   content: string;
-  path: string;
+  displayPath: string;
   title: string;
 }>;
 
@@ -145,7 +149,7 @@ export type Event =
   | { type: "select-entry"; videoId: string }
   | { type: "read-entry" }
   | { type: "open-entry-externally" }
-  | { type: "reader-loaded"; content: string; path: string; title: string; requestId: RequestId }
+  | { type: "reader-loaded"; content: string; displayPath: string; title: string; requestId: RequestId }
   | { type: "reader-failed"; message: string; requestId: RequestId }
   | { type: "open-settings" }
   | { type: "change-library" }
@@ -171,10 +175,10 @@ export type Effect =
   | { type: "ingest"; url: string; requestId: RequestId }
   | { type: "transcript"; url: string; requestId: RequestId }
   | { type: "copy"; text: string; requestId: RequestId }
-  | { type: "open"; path: string; requestId: RequestId }
-  | { type: "reveal"; path: string; requestId: RequestId }
+  | { type: "open"; target: LibraryTarget; requestId: RequestId }
+  | { type: "reveal"; target: LibraryTarget; requestId: RequestId }
   | { type: "print"; text: string; requestId: RequestId }
-  | { type: "read"; path: string; requestId: RequestId }
+  | { type: "read"; target: LibraryTarget; requestId: RequestId }
   | { type: "load-library"; requestId: RequestId }
   | { type: "run-doctor"; requestId: RequestId }
   | { type: "cancel-operation"; requestId: RequestId }
@@ -184,13 +188,3 @@ export type Transition = {
   effects: Effect[];
   model: Model;
 };
-
-export function humanReadablePath(entry: LibraryEntrySnapshot): string | null {
-  return entry.paths.digestPath ?? entry.paths.transcriptMarkdownPath;
-}
-
-export function resultReadablePath(result: ResultData): string | null {
-  return result.kind === "transcript"
-    ? result.entry.paths.transcriptMarkdownPath
-    : result.entry.paths.digestPath ?? result.entry.paths.transcriptMarkdownPath;
-}

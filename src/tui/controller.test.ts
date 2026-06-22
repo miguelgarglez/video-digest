@@ -52,18 +52,20 @@ function fakePorts(overrides: Partial<TuiPorts> = {}): TuiPorts {
     },
     credential: { saveOpenCodeApiKey: async () => undefined },
     doctor: { run: async () => ({ checks: [], ok: true }) },
-    library: { list: async () => [entry] },
+    library: {
+      list: async () => [entry],
+      open: async () => undefined,
+      read: async () => ({ content: "contents", displayPath: "entry.md", title: "Entry" }),
+      reveal: async () => undefined,
+    },
     lifecycle: { quit: () => undefined },
     output: { print: () => undefined },
-    reader: { read: async () => "contents" },
     runtime: {
       prepare: async () => undefined,
       readiness: async () => ({ status: "ready" }),
     },
     system: {
       copy: async () => undefined,
-      open: async () => undefined,
-      reveal: async () => undefined,
     },
     ...overrides,
   };
@@ -161,42 +163,52 @@ describe("TUI controller", () => {
     const report: DoctorReport = { checks: [], ok: true };
     const ports = fakePorts({
       doctor: { run: async () => { calls.push("doctor"); return report; } },
-      library: { list: async () => { calls.push("list"); return [entry]; } },
+      library: {
+        list: async () => { calls.push("list"); return [entry]; },
+        open: async (target) => { calls.push(`open:${target.videoId}`); },
+        read: async (target) => {
+          calls.push(`read:${target.videoId}`);
+          return { content: "reader", displayPath: "entry.md", title: "Entry" };
+        },
+        reveal: async (target) => { calls.push(`reveal:${target.videoId}`); },
+      },
       lifecycle: { quit: () => { calls.push("quit"); } },
       output: { print: (text) => { calls.push(`print:${text}`); } },
-      reader: { read: async (path) => { calls.push(`read:${path}`); return "reader"; } },
       runtime: {
         prepare: async () => { calls.push("prepare"); },
         readiness: async () => ({ status: "ready" }),
       },
       system: {
         copy: async (text) => { calls.push(`copy:${text}`); },
-        open: async (path) => { calls.push(`open:${path}`); },
-        reveal: async (path) => { calls.push(`reveal:${path}`); },
       },
     });
     const controller = createTuiController(homeModel(), ports);
 
     await controller.runEffect({ requestId: 10, type: "prepare-runtime" });
     await controller.runEffect({ requestId: 11, type: "load-library" });
-    await controller.runEffect({ path: "/a.md", requestId: 12, type: "read" });
+    await controller.runEffect({ requestId: 12, target: { preference: "digest", videoId: entry.videoId }, type: "read" });
     await controller.runEffect({ requestId: 13, type: "run-doctor" });
     await controller.runEffect({ requestId: 14, text: "copy", type: "copy" });
-    await controller.runEffect({ path: "/a.md", requestId: 15, type: "open" });
-    await controller.runEffect({ path: "/a.md", requestId: 16, type: "reveal" });
+    await controller.runEffect({ requestId: 15, target: { preference: "digest", videoId: entry.videoId }, type: "open" });
+    await controller.runEffect({ requestId: 16, target: { preference: "digest", videoId: entry.videoId }, type: "reveal" });
     await controller.runEffect({ requestId: 17, text: "stdout", type: "print" });
     await controller.runEffect({ type: "quit" });
 
     expect(calls).toEqual([
-      "prepare", "list", "read:/a.md", "doctor", "copy:copy", "open:/a.md",
-      "reveal:/a.md", "print:stdout", "quit",
+      "prepare", "list", "read:abc123_DEF4", "doctor", "copy:copy", "open:abc123_DEF4",
+      "reveal:abc123_DEF4", "print:stdout", "quit",
     ]);
   });
 
   test("returns detached snapshots to callers and snapshots port results", async () => {
     const mutableEntry = structuredClone(entry);
     const controller = createTuiController(homeModel(), fakePorts({
-      library: { list: async () => [mutableEntry] },
+      library: {
+        list: async () => [mutableEntry],
+        open: async () => undefined,
+        read: async () => ({ content: "", displayPath: "", title: "" }),
+        reveal: async () => undefined,
+      },
     }));
 
     await controller.dispatch({ type: "browse-library" });
