@@ -133,6 +133,36 @@ describe("native OpenTUI adapter", () => {
     }
   });
 
+  test("does not resume or render after destruction while a print is pending", async () => {
+    const setup = await createTestRenderer({ height: 18, width: 60 });
+    let releaseWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    let resumes = 0;
+    let destroyed = false;
+    let rendersAfterDestroy = 0;
+    const resume = setup.renderer.resume.bind(setup.renderer);
+    const requestRender = setup.renderer.requestRender.bind(setup.renderer);
+    setup.renderer.resume = () => { resumes += 1; resume(); };
+    setup.renderer.requestRender = () => {
+      if (destroyed) rendersAfterDestroy += 1;
+      requestRender();
+    };
+    const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, {
+      writeExternal: async () => pendingWrite,
+    });
+
+    const printing = facade.print("Clean transcript");
+    await Promise.resolve();
+    facade.destroy();
+    destroyed = true;
+    releaseWrite();
+
+    await expect(printing).rejects.toThrow("terminal renderer is unavailable");
+    expect(resumes).toBe(0);
+    expect(rendersAfterDestroy).toBe(0);
+    setup.renderer.destroy();
+  });
+
   test("edits and submits a secret without putting real characters in renderables or spans", async () => {
     const setup = await createTestRenderer({ height: 20, kittyKeyboard: true, width: 70 });
     const events: Event[] = [];

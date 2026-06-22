@@ -226,9 +226,12 @@ function bindOpenTuiFacade(
       try {
         await writeExternal(text.endsWith("\n") ? text : `${text}\n`);
       } finally {
-        renderer.resume();
-        renderer.requestRender();
+        if (!destroyed) {
+          renderer.resume();
+          renderer.requestRender();
+        }
       }
+      if (destroyed) throw new Error("The terminal renderer is unavailable.");
     },
     render(frame) {
       if (destroyed) return;
