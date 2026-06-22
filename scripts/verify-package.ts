@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const PACKAGE_NAME = "video-digest";
 const PACKAGE_VERSION = "0.1.0";
 const TARBALL_FILENAME = "video-digest-0.1.0.tgz";
+const DEFAULT_PACK_TIMEOUT_MS = 60_000;
+const DEFAULT_TAR_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const TERMINATION_GRACE_MS = 250;
 
 const expectedPackedFiles = [
   "package/package.json",
@@ -77,6 +81,8 @@ export interface CommandInvocation {
   executable: string;
   args: string[];
   cwd: string;
+  timeoutMs: number;
+  maxOutputBytes: number;
 }
 
 export interface CommandResult {
@@ -91,6 +97,10 @@ export interface PackAndVerifyOptions {
   repositoryRoot?: string;
   tempRoot?: string;
   runCommand?: CommandRunner;
+  packTimeoutMs?: number;
+  tarTimeoutMs?: number;
+  maxOutputBytes?: number;
+  removeDirectory?: (path: string) => Promise<void>;
 }
 
 export interface VerifiedPackage {
@@ -125,6 +135,10 @@ function normalizePackedFileName(name: string): string {
     throw new Error(`Unsafe packed file name: ${displayPath(name)}`);
   }
   return normalized;
+}
+
+function expectedMode(path: string): number {
+  return path === "package/bin/video-digest" ? 0o755 : 0o644;
 }
 
 export function validatePackedFiles(files: readonly string[]): string[] {
@@ -168,18 +182,98 @@ export function verifyPackedFileListsAgree(
   validatePackedFiles(npmFiles);
 }
 
-async function runProcess(invocation: CommandInvocation): Promise<CommandResult> {
-  const process = Bun.spawn([invocation.executable, ...invocation.args], {
-    cwd: invocation.cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+function validateCommandLimits(invocation: CommandInvocation): void {
+  if (!Number.isFinite(invocation.timeoutMs) || invocation.timeoutMs <= 0) {
+    throw new Error("Command timeout must be positive");
+  }
+  if (!Number.isSafeInteger(invocation.maxOutputBytes) || invocation.maxOutputBytes <= 0) {
+    throw new Error("Command output limit must be a positive integer");
+  }
+}
+
+export async function runBoundedProcess(invocation: CommandInvocation): Promise<CommandResult> {
+  validateCommandLimits(invocation);
+  let child: ReturnType<typeof Bun.spawn>;
+  try {
+    child = Bun.spawn([invocation.executable, ...invocation.args], {
+      cwd: invocation.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch {
+    throw new Error("Command could not be started");
+  }
+
+  let failure: Error | null = null;
+  let outputBytes = 0;
+  let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminate = (reason: Error) => {
+    if (failure) return;
+    failure = reason;
+    try {
+      child.kill();
+    } catch {
+      // The child may already have exited between the limit check and termination.
+    }
+    escalationTimer = setTimeout(() => {
+      try {
+        child.kill(9);
+      } catch {
+        // A settled process needs no escalation.
+      }
+    }, TERMINATION_GRACE_MS);
+  };
+
+  const timeoutTimer = setTimeout(
+    () => terminate(new Error("Command timed out")),
+    invocation.timeoutMs,
+  );
+
+  const collect = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> => {
+    const chunks: Uint8Array[] = [];
+    const reader = stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return chunks;
+      outputBytes += value.byteLength;
+      if (outputBytes > invocation.maxOutputBytes) {
+        terminate(new Error("Command output exceeded limit"));
+        continue;
+      }
+      chunks.push(value);
+    }
+  };
+
+  const stdoutPromise = collect(child.stdout as ReadableStream<Uint8Array>);
+  const stderrPromise = collect(child.stderr as ReadableStream<Uint8Array>);
+  const [exitResult, stdoutResult, stderrResult] = await Promise.allSettled([
+    child.exited,
+    stdoutPromise,
+    stderrPromise,
   ]);
-  return { exitCode, stdout, stderr };
+  clearTimeout(timeoutTimer);
+  if (escalationTimer) clearTimeout(escalationTimer);
+
+  if (failure) throw failure;
+  if (
+    exitResult.status !== "fulfilled" ||
+    stdoutResult.status !== "fulfilled" ||
+    stderrResult.status !== "fulfilled"
+  ) {
+    throw new Error("Command execution failed");
+  }
+
+  const decode = (chunks: Uint8Array[]) => {
+    const decoder = new TextDecoder();
+    return chunks.map((chunk, index) =>
+      decoder.decode(chunk, { stream: index < chunks.length - 1 }),
+    ).join("");
+  };
+  return {
+    exitCode: exitResult.value,
+    stdout: decode(stdoutResult.value),
+    stderr: decode(stderrResult.value),
+  };
 }
 
 interface NpmPackRecord {
@@ -190,7 +284,23 @@ interface NpmPackRecord {
   files?: unknown;
 }
 
-function parseNpmPackOutput(stdout: string): { filename: string; files: string[] } {
+function validateRawNpmPath(path: string): string {
+  const segments = path.split("/");
+  if (
+    path.length === 0 ||
+    controlCharacter.test(path) ||
+    path.startsWith("/") ||
+    path.startsWith("\\") ||
+    path.includes("\\") ||
+    /^[A-Za-z]:/.test(path) ||
+    segments.some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error(`Unsafe npm pack file path: ${displayPath(path)}`);
+  }
+  return path;
+}
+
+export function parseNpmPackOutput(stdout: string): { filename: string; files: string[] } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -220,6 +330,7 @@ function parseNpmPackOutput(stdout: string): { filename: string; files: string[]
     throw new Error("npm pack returned an invalid file manifest");
   }
 
+  const seen = new Set<string>();
   const files = record.files.map((entry) => {
     if (
       typeof entry !== "object" ||
@@ -229,7 +340,18 @@ function parseNpmPackOutput(stdout: string): { filename: string; files: string[]
     ) {
       throw new Error("npm pack returned an invalid file manifest");
     }
-    return `package/${entry.path}`;
+    const rawPath = validateRawNpmPath(entry.path);
+    if (seen.has(rawPath)) throw new Error(`Duplicate npm pack file path: ${rawPath}`);
+    seen.add(rawPath);
+    const path = `package/${rawPath}`;
+
+    if (!("mode" in entry) || entry.mode !== expectedMode(path)) {
+      throw new Error(`Unexpected npm pack file mode: ${path}`);
+    }
+    if ("type" in entry && entry.type !== undefined && entry.type !== "file") {
+      throw new Error(`Unexpected npm pack file type: ${path}`);
+    }
+    return path;
   });
   return { filename: record.filename, files };
 }
@@ -243,19 +365,79 @@ function parseTarListing(stdout: string): string[] {
   return files;
 }
 
+export function validateTarMetadata(stdout: string): string[] {
+  const lines = parseTarListing(stdout);
+  const paths = lines.map((line) => {
+    const mode = line.slice(0, 10);
+    if (!/^[\-bcdhlps][rwxStTs-]{9}$/.test(mode) || !/^\s$/.test(line[10] ?? "")) {
+      throw new Error("tar returned an invalid verbose listing");
+    }
+    const pathTokens = line
+      .trim()
+      .split(/\s+/)
+      .filter((token) => token.startsWith("package/") || token.startsWith("./package/"));
+    if (pathTokens.length !== 1) {
+      throw new Error("tar returned an ambiguous verbose listing");
+    }
+    const path = normalizePackedFileName(pathTokens[0]!);
+    if (mode[0] !== "-") throw new Error(`Unexpected tar entry type: ${path}`);
+    const requiredMode = expectedMode(path) === 0o755 ? "-rwxr-xr-x" : "-rw-r--r--";
+    if (mode !== requiredMode) throw new Error(`Unexpected tar entry mode: ${path}`);
+    return path;
+  });
+  return validatePackedFiles(paths);
+}
+
+function safePositiveLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value) || value <= 0) throw new Error("Command limit must be positive");
+  return value;
+}
+
 export async function packAndVerifyPackage(
   options: PackAndVerifyOptions = {},
 ): Promise<VerifiedPackage> {
   const repositoryRoot = resolve(
     options.repositoryRoot ?? fileURLToPath(new URL("..", import.meta.url)),
   );
+  const packTimeoutMs = safePositiveLimit(options.packTimeoutMs, DEFAULT_PACK_TIMEOUT_MS);
+  const tarTimeoutMs = safePositiveLimit(options.tarTimeoutMs, DEFAULT_TAR_TIMEOUT_MS);
+  const maxOutputBytes = safePositiveLimit(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES);
+  if (!Number.isSafeInteger(maxOutputBytes)) {
+    throw new Error("Command output limit must be a positive integer");
+  }
   const temporaryDirectory = await mkdtemp(
     join(resolve(options.tempRoot ?? tmpdir()), "video-digest-pack-"),
   );
-  const runCommand = options.runCommand ?? runProcess;
+  const runCommand = options.runCommand ?? runBoundedProcess;
+  const removeDirectory =
+    options.removeDirectory ??
+    ((path: string) => rm(path, { recursive: true, force: true }));
+  const invokeCommand = async (
+    label: string,
+    invocation: CommandInvocation,
+  ): Promise<CommandResult> => {
+    let result: CommandResult;
+    try {
+      result = await runCommand(invocation);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Command timed out") {
+        throw new Error(`${label} timed out`);
+      }
+      if (error instanceof Error && error.message === "Command output exceeded limit") {
+        throw new Error(`${label} output exceeded limit`);
+      }
+      throw new Error(`${label} could not be executed`);
+    }
+    const outputBytes = Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
+    if (outputBytes > invocation.maxOutputBytes) {
+      throw new Error(`${label} output exceeded limit`);
+    }
+    return result;
+  };
 
   try {
-    const packResult = await runCommand({
+    const packResult = await invokeCommand("npm pack", {
       executable: "npm",
       args: [
         "pack",
@@ -265,6 +447,8 @@ export async function packAndVerifyPackage(
         temporaryDirectory,
       ],
       cwd: repositoryRoot,
+      timeoutMs: packTimeoutMs,
+      maxOutputBytes,
     });
     if (packResult.exitCode !== 0) {
       throw new Error(`npm pack failed with exit code ${packResult.exitCode}`);
@@ -272,31 +456,60 @@ export async function packAndVerifyPackage(
 
     const manifest = parseNpmPackOutput(packResult.stdout);
     const tarballPath = join(temporaryDirectory, manifest.filename);
-    const tarResult = await runCommand({
+    const tarResult = await invokeCommand("tar listing", {
       executable: "tar",
       args: ["-tzf", tarballPath],
       cwd: repositoryRoot,
+      timeoutMs: tarTimeoutMs,
+      maxOutputBytes,
     });
     if (tarResult.exitCode !== 0) {
       throw new Error(`tar listing failed with exit code ${tarResult.exitCode}`);
     }
 
     const tarFiles = parseTarListing(tarResult.stdout);
-    const npmFiles = manifest.files.map((file) => normalizePackedFileName(file));
+    const verboseTarResult = await invokeCommand("tar metadata listing", {
+      executable: "tar",
+      args: ["-tvzf", tarballPath],
+      cwd: repositoryRoot,
+      timeoutMs: tarTimeoutMs,
+      maxOutputBytes,
+    });
+    if (verboseTarResult.exitCode !== 0) {
+      throw new Error(`tar metadata listing failed with exit code ${verboseTarResult.exitCode}`);
+    }
+
+    const verboseTarFiles = validateTarMetadata(verboseTarResult.stdout);
+    const npmFiles = manifest.files;
     verifyPackedFileListsAgree(tarFiles, npmFiles);
+    verifyPackedFileListsAgree(tarFiles, verboseTarFiles);
 
     let cleaned = false;
+    let cleanupPromise: Promise<void> | undefined;
+    const cleanup = (): Promise<void> => {
+      if (cleaned) return Promise.resolve();
+      if (cleanupPromise) return cleanupPromise;
+      cleanupPromise = Promise.resolve()
+        .then(() => removeDirectory(temporaryDirectory))
+        .then(() => {
+          cleaned = true;
+        })
+        .finally(() => {
+          cleanupPromise = undefined;
+        });
+      return cleanupPromise;
+    };
     return {
       tarballPath,
       temporaryDirectory,
-      cleanup: async () => {
-        if (cleaned) return;
-        cleaned = true;
-        await rm(temporaryDirectory, { recursive: true, force: true });
-      },
+      cleanup,
     };
   } catch (error) {
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    try {
+      await removeDirectory(temporaryDirectory);
+    } catch {
+      throw new Error("Package verification and temporary cleanup failed");
+    }
     throw error;
   }
 }

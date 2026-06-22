@@ -1,11 +1,14 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
   packAndVerifyPackage,
+  parseNpmPackOutput,
+  runBoundedProcess,
   validatePackedFiles,
+  validateTarMetadata,
   verifyPackedFileListsAgree,
   type CommandInvocation,
 } from "./verify-package";
@@ -70,6 +73,36 @@ const validPackedFiles = [
   "package/src/web/server.ts",
   "package/src/web/startup.ts",
 ] as const;
+
+function expectedMode(path: string): number {
+  return path === "package/bin/video-digest" ? 0o755 : 0o644;
+}
+
+function npmPackJson(paths: readonly string[] = validPackedFiles): string {
+  return JSON.stringify([
+    {
+      id: "video-digest@0.1.0",
+      name: "video-digest",
+      version: "0.1.0",
+      filename: "video-digest-0.1.0.tgz",
+      files: paths.map((path) => ({
+        path: path.slice("package/".length),
+        mode: expectedMode(path),
+      })),
+    },
+  ]);
+}
+
+function tarVerboseListing(paths: readonly string[] = validPackedFiles): string {
+  return (
+    paths
+      .map((path) => {
+        const mode = path === "package/bin/video-digest" ? "-rwxr-xr-x" : "-rw-r--r--";
+        return `${mode}  0 0  0  1 Oct 26 1985 ${path}`;
+      })
+      .join("\n") + "\n"
+  );
+}
 
 describe("packed-file validation", () => {
   test("accepts exactly the public package contract", () => {
@@ -136,6 +169,73 @@ describe("packed-file validation", () => {
       verifyPackedFileListsAgree(validPackedFiles, validPackedFiles.slice(1)),
     ).toThrow("Packed manifests disagree");
   });
+
+  test("accepts BSD and GNU verbose tar formats with exact regular-file modes", () => {
+    expect(validateTarMetadata(tarVerboseListing())).toEqual([...validPackedFiles].sort());
+    const gnuListing = validPackedFiles
+      .map((path) => {
+        const mode = path === "package/bin/video-digest" ? "-rwxr-xr-x" : "-rw-r--r--";
+        return `${mode} root/root 1 2026-06-22 12:00 ${path}`;
+      })
+      .join("\n");
+    expect(validateTarMetadata(gnuListing)).toEqual([...validPackedFiles].sort());
+  });
+
+  test("rejects archive links, special entries, and incorrect executable modes", () => {
+    for (const replacement of [
+      "lrwxrwxrwx  0 0  0  1 Oct 26 1985 package/bin/video-digest -> /tmp/evil",
+      "hrw-r--r--  0 0  0  1 Oct 26 1985 package/LICENSE link to package/README.md",
+      "drwxr-xr-x  0 0  0  0 Oct 26 1985 package/docs/cli",
+      "-rw-r--r--  0 0  0  1 Oct 26 1985 package/bin/video-digest",
+      "-rwxr-xr-x  0 0  0  1 Oct 26 1985 package/README.md",
+      "-rw-r--r--@ 0 0  0  1 Oct 26 1985 package/README.md",
+    ]) {
+      const path = replacement.split(/\s+/).find((part) => part.startsWith("package/"))!;
+      const original = tarVerboseListing()
+        .split("\n")
+        .find((line) => line.endsWith(path));
+      const listing = original
+        ? tarVerboseListing().replace(original, replacement)
+        : tarVerboseListing() + replacement + "\n";
+      expect(() => validateTarMetadata(listing)).toThrow();
+    }
+  });
+
+  test("validates raw npm paths before adding the archive prefix", () => {
+    for (const path of [
+      "/package.json",
+      "../package.json",
+      "a//b",
+      ".",
+      "a/./b",
+      "C:/package.json",
+      "\\\\server\\package.json",
+      "bad\nname",
+    ]) {
+      expect(() => parseNpmPackOutput(npmPackJson([`package/${path}`]))).toThrow(
+        "Unsafe npm pack file path",
+      );
+    }
+    const duplicate = JSON.parse(npmPackJson()) as Array<{ files: unknown[] }>;
+    duplicate[0]!.files.push(duplicate[0]!.files[0]);
+    expect(() => parseNpmPackOutput(JSON.stringify(duplicate))).toThrow(
+      "Duplicate npm pack file path",
+    );
+  });
+
+  test("rejects npm modes and types that contradict the package contract", () => {
+    const badMode = JSON.parse(npmPackJson()) as Array<{ files: Array<Record<string, unknown>> }>;
+    badMode[0]!.files.find((entry) => entry.path === "bin/video-digest")!.mode = 0o644;
+    expect(() => parseNpmPackOutput(JSON.stringify(badMode))).toThrow(
+      "Unexpected npm pack file mode",
+    );
+
+    const badType = JSON.parse(npmPackJson()) as Array<{ files: Array<Record<string, unknown>> }>;
+    badType[0]!.files[0]!.type = "symlink";
+    expect(() => parseNpmPackOutput(JSON.stringify(badType))).toThrow(
+      "Unexpected npm pack file type",
+    );
+  });
 });
 
 describe("package creation", () => {
@@ -152,17 +252,12 @@ describe("package creation", () => {
           await writeFile(join(destination, "video-digest-0.1.0.tgz"), "fixture");
           return {
             exitCode: 0,
-            stdout: JSON.stringify([
-              {
-                id: "video-digest@0.1.0",
-                name: "video-digest",
-                version: "0.1.0",
-                filename: "video-digest-0.1.0.tgz",
-                files: validPackedFiles.map((path) => ({ path: path.slice("package/".length) })),
-              },
-            ]),
+            stdout: npmPackJson(),
             stderr: "",
           };
+        }
+        if (invocation.args[0] === "-tvzf") {
+          return { exitCode: 0, stdout: tarVerboseListing(), stderr: "" };
         }
         return { exitCode: 0, stdout: validPackedFiles.join("\n") + "\n", stderr: "" };
       };
@@ -179,6 +274,14 @@ describe("package creation", () => {
           result.temporaryDirectory,
         ],
         ["tar", "-tzf", result.tarballPath],
+        ["tar", "-tvzf", result.tarballPath],
+      ]);
+      expect(
+        invocations.map(({ timeoutMs, maxOutputBytes }) => ({ timeoutMs, maxOutputBytes })),
+      ).toEqual([
+        { timeoutMs: 60_000, maxOutputBytes: 2 * 1024 * 1024 },
+        { timeoutMs: 15_000, maxOutputBytes: 2 * 1024 * 1024 },
+        { timeoutMs: 15_000, maxOutputBytes: 2 * 1024 * 1024 },
       ]);
       expect(result.tarballPath).toBe(
         join(result.temporaryDirectory, "video-digest-0.1.0.tgz"),
@@ -200,6 +303,120 @@ describe("package creation", () => {
     try {
       await packAndVerifyPackage({ repositoryRoot: process.cwd(), runCommand });
     } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+
+    const throwingRunner = async (): Promise<never> => {
+      throw new Error(secret);
+    };
+    await expect(
+      packAndVerifyPackage({ repositoryRoot: process.cwd(), runCommand: throwingRunner }),
+    ).rejects.toThrow("npm pack could not be executed");
+    try {
+      await packAndVerifyPackage({ repositoryRoot: process.cwd(), runCommand: throwingRunner });
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  test("enforces the output cap on an injected command runner", async () => {
+    const runCommand = async () => ({
+      exitCode: 0,
+      stdout: "secret".repeat(100),
+      stderr: "",
+    });
+    await expect(
+      packAndVerifyPackage({ repositoryRoot: process.cwd(), runCommand, maxOutputBytes: 32 }),
+    ).rejects.toThrow("npm pack output exceeded limit");
+  });
+
+  test("shares concurrent cleanup, then resets a failed attempt for retry", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "video digest cleanup tests "));
+    let attempts = 0;
+    let releaseFirst!: () => void;
+    const firstAttempt = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const removeDirectory = async (path: string) => {
+      expect(path.startsWith(tempRoot)).toBe(true);
+      attempts += 1;
+      if (attempts === 1) {
+        await firstAttempt;
+        throw new Error("injected cleanup failure");
+      }
+      await rm(path, { recursive: true, force: true });
+    };
+    const runCommand = async (invocation: CommandInvocation) => {
+      if (invocation.executable === "npm") {
+        await writeFile(join(invocation.args.at(-1)!, "video-digest-0.1.0.tgz"), "fixture");
+        return { exitCode: 0, stdout: npmPackJson(), stderr: "" };
+      }
+      return {
+        exitCode: 0,
+        stdout:
+          invocation.args[0] === "-tvzf"
+            ? tarVerboseListing()
+            : validPackedFiles.join("\n") + "\n",
+        stderr: "",
+      };
+    };
+    try {
+      const result = await packAndVerifyPackage({ tempRoot, runCommand, removeDirectory });
+      const cleanupA = result.cleanup();
+      const cleanupB = result.cleanup();
+      expect(cleanupA).toBe(cleanupB);
+      releaseFirst();
+      await expect(cleanupA).rejects.toThrow("injected cleanup failure");
+      expect(attempts).toBe(1);
+      await result.cleanup();
+      expect(attempts).toBe(2);
+      await result.cleanup();
+      expect(attempts).toBe(2);
+    } finally {
+      releaseFirst();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects invalid limits before allocating a temporary package directory", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "video digest invalid limit tests "));
+    try {
+      await expect(packAndVerifyPackage({ tempRoot, packTimeoutMs: 0 })).rejects.toThrow(
+        "Command limit must be positive",
+      );
+      expect(await readdir(tempRoot)).toEqual([]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("bounded command execution", () => {
+  test("terminates and settles a timed-out child", async () => {
+    await expect(
+      runBoundedProcess({
+        executable: process.execPath,
+        args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+        cwd: process.cwd(),
+        timeoutMs: 25,
+        maxOutputBytes: 1024,
+      }),
+    ).rejects.toThrow("Command timed out");
+  });
+
+  test("terminates a child when combined output exceeds the limit", async () => {
+    const secret = "x".repeat(2048);
+    try {
+      await runBoundedProcess({
+        executable: process.execPath,
+        args: ["-e", `console.log(${JSON.stringify(secret)}); setInterval(() => {}, 1000)`],
+        cwd: process.cwd(),
+        timeoutMs: 2_000,
+        maxOutputBytes: 32,
+      });
+      throw new Error("expected output limit failure");
+    } catch (error) {
+      expect(String(error)).toContain("Command output exceeded limit");
       expect(String(error)).not.toContain(secret);
     }
   });
