@@ -166,7 +166,8 @@ export type Event =
   | { type: "system-action-completed"; requestId: RequestId }
   | { type: "system-action-failed"; message: string; requestId: RequestId }
   | { type: "back" }
-  | { type: "go-home" };
+  | { type: "go-home" }
+  | { type: "quit" };
 
 export type Effect =
   | { type: "save-library"; path: string; requestId: RequestId }

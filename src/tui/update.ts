@@ -232,6 +232,8 @@ export function update(model: Model, event: Event): Transition {
       if (model.config.artifactLibrary === null) return unchanged(model);
       return navigateHomeWithPendingPolicy(model);
     }
+    case "quit":
+      return transition(model, [{ type: "quit" }]);
     default:
       return assertNever(event);
   }

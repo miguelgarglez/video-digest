@@ -317,6 +317,15 @@ describe("navigation", () => {
     expect(update(readyModel(), { type: "back" }).effects).toEqual([{ type: "quit" }]);
     expect(update(initialModel({ artifactLibrary: null }), { type: "back" }).effects).toEqual([{ type: "quit" }]);
   });
+
+  test("Ctrl-C can request a clean quit from every screen", () => {
+    const progress = readyModel({ screen: "progress" });
+
+    expect(update(progress, { type: "quit" })).toEqual({
+      effects: [{ type: "quit" }],
+      model: progress,
+    });
+  });
 });
 
 describe("asynchronous effect correlation", () => {
