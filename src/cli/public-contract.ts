@@ -42,3 +42,33 @@ export type PublicCliErrorCode = typeof PUBLIC_CLI_ERROR_CODES[number];
 
 export const PUBLIC_CLI_EXIT_CODES = [0, 1, 2] as const;
 export type PublicCliExitCode = typeof PUBLIC_CLI_EXIT_CODES[number];
+
+export const PUBLIC_DOCTOR_CHECK_ID = {
+  bun: "bun",
+  opencodeApiKey: "opencode-api-key",
+  outputDir: "output-dir",
+  pythonRuntime: "python-runtime",
+  pythonSidecar: "python-sidecar",
+  uv: "uv",
+} as const;
+
+export const PUBLIC_DOCTOR_CHECK_IDS = [
+  PUBLIC_DOCTOR_CHECK_ID.bun,
+  PUBLIC_DOCTOR_CHECK_ID.uv,
+  PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
+  PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
+  PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
+  PUBLIC_DOCTOR_CHECK_ID.outputDir,
+] as const;
+
+export type PublicDoctorCheckId = typeof PUBLIC_DOCTOR_CHECK_IDS[number];
+export type PublicDoctorCapability = "digest" | "transcript";
+
+export const PUBLIC_DOCTOR_CHECK_CAPABILITY = {
+  [PUBLIC_DOCTOR_CHECK_ID.bun]: "transcript",
+  [PUBLIC_DOCTOR_CHECK_ID.uv]: "transcript",
+  [PUBLIC_DOCTOR_CHECK_ID.pythonSidecar]: "transcript",
+  [PUBLIC_DOCTOR_CHECK_ID.pythonRuntime]: "transcript",
+  [PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey]: "digest",
+  [PUBLIC_DOCTOR_CHECK_ID.outputDir]: "transcript",
+} as const satisfies Record<PublicDoctorCheckId, PublicDoctorCapability>;

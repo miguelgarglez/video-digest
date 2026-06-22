@@ -225,7 +225,7 @@ describe("buildScreenView", () => {
     const report: DoctorReport = {
       checks: [{
         capability: "transcript",
-        id: "runtime",
+        id: "python-runtime",
         message: "Runtime\u001b[31m ready",
         remediation: null,
         status: "pass",

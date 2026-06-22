@@ -722,7 +722,7 @@ describe("event payload snapshots", () => {
 
   test("deep-snapshots doctor reports", () => {
     const report = {
-      checks: [{ capability: "transcript" as const, id: "runtime", message: "Ready", remediation: null, status: "pass" as const }],
+      checks: [{ capability: "transcript" as const, id: "python-runtime" as const, message: "Ready", remediation: null, status: "pass" as const }],
       ok: true,
     };
     const running = update(readyModel(), { type: "open-doctor" }).model;
@@ -731,7 +731,7 @@ describe("event payload snapshots", () => {
     report.ok = false;
     report.checks[0]!.message = "Mutated";
     expect(completed.doctorReport).toEqual({
-      checks: [{ capability: "transcript", id: "runtime", message: "Ready", remediation: null, status: "pass" }],
+      checks: [{ capability: "transcript", id: "python-runtime", message: "Ready", remediation: null, status: "pass" }],
       ok: true,
     });
   });

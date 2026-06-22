@@ -1,4 +1,5 @@
 import { createTuiController, type TuiController, type TuiControllerOptions } from "./controller";
+import type { PublicCliExitCode } from "../cli/public-contract";
 import type { Model } from "./model";
 import type { TuiPorts } from "./ports";
 import {
@@ -47,7 +48,7 @@ export type StartTuiOptions = Readonly<{
  * block, including controller quit, OS signals, renderer failures, and bootstrap
  * failures. Service construction is injected to keep tests free of native effects.
  */
-export async function startTui(options: StartTuiOptions = {}): Promise<number> {
+export async function startTui(options: StartTuiOptions = {}): Promise<PublicCliExitCode> {
   const createFacade = options.createFacade ?? createOpenTuiFacade;
   const createController = options.createController ?? createTuiController;
   const createRenderer = options.createRenderer ?? createTuiRenderer;
@@ -55,7 +56,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<number> {
   let facade: OpenTuiFacade | null = null;
   let renderer: TuiRenderer | null = null;
   let controller: TuiController | null = null;
-  let exitCode = 0;
+  let exitCode: PublicCliExitCode = 0;
   let settled = false;
   let initialized = false;
   let reported = false;
@@ -71,7 +72,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<number> {
       // Reporting must not prevent terminal restoration.
     }
   };
-  const requestExit = (code = 0): void => {
+  const requestExit = (code: PublicCliExitCode = 0): void => {
     if (code !== 0) exitCode = 1;
     if (settled) return;
     settled = true;

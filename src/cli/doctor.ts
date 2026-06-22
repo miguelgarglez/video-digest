@@ -6,12 +6,18 @@ import { MacOSKeychainCredentialStore, type CredentialStore } from "./credential
 import { resolveAppPaths } from "./app-paths";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
+import {
+  PUBLIC_DOCTOR_CHECK_CAPABILITY,
+  PUBLIC_DOCTOR_CHECK_ID,
+  type PublicDoctorCapability,
+  type PublicDoctorCheckId,
+} from "./public-contract";
 
-export type DoctorCapability = "transcript" | "digest";
+export type DoctorCapability = PublicDoctorCapability;
 
 export type DoctorCheck = {
   capability: DoctorCapability;
-  id: string;
+  id: PublicDoctorCheckId;
   message: string;
   remediation: string | null;
   status: "pass" | "warn" | "fail";
@@ -61,8 +67,8 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
   const readiness = await probe.runtimeReadiness();
   const checks: DoctorCheck[] = [
     {
-      capability: "transcript",
-      id: "bun",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.bun],
+      id: PUBLIC_DOCTOR_CHECK_ID.bun,
       message: `Bun runtime is available (${probe.bunVersion})`,
       remediation: null,
       status: "pass",
@@ -83,16 +89,16 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
 function runtimeCheck(readiness: RuntimeReadiness): DoctorCheck {
   if (readiness.status === "ready") {
     return {
-      capability: "transcript",
-      id: "python-runtime",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonRuntime],
+      id: PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
       message: "Managed Python runtime is ready",
       remediation: null,
       status: "pass",
     };
   }
   return {
-    capability: "transcript",
-    id: "python-runtime",
+    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonRuntime],
+    id: PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
     message: `Managed Python runtime is ${readiness.status}`,
     remediation: readiness.remediation,
     status: "fail",
@@ -104,15 +110,15 @@ async function uvCheck(probe: DoctorProbe, uvPath: string, readiness: RuntimeRea
 
   return available
     ? {
-        capability: "transcript",
-        id: "uv",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.uv],
+        id: PUBLIC_DOCTOR_CHECK_ID.uv,
         message: uvPath === "uv" ? "uv is available" : `uv is available at ${uvPath}`,
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "uv",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.uv],
+        id: PUBLIC_DOCTOR_CHECK_ID.uv,
         message: `${uvPath} is not available`,
         remediation: "Install uv, source $HOME/.local/bin/env, or set UV_BIN.",
         status: readiness.status === "ready" ? "warn" : "fail",
@@ -124,15 +130,15 @@ async function sidecarCheck(probe: DoctorProbe, sidecarPath: string): Promise<Do
 
   return exists
     ? {
-        capability: "transcript",
-        id: "python-sidecar",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonSidecar],
+        id: PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
         message: "Python transcript sidecar exists",
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "python-sidecar",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonSidecar],
+        id: PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
         message: `${sidecarPath} is not available`,
         remediation: "Restore python/fetch_transcript.py.",
         status: "fail",
@@ -142,8 +148,8 @@ async function sidecarCheck(probe: DoctorProbe, sidecarPath: string): Promise<Do
 async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
   if (probe.env.OPENCODE_API_KEY) {
     return {
-      capability: "digest",
-      id: "opencode-api-key",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
       message: "OPENCODE_API_KEY is configured via env; digest generation is available",
       remediation: null,
       status: "pass",
@@ -152,8 +158,8 @@ async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
 
   if (await probe.getStoredOpenCodeApiKey?.()) {
     return {
-      capability: "digest",
-      id: "opencode-api-key",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
       message: "OPENCODE_API_KEY is configured via Keychain; digest generation is available",
       remediation: null,
       status: "pass",
@@ -161,8 +167,8 @@ async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
   }
 
   return {
-    capability: "digest",
-    id: "opencode-api-key",
+    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+    id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
     message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
     remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
     status: "warn",
@@ -174,15 +180,15 @@ async function outputDirCheck(probe: DoctorProbe, outputDir: string): Promise<Do
 
   return writable
     ? {
-        capability: "transcript",
-        id: "output-dir",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.outputDir],
+        id: PUBLIC_DOCTOR_CHECK_ID.outputDir,
         message: "Output directory is writable or can be created",
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "output-dir",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.outputDir],
+        id: PUBLIC_DOCTOR_CHECK_ID.outputDir,
         message: `Output directory is not writable at ${outputDir}`,
         remediation: "Choose a writable VIDEO_DIGEST_OUTPUT_DIR.",
         status: "fail",

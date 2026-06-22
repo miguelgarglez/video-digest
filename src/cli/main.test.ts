@@ -14,8 +14,9 @@ import { RuntimeSetupError } from "./runtime-manager";
 import type { LibraryFileOperations } from "./artifacts";
 import { writeTranscriptOnlyOutputs } from "../output/output-writer";
 import { SystemActionError } from "./system-actions";
+import type { PublicCliExitCode } from "./public-contract";
 
-async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<number> {
+async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<PublicCliExitCode> {
   return runCliProduction(args, io, {
     appPaths: {
       configPath: "/test-home/Library/Application Support/video-digest/config.json",

@@ -46,6 +46,7 @@ import {
   PUBLIC_CLI_ERROR_CODE,
   PUBLIC_CLI_SCHEMA,
   type PublicCliErrorCode,
+  type PublicCliExitCode,
 } from "./public-contract";
 
 export type CliIO = {
@@ -83,7 +84,7 @@ export type CliDependencies = {
   withRecoveredOutputLibrary?: <T>(outputDir: string, operation: () => Promise<T>) => Promise<T>;
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
-  startTui?: () => Promise<number>;
+  startTui?: () => Promise<PublicCliExitCode>;
   summarizerFactory?: (apiKey: string | null) => Summarizer;
 };
 
@@ -96,7 +97,7 @@ export async function runCli(
   args: string[],
   io: CliIO = defaultCliIO,
   dependencies: CliDependencies = {},
-): Promise<number> {
+): Promise<PublicCliExitCode> {
   try {
     if (args.length === 0) {
       if (io.inputIsTTY !== true || io.outputIsTTY !== true) {
@@ -340,7 +341,7 @@ export async function runCli(
 function formatCliError(
   error: unknown,
   video?: { canonicalUrl: string },
-): { code: PublicCliErrorCode; exitCode: number; message: string } {
+): { code: PublicCliErrorCode; exitCode: PublicCliExitCode; message: string } {
   if (error instanceof TranscriptSourceError && error.code === "transcript-unavailable") {
     const providerReason = extractProviderReason(error.message);
     const lines = [
@@ -523,7 +524,7 @@ async function runConfigCommand(
   env: Record<string, string | undefined>,
   artifactLibrary: ArtifactLibraryResolution,
   configuredArtifactLibrary: string | null,
-): Promise<number> {
+): Promise<PublicCliExitCode> {
   if (command.subcommand === "get") {
     const credential = await resolveOpenCodeApiKey({
       env,
@@ -661,7 +662,7 @@ async function runTranscriptCommand(input: {
   spinnerIntervalMs?: number;
   systemActions?: SystemActions;
   video: { canonicalUrl: string; videoId: string };
-}): Promise<number> {
+}): Promise<PublicCliExitCode> {
   const presentation = input.presentation ?? { copy: false, open: false, stdout: false };
   const progress = input.json || presentation.stdout ? null : createProgressRenderer(input.io, {
     intervalMs: input.spinnerIntervalMs,
@@ -911,7 +912,7 @@ async function runSetupCommand(
   command: Extract<CliOptions, { command: "setup" }>,
   io: CliIO,
   runtimeManager: RuntimeManager,
-): Promise<number> {
+): Promise<PublicCliExitCode> {
   if (!command.yes) {
     if (command.json || !io.isTTY || !io.prompt) {
       const message = "Setup requires explicit consent; rerun with --yes.";
@@ -965,7 +966,7 @@ async function requireReadyRuntime(
   runtimeManager: RuntimeManager,
   json: boolean,
   io: CliIO,
-): Promise<number | null> {
+): Promise<PublicCliExitCode | null> {
   const readiness = await runtimeManager.inspect();
   if (readiness.status === "ready") return null;
   const message = `Python runtime is ${readiness.status}. ${readiness.remediation}`;

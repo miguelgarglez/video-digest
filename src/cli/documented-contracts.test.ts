@@ -7,10 +7,14 @@ import type { IngestVideoResult } from "../ingestion/ingest-video";
 import { TranscriptSourceError } from "../transcript/transcript-source";
 import type { CliDependencies, CliIO } from "./main";
 import { runCli } from "./main";
+import type { DoctorReport } from "./doctor";
 import {
   PUBLIC_CLI_ERROR_CODES,
   PUBLIC_CLI_EXIT_CODES,
   PUBLIC_CLI_SCHEMA_VERSIONS,
+  PUBLIC_DOCTOR_CHECK_CAPABILITY,
+  PUBLIC_DOCTOR_CHECK_IDS,
+  type PublicCliExitCode,
 } from "./public-contract";
 
 const JSON_CONTRACTS = "docs/cli/json-contracts.md";
@@ -20,7 +24,7 @@ const VIDEO_ID = "1ZgUcrR0K7I";
 const VIDEO_URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
 
 type CapturedCliResult = {
-  exitCode: number;
+  exitCode: PublicCliExitCode;
   payload: unknown;
   stderr: string[];
   stdout: string[];
@@ -34,7 +38,7 @@ describe("public CLI documentation contracts", () => {
     const scenarios: Array<{
       args: string[];
       dependencies?: CliDependencies;
-      exitCode: 0 | 1 | 2;
+      exitCode: PublicCliExitCode;
       fixture: string;
     }> = [
       {
@@ -219,8 +223,9 @@ describe("public CLI documentation contracts", () => {
     expect(docs).toContain("`env`, `config`, or `default`");
     expect(docs).not.toContain("`cli`, `env`, `config`, or `default`");
     expect(docs).toContain("`--output-dir` is not accepted by `config`");
-    for (const id of ["bun", "uv", "python-sidecar", "python-runtime", "opencode-api-key", "output-dir"]) {
+    for (const id of PUBLIC_DOCTOR_CHECK_IDS) {
       expect(docs).toContain(`\`${id}\``);
+      expect(docs).toContain(`| \`${id}\` | \`${PUBLIC_DOCTOR_CHECK_CAPABILITY[id]}\` |`);
     }
     expect(docs).toContain("may include `videoId`");
     expect(docs).toContain("Parsing, runtime-readiness, and failures without");
@@ -342,7 +347,7 @@ function quality() {
   };
 }
 
-function doctorReport(ok: boolean) {
+function doctorReport(ok: boolean): DoctorReport {
   return ok
     ? {
         checks: [
@@ -483,8 +488,8 @@ function validateDoctorReport(payload: Record<string, unknown>): void {
   for (const check of payload.checks as unknown[]) {
     requireRecord(check, "Doctor check");
     exactKeys(check, ["capability", "id", "message", "remediation", "status"]);
-    requireEnumString(check.capability, ["transcript", "digest"], "Doctor capability");
-    requireEnumString(check.id, ["bun", "uv", "python-sidecar", "python-runtime", "opencode-api-key", "output-dir"], "Doctor id");
+    requireEnumString(check.capability, [...new Set(Object.values(PUBLIC_DOCTOR_CHECK_CAPABILITY))], "Doctor capability");
+    requireEnumString(check.id, PUBLIC_DOCTOR_CHECK_IDS, "Doctor id");
     requireString(check.message, "Doctor message");
     requireNullableString(check.remediation, "Doctor remediation");
     requireEnumString(check.status, ["pass", "warn", "fail"], "Doctor status");
