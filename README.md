@@ -41,6 +41,10 @@ Video Digest `0.1.0` is public, experimental, English-only software licensed und
 MIT. The supported platform is macOS on Apple Silicon. macOS Intel, Linux, and Windows
 are not supported in this release.
 
+The npm package has not been published. Repository CI is configured on the supported
+Apple Silicon platform to verify the tests, types, exact tarball contents, and an
+isolated installation of the packed CLI; this does not publish the package.
+
 Compatibility may change before `1.0.0`. Human-facing behavior can evolve during
 `0.x`; machine-facing changes are versioned and documented in the
 [compatibility policy](docs/cli/compatibility.md).
