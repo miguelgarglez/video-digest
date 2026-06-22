@@ -100,9 +100,13 @@ const allowedRoots = [
   "package/python/", "package/src/",
 ];
 const allowedFiles = new Set(["package/package.json", "package/README.md", "package/LICENSE"]);
+const forbiddenSource = /(?:\.(?:test|spec)\.[^/]+$|\.snap(?:\.|$)|\/(?:__)?(?:snapshots?|fixtures?)(?:__)?\/)/i;
 
 export function validatePackedFiles(files: string[]): void {
   for (const file of files) {
+    if (forbiddenSource.test(file)) {
+      throw new Error(`Unexpected packed file: ${file}`);
+    }
     if (!allowedFiles.has(file) && !allowedRoots.some((root) => file.startsWith(root))) {
       throw new Error(`Unexpected packed file: ${file}`);
     }
@@ -112,6 +116,10 @@ export function validatePackedFiles(files: string[]): void {
   }
 }
 ```
+
+Apply the forbidden-source check before the allowed-root check. A test, spec,
+snapshot, or fixture remains forbidden even when it is nested under the otherwise
+allowed `package/src/` runtime root.
 
 The executable script runs `npm pack --json`, lists the generated `.tgz` with
 `tar -tzf`, validates it, prints the tarball path, and removes no user files. Add
