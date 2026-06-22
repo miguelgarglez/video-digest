@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import {
   access,
   chmod,
@@ -8,10 +8,11 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PUBLIC_DOCTOR_CHECK_CAPABILITY,
@@ -92,6 +93,7 @@ export interface PackedCliSmokeOptions {
   packPackage?: (options: PackAndVerifyOptions) => Promise<VerifiedPackage>;
   runCommand?: CommandRunner;
   removeDirectory?: (path: string) => Promise<void>;
+  createTemporaryDirectory?: (prefix: string) => Promise<string>;
 }
 
 export interface PackedCliSmokeResult {
@@ -192,6 +194,73 @@ export function validateDoctorReport(value: unknown): Record<string, unknown> {
   return report;
 }
 
+const EXPECTED_ISOLATED_DOCTOR_CHECKS = [
+  {
+    capability: "transcript",
+    id: "bun",
+    message: /^Bun runtime is available \(.+\)$/,
+    remediation: null,
+    status: "pass",
+  },
+  {
+    capability: "transcript",
+    id: "uv",
+    message: /^uv is not available$/,
+    remediation: "Install uv, source $HOME/.local/bin/env, or set UV_BIN.",
+    status: "fail",
+  },
+  {
+    capability: "transcript",
+    id: "python-sidecar",
+    message: /^Python transcript sidecar exists$/,
+    remediation: null,
+    status: "pass",
+  },
+  {
+    capability: "transcript",
+    id: "python-runtime",
+    message: /^Managed Python runtime is missing$/,
+    remediation: "Run video-digest setup.",
+    status: "fail",
+  },
+  {
+    capability: "digest",
+    id: "opencode-api-key",
+    message: /^OPENCODE_API_KEY is missing; digest generation is unavailable$/,
+    remediation:
+      "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
+    status: "warn",
+  },
+  {
+    capability: "transcript",
+    id: "output-dir",
+    message: /^Output directory is writable or can be created$/,
+    remediation: null,
+    status: "pass",
+  },
+] as const;
+
+export function validateIsolatedDoctorReport(value: unknown): Record<string, unknown> {
+  const report = validateDoctorReport(value);
+  if (report.ok !== false || !Array.isArray(report.checks)) {
+    throw new Error("doctor did not prove an isolated environment");
+  }
+  for (const [index, expected] of EXPECTED_ISOLATED_DOCTOR_CHECKS.entries()) {
+    const check = report.checks[index] as Record<string, unknown>;
+    if (
+      check.id !== expected.id ||
+      check.capability !== expected.capability ||
+      check.status !== expected.status ||
+      check.remediation !== expected.remediation ||
+      typeof check.message !== "string" ||
+      !expected.message.test(check.message)
+    ) {
+      throw new Error("doctor did not prove an isolated environment");
+    }
+  }
+  return report;
+}
+
 export function validateHelpOutput(stdout: string, stderr: string): void {
   if (stdout !== EXPECTED_HELP || stderr !== "") {
     throw new Error("help probe returned unexpected output");
@@ -209,13 +278,81 @@ function controlledPath(shimDirectory: string): string {
   return [...new Set(directories)].join(":");
 }
 
-async function createNoExternalAccessShims(directory: string): Promise<void> {
+export interface ShimInvocationMarkers {
+  security: string;
+  uv: string;
+}
+
+export async function createNoExternalAccessShims(
+  directory: string,
+  markerDirectory: string,
+): Promise<ShimInvocationMarkers> {
   await mkdir(directory, { recursive: true });
   for (const command of ["security", "uv"]) {
     const path = join(directory, command);
-    await writeFile(path, "#!/bin/sh\nexit 44\n", { mode: 0o700 });
+    const marker = join(markerDirectory, `${command}-invocations.jsonl`);
+    const source = [
+      `#!${process.execPath}`,
+      'import { appendFileSync } from "node:fs";',
+      `appendFileSync(${JSON.stringify(marker)}, JSON.stringify({ argv: Bun.argv.slice(2), command: ${JSON.stringify(command)} }) + "\\n", { encoding: "utf8", mode: 0o600 });`,
+      "process.exit(44);",
+      "",
+    ].join("\n");
+    await writeFile(path, source, { mode: 0o700 });
     await chmod(path, 0o700);
   }
+  return {
+    security: join(markerDirectory, "security-invocations.jsonl"),
+    uv: join(markerDirectory, "uv-invocations.jsonl"),
+  };
+}
+
+async function readExactShimInvocation(
+  marker: string,
+  expected: { argv: string[]; command: string },
+): Promise<void> {
+  let contents: string;
+  try {
+    contents = await readFile(marker, "utf8");
+  } catch {
+    throw new Error(`doctor did not invoke the isolated ${expected.command} shim`);
+  }
+  const lines = contents.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.length !== 1) {
+    throw new Error(`doctor invoked the isolated ${expected.command} shim unexpectedly`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lines[0]!);
+  } catch {
+    throw new Error(`doctor wrote an invalid ${expected.command} shim invocation`);
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !hasExactKeys(parsed as Record<string, unknown>, ["argv", "command"]) ||
+    (parsed as Record<string, unknown>).command !== expected.command ||
+    JSON.stringify((parsed as Record<string, unknown>).argv) !== JSON.stringify(expected.argv)
+  ) {
+    throw new Error(`doctor invoked the isolated ${expected.command} shim unexpectedly`);
+  }
+}
+
+async function validateDoctorShimInvocations(markers: ShimInvocationMarkers): Promise<void> {
+  await readExactShimInvocation(markers.security, {
+    argv: [
+      "find-generic-password",
+      "-a",
+      "opencode-api-key",
+      "-s",
+      "video-digest",
+      "-w",
+    ],
+    command: "security",
+  });
+  await readExactShimInvocation(markers.uv, { argv: ["--version"], command: "uv" });
 }
 
 function createSmokeEnvironment(root: string, shimDirectory: string): Record<string, string> {
@@ -387,6 +524,94 @@ async function assertVerifiedPackageBoundary(
   }
 }
 
+interface SmokeBoundary {
+  canonicalRepositoryRoot: string;
+  canonicalTemporaryParent: string;
+  repositoryIdentity: { dev: number; ino: number };
+  temporaryParentIdentity: { dev: number; ino: number };
+}
+
+function filesystemIdentity(metadata: Stats): { dev: number; ino: number } {
+  return { dev: metadata.dev, ino: metadata.ino };
+}
+
+function sameIdentity(
+  left: { dev: number; ino: number },
+  right: { dev: number; ino: number },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function preflightSmokeBoundary(
+  repositoryRoot: string,
+  temporaryParent: string,
+): Promise<SmokeBoundary> {
+  let canonicalRepositoryRoot: string;
+  let canonicalTemporaryParent: string;
+  let repositoryMetadata: Stats;
+  let temporaryParentMetadata: Stats;
+  try {
+    [canonicalRepositoryRoot, canonicalTemporaryParent] = await Promise.all([
+      realpath(repositoryRoot),
+      realpath(temporaryParent),
+    ]);
+    [repositoryMetadata, temporaryParentMetadata] = await Promise.all([
+      stat(canonicalRepositoryRoot),
+      stat(canonicalTemporaryParent),
+    ]);
+  } catch {
+    throw new Error("Smoke boundary is unavailable");
+  }
+  if (!repositoryMetadata.isDirectory() || !temporaryParentMetadata.isDirectory()) {
+    throw new Error("Smoke boundary must use existing directories");
+  }
+  if (isWithin(canonicalRepositoryRoot, canonicalTemporaryParent)) {
+    throw new Error("Smoke temporary parent must be outside the repository");
+  }
+  return {
+    canonicalRepositoryRoot,
+    canonicalTemporaryParent,
+    repositoryIdentity: filesystemIdentity(repositoryMetadata),
+    temporaryParentIdentity: filesystemIdentity(temporaryParentMetadata),
+  };
+}
+
+async function revalidateSmokeRoot(smokeRoot: string, boundary: SmokeBoundary): Promise<void> {
+  let smokeMetadata: Awaited<ReturnType<typeof lstat>>;
+  let canonicalSmokeRoot: string;
+  let canonicalRepositoryRoot: string;
+  let canonicalTemporaryParent: string;
+  let repositoryMetadata: Stats;
+  let temporaryParentMetadata: Stats;
+  try {
+    [smokeMetadata, canonicalSmokeRoot, canonicalRepositoryRoot, canonicalTemporaryParent] =
+      await Promise.all([
+        lstat(smokeRoot),
+        realpath(smokeRoot),
+        realpath(boundary.canonicalRepositoryRoot),
+        realpath(boundary.canonicalTemporaryParent),
+      ]);
+    [repositoryMetadata, temporaryParentMetadata] = await Promise.all([
+      stat(canonicalRepositoryRoot),
+      stat(canonicalTemporaryParent),
+    ]);
+  } catch {
+    throw new Error("Smoke workspace boundary changed during allocation");
+  }
+  if (
+    !smokeMetadata.isDirectory() ||
+    smokeMetadata.isSymbolicLink() ||
+    canonicalRepositoryRoot !== boundary.canonicalRepositoryRoot ||
+    canonicalTemporaryParent !== boundary.canonicalTemporaryParent ||
+    !sameIdentity(filesystemIdentity(repositoryMetadata), boundary.repositoryIdentity) ||
+    !sameIdentity(filesystemIdentity(temporaryParentMetadata), boundary.temporaryParentIdentity) ||
+    !isWithin(canonicalTemporaryParent, canonicalSmokeRoot) ||
+    isWithin(canonicalRepositoryRoot, canonicalSmokeRoot)
+  ) {
+    throw new Error("Smoke workspace boundary changed during allocation");
+  }
+}
+
 export async function runPackedCliSmoke(
   options: PackedCliSmokeOptions = {},
 ): Promise<PackedCliSmokeResult> {
@@ -394,7 +619,18 @@ export async function runPackedCliSmoke(
     options.repositoryRoot ?? fileURLToPath(new URL("..", import.meta.url)),
   );
   const temporaryParent = resolve(options.tempRoot ?? tmpdir());
-  const smokeRoot = await mkdtemp(join(temporaryParent, "video-digest-smoke-"));
+  const boundary = await preflightSmokeBoundary(repositoryRoot, temporaryParent);
+  const createTemporaryDirectory = options.createTemporaryDirectory ?? mkdtemp;
+  const allocationPrefix = join(boundary.canonicalTemporaryParent, "video-digest-smoke-");
+  const smokeRoot = await createTemporaryDirectory(allocationPrefix);
+  if (
+    !isAbsolute(smokeRoot) ||
+    dirname(smokeRoot) !== boundary.canonicalTemporaryParent ||
+    !basename(smokeRoot).startsWith(basename(allocationPrefix)) ||
+    smokeRoot.length <= allocationPrefix.length
+  ) {
+    throw new Error("Smoke allocator returned an unsafe path");
+  }
   const cleanupSmoke = createOwnedDirectoryCleanup(
     smokeRoot,
     options.removeDirectory ?? ((path) => rm(path, { force: true, recursive: true })),
@@ -404,13 +640,7 @@ export async function runPackedCliSmoke(
   let completed: PackedCliSmokeResult | undefined;
 
   try {
-    const [canonicalRepositoryRoot, canonicalSmokeRoot] = await Promise.all([
-      realpath(repositoryRoot),
-      realpath(smokeRoot),
-    ]);
-    if (isWithin(canonicalRepositoryRoot, canonicalSmokeRoot)) {
-      throw new Error("Smoke workspace must be outside the repository");
-    }
+    await revalidateSmokeRoot(smokeRoot, boundary);
     const prefix = join(smokeRoot, "prefix");
     const cwd = join(smokeRoot, "work");
     const home = join(smokeRoot, "home");
@@ -422,11 +652,14 @@ export async function runPackedCliSmoke(
       mkdir(home, { recursive: true }),
       mkdir(temporary, { recursive: true }),
     ]);
-    await createNoExternalAccessShims(shims);
+    const shimMarkers = await createNoExternalAccessShims(shims, smokeRoot);
 
     const packPackage = options.packPackage ?? packAndVerifyPackage;
-    verifiedPackage = await packPackage({ repositoryRoot, tempRoot: temporaryParent });
-    await assertVerifiedPackageBoundary(verifiedPackage, repositoryRoot);
+    verifiedPackage = await packPackage({
+      repositoryRoot: boundary.canonicalRepositoryRoot,
+      tempRoot: boundary.canonicalTemporaryParent,
+    });
+    await assertVerifiedPackageBoundary(verifiedPackage, boundary.canonicalRepositoryRoot);
     const plan = buildSmokePlan(verifiedPackage.tarballPath, prefix, cwd);
     const runner = options.runCommand ?? runBoundedProcess;
     const environment = createSmokeEnvironment(smokeRoot, shims);
@@ -444,7 +677,7 @@ export async function runPackedCliSmoke(
       maxOutputBytes: MAX_OUTPUT_BYTES,
       timeoutMs: INSTALL_TIMEOUT_MS,
     });
-    await assertInstalledClosure(plan.executable, prefix, repositoryRoot);
+    await assertInstalledClosure(plan.executable, prefix, boundary.canonicalRepositoryRoot);
 
     const versionResult = await invoke("version probe", runner, {
       args: version.slice(1),
@@ -488,10 +721,11 @@ export async function runPackedCliSmoke(
     } catch {
       throw new Error("doctor returned invalid JSON");
     }
-    const validatedDoctor = validateDoctorReport(parsedDoctor);
+    const validatedDoctor = validateIsolatedDoctorReport(parsedDoctor);
     if ((doctorResult.exitCode === 0) !== (validatedDoctor.ok === true)) {
       throw new Error("doctor exit code contradicted its JSON report");
     }
+    await validateDoctorShimInvocations(shimMarkers);
     completed = { packageName: PACKAGE_NAME, version: PACKAGE_VERSION };
   } catch (error) {
     failure = error;

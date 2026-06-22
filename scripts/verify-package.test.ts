@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
+  createProcessGroupSupervisor,
   packAndVerifyPackage,
   parseNpmPackOutput,
   runBoundedProcess,
@@ -11,7 +12,56 @@ import {
   validateTarMetadata,
   verifyPackedFileListsAgree,
   type CommandInvocation,
+  type ProcessLifecycleEvent,
+  type ProcessLifecycleHost,
 } from "./verify-package";
+
+class FakeProcessLifecycleHost implements ProcessLifecycleHost {
+  readonly preservedSignals: NodeJS.Signals[] = [];
+  private readonly listeners = new Map<ProcessLifecycleEvent, Set<() => void>>();
+
+  listenerCount(event: ProcessLifecycleEvent): number {
+    return this.listeners.get(event)?.size ?? 0;
+  }
+
+  off(event: ProcessLifecycleEvent, listener: () => void): void {
+    this.listeners.get(event)?.delete(listener);
+  }
+
+  on(event: ProcessLifecycleEvent, listener: () => void): void {
+    const listeners = this.listeners.get(event) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(event, listeners);
+  }
+
+  preserveSignal(signal: NodeJS.Signals): void {
+    this.preservedSignals.push(signal);
+  }
+
+  emit(event: ProcessLifecycleEvent): void {
+    for (const listener of [...(this.listeners.get(event) ?? [])]) listener();
+  }
+}
+
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (performance.now() >= deadline) throw new Error("condition did not become ready");
+    await Bun.sleep(5);
+  }
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const validPackedFiles = [
   "package/package.json",
@@ -392,6 +442,120 @@ describe("package creation", () => {
 });
 
 describe("bounded command execution", () => {
+  test("forwards a parent signal once to every owned group and preserves parent semantics", () => {
+    const host = new FakeProcessLifecycleHost();
+    const supervisor = createProcessGroupSupervisor(host);
+    const first: NodeJS.Signals[] = [];
+    const second: NodeJS.Signals[] = [];
+    const unregisterFirst = supervisor.register((signal) => first.push(signal));
+    const unregisterSecond = supervisor.register((signal) => second.push(signal));
+
+    expect(host.listenerCount("SIGINT")).toBe(1);
+    expect(host.listenerCount("SIGTERM")).toBe(1);
+    expect(host.listenerCount("exit")).toBe(1);
+    host.emit("SIGTERM");
+
+    expect(first).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(second).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(host.preservedSignals).toEqual(["SIGTERM"]);
+    expect(host.listenerCount("SIGINT")).toBe(0);
+    expect(host.listenerCount("SIGTERM")).toBe(0);
+    expect(host.listenerCount("exit")).toBe(0);
+    unregisterFirst();
+    unregisterSecond();
+  });
+
+  test("kills every owned group synchronously during process exit", () => {
+    const host = new FakeProcessLifecycleHost();
+    const supervisor = createProcessGroupSupervisor(host);
+    const signals: NodeJS.Signals[] = [];
+    const unregister = supervisor.register((signal) => signals.push(signal));
+
+    host.emit("exit");
+
+    expect(signals).toEqual(["SIGKILL"]);
+    expect(host.preservedSignals).toEqual([]);
+    expect(host.listenerCount("exit")).toBe(0);
+    unregister();
+  });
+
+  test("kills a real child and descendant on a forwarded signal without leaking handlers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "video-digest-forwarded-signal-tests-"));
+    const groupPidFile = join(root, "group.pid");
+    const childPidFile = join(root, "child.pid");
+    const readyFile = join(root, "descendant-ready");
+    const observedPids = new Set<number>();
+    let observedGroupPid: number | undefined;
+    const host = new FakeProcessLifecycleHost();
+    const supervisor = createProcessGroupSupervisor(host);
+    const childProgram = [
+      'const { writeFileSync } = require("node:fs");',
+      'process.on("SIGTERM", () => {});',
+      `writeFileSync(${JSON.stringify(readyFile)}, "ready");`,
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    const parentProgram = [
+      'const { writeFileSync } = require("node:fs");',
+      'const { spawn } = require("node:child_process");',
+      `writeFileSync(${JSON.stringify(groupPidFile)}, String(process.pid));`,
+      `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(childProgram)}], { stdio: ["ignore", "inherit", "inherit"] });`,
+      `writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid));`,
+      "child.unref();",
+      "setInterval(() => {}, 1000);",
+    ].join(" ");
+    try {
+      const resultPromise = runBoundedProcess(
+        {
+          executable: process.execPath,
+          args: ["-e", parentProgram],
+          cwd: process.cwd(),
+          timeoutMs: 5_000,
+          maxOutputBytes: 1024,
+        },
+        { supervisor },
+      );
+      await waitForCondition(async () =>
+        (await Bun.file(readyFile).exists()) &&
+        (await Bun.file(groupPidFile).exists()) &&
+        (await Bun.file(childPidFile).exists()),
+      );
+      for (const file of [groupPidFile, childPidFile]) {
+        const pid = Number(await readFile(file, "utf8"));
+        expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+        observedPids.add(pid);
+        if (file === groupPidFile) observedGroupPid = pid;
+      }
+
+      host.emit("SIGTERM");
+      const result = await resultPromise;
+      expect(result.exitCode).not.toBe(0);
+      await waitForCondition(() => [...observedPids].every((pid) => !processExists(pid)));
+      expect(host.preservedSignals).toEqual(["SIGTERM"]);
+      expect(host.listenerCount("SIGINT")).toBe(0);
+      expect(host.listenerCount("SIGTERM")).toBe(0);
+      expect(host.listenerCount("exit")).toBe(0);
+    } finally {
+      for (const pidFile of [groupPidFile, childPidFile]) {
+        try {
+          const pid = Number(await readFile(pidFile, "utf8"));
+          if (Number.isSafeInteger(pid) && pid > 0) observedPids.add(pid);
+          if (pidFile === groupPidFile && Number.isSafeInteger(pid) && pid > 0) {
+            observedGroupPid = pid;
+          }
+        } catch {
+          // A pre-spawn failure has no process to record.
+        }
+      }
+      if (observedGroupPid) {
+        try { process.kill(-observedGroupPid, "SIGKILL"); } catch {}
+      }
+      for (const pid of observedPids) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("terminates and settles a timed-out child", async () => {
     await expect(
       runBoundedProcess({
@@ -402,6 +566,27 @@ describe("bounded command execution", () => {
         maxOutputBytes: 1024,
       }),
     ).rejects.toThrow("Command timed out");
+  });
+
+  test("removes default process lifecycle handlers after normal settlement", async () => {
+    const before = {
+      exit: process.listenerCount("exit"),
+      sigint: process.listenerCount("SIGINT"),
+      sigterm: process.listenerCount("SIGTERM"),
+    };
+    const result = await runBoundedProcess({
+      executable: process.execPath,
+      args: ["-e", "console.log('settled')"],
+      cwd: process.cwd(),
+      timeoutMs: 2_000,
+      maxOutputBytes: 1024,
+    });
+    expect(result).toEqual({ exitCode: 0, stderr: "", stdout: "settled\n" });
+    expect({
+      exit: process.listenerCount("exit"),
+      sigint: process.listenerCount("SIGINT"),
+      sigterm: process.listenerCount("SIGTERM"),
+    }).toEqual(before);
   });
 
   test("terminates a child when combined output exceeds the limit", async () => {
@@ -421,12 +606,14 @@ describe("bounded command execution", () => {
     }
   });
 
-  test("kills a detached descendant before returning from a bounded timeout", async () => {
+  test("kills a ready detached descendant before returning from an output limit", async () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-process-group-tests-"));
     const marker = join(root, "descendant-survived");
     const ready = join(root, "descendant-ready");
     const groupPidFile = join(root, "group.pid");
     const childPidFile = join(root, "child.pid");
+    const observedPids = new Set<number>();
+    let observedGroupPid: number | undefined;
     const childProgram = [
       'const { writeFileSync } = require("node:fs");',
       'process.on("SIGTERM", () => {});',
@@ -435,12 +622,18 @@ describe("bounded command execution", () => {
       "setInterval(() => {}, 1000);",
     ].join(" ");
     const parentProgram = [
-      'const { writeFileSync } = require("node:fs");',
+      'const { existsSync, writeFileSync } = require("node:fs");',
       'const { spawn } = require("node:child_process");',
       `writeFileSync(${JSON.stringify(groupPidFile)}, String(process.pid));`,
       `const child = spawn(${JSON.stringify(process.execPath)}, ["-e", ${JSON.stringify(childProgram)}], { stdio: ["ignore", "inherit", "inherit"] });`,
       `writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid));`,
       "child.unref();",
+      "const waiter = new Int32Array(new SharedArrayBuffer(4));",
+      "const deadline = Date.now() + 2000;",
+      `while (!existsSync(${JSON.stringify(ready)}) && Date.now() < deadline) Atomics.wait(waiter, 0, 0, 5);`,
+      `if (!existsSync(${JSON.stringify(ready)})) process.exit(4);`,
+      `console.log(${JSON.stringify("x".repeat(2048))});`,
+      "setInterval(() => {}, 1000);",
     ].join(" ");
     const startedAt = performance.now();
     try {
@@ -449,29 +642,38 @@ describe("bounded command execution", () => {
           executable: process.execPath,
           args: ["-e", parentProgram],
           cwd: process.cwd(),
-          timeoutMs: 100,
-          maxOutputBytes: 1024,
+          timeoutMs: 3_000,
+          maxOutputBytes: 32,
         }),
-      ).rejects.toThrow("Command timed out");
-      expect(performance.now() - startedAt).toBeLessThan(550);
+      ).rejects.toThrow("Command output exceeded limit");
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
       expect(await Bun.file(ready).exists()).toBe(true);
-      expect(Number.isSafeInteger(Number(await readFile(groupPidFile, "utf8")))).toBe(true);
-      expect(Number.isSafeInteger(Number(await readFile(childPidFile, "utf8")))).toBe(true);
-      await Bun.sleep(Math.max(0, 800 - (performance.now() - startedAt)));
+      for (const file of [groupPidFile, childPidFile]) {
+        const pid = Number(await readFile(file, "utf8"));
+        expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+        observedPids.add(pid);
+        if (file === groupPidFile) observedGroupPid = pid;
+      }
+      await waitForCondition(() => [...observedPids].every((pid) => !processExists(pid)));
+      await Bun.sleep(Math.max(0, 700 - (performance.now() - startedAt)));
       expect(await Bun.file(marker).exists()).toBe(false);
     } finally {
-      if (await Bun.file(marker).exists()) {
-        for (const [pidFile, group] of [
-          [groupPidFile, true],
-          [childPidFile, false],
-        ] as const) {
-          try {
-            const pid = Number(await readFile(pidFile, "utf8"));
-            if (Number.isSafeInteger(pid) && pid > 0) process.kill(group ? -pid : pid, "SIGKILL");
-          } catch {
-            // The still-owned process may exit between marker inspection and cleanup.
+      for (const pidFile of [groupPidFile, childPidFile]) {
+        try {
+          const pid = Number(await readFile(pidFile, "utf8"));
+          if (Number.isSafeInteger(pid) && pid > 0) observedPids.add(pid);
+          if (pidFile === groupPidFile && Number.isSafeInteger(pid) && pid > 0) {
+            observedGroupPid = pid;
           }
+        } catch {
+          // A pre-spawn failure has no process to record.
         }
+      }
+      if (observedGroupPid) {
+        try { process.kill(-observedGroupPid, "SIGKILL"); } catch {}
+      }
+      for (const pid of observedPids) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
       }
       await rm(root, { force: true, recursive: true });
     }

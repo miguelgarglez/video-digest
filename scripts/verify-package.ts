@@ -94,6 +94,98 @@ export interface CommandResult {
 
 export type CommandRunner = (invocation: CommandInvocation) => Promise<CommandResult>;
 
+export type ProcessLifecycleEvent = "SIGINT" | "SIGTERM" | "exit";
+
+export interface ProcessLifecycleHost {
+  on(event: ProcessLifecycleEvent, listener: () => void): void;
+  off(event: ProcessLifecycleEvent, listener: () => void): void;
+  preserveSignal(signal: NodeJS.Signals): void;
+}
+
+export interface ProcessGroupSupervisor {
+  register(signalGroup: (signal: NodeJS.Signals) => void): () => void;
+}
+
+export interface RunBoundedProcessOptions {
+  supervisor?: ProcessGroupSupervisor;
+}
+
+const defaultProcessLifecycleHost: ProcessLifecycleHost = {
+  off(event, listener) {
+    process.off(event, listener);
+  },
+  on(event, listener) {
+    process.on(event, listener);
+  },
+  preserveSignal(signal) {
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      process.exitCode = signal === "SIGINT" ? 130 : 143;
+    }
+  },
+};
+
+export function createProcessGroupSupervisor(
+  host: ProcessLifecycleHost = defaultProcessLifecycleHost,
+): ProcessGroupSupervisor {
+  const groups = new Map<symbol, (signal: NodeJS.Signals) => void>();
+  let attached = false;
+
+  const safelySignalAll = (signal: NodeJS.Signals): void => {
+    for (const signalGroup of [...groups.values()]) {
+      try {
+        signalGroup(signal);
+      } catch {
+        // Continue terminating every owned group even if one has already exited.
+      }
+    }
+  };
+  const detach = (): void => {
+    if (!attached) return;
+    host.off("SIGINT", onSigint);
+    host.off("SIGTERM", onSigterm);
+    host.off("exit", onExit);
+    attached = false;
+  };
+  const forwardAndPreserve = (signal: NodeJS.Signals): void => {
+    detach();
+    safelySignalAll(signal);
+    safelySignalAll("SIGKILL");
+    host.preserveSignal(signal);
+  };
+  const onSigint = () => forwardAndPreserve("SIGINT");
+  const onSigterm = () => forwardAndPreserve("SIGTERM");
+  const onExit = () => {
+    detach();
+    safelySignalAll("SIGKILL");
+  };
+  const attach = (): void => {
+    if (attached) return;
+    host.on("SIGINT", onSigint);
+    host.on("SIGTERM", onSigterm);
+    host.on("exit", onExit);
+    attached = true;
+  };
+
+  return {
+    register(signalGroup) {
+      const token = Symbol("owned-process-group");
+      groups.set(token, signalGroup);
+      attach();
+      let registered = true;
+      return () => {
+        if (!registered) return;
+        registered = false;
+        groups.delete(token);
+        if (groups.size === 0) detach();
+      };
+    },
+  };
+}
+
+const defaultProcessGroupSupervisor = createProcessGroupSupervisor();
+
 export interface PackAndVerifyOptions {
   repositoryRoot?: string;
   tempRoot?: string;
@@ -192,7 +284,10 @@ function validateCommandLimits(invocation: CommandInvocation): void {
   }
 }
 
-export async function runBoundedProcess(invocation: CommandInvocation): Promise<CommandResult> {
+export async function runBoundedProcess(
+  invocation: CommandInvocation,
+  options: RunBoundedProcessOptions = {},
+): Promise<CommandResult> {
   validateCommandLimits(invocation);
   let child: ReturnType<typeof Bun.spawn>;
   try {
@@ -223,6 +318,9 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
       }
     }
   };
+  const unregisterProcessGroup = (
+    options.supervisor ?? defaultProcessGroupSupervisor
+  ).register(signalOwnedProcessGroup);
   const terminate = (reason: Error) => {
     if (failure) return;
     failure = reason;
@@ -240,62 +338,66 @@ export async function runBoundedProcess(invocation: CommandInvocation): Promise<
     }
   };
 
-  const timeoutTimer = setTimeout(
-    () => terminate(new Error("Command timed out")),
-    invocation.timeoutMs,
-  );
+  try {
+    const timeoutTimer = setTimeout(
+      () => terminate(new Error("Command timed out")),
+      invocation.timeoutMs,
+    );
 
-  const collect = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> => {
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
-    outputReaders.add(reader);
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) return chunks;
-        outputBytes += value.byteLength;
-        if (outputBytes > invocation.maxOutputBytes) {
-          terminate(new Error("Command output exceeded limit"));
-          continue;
+    const collect = async (stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> => {
+      const chunks: Uint8Array[] = [];
+      const reader = stream.getReader();
+      outputReaders.add(reader);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) return chunks;
+          outputBytes += value.byteLength;
+          if (outputBytes > invocation.maxOutputBytes) {
+            terminate(new Error("Command output exceeded limit"));
+            continue;
+          }
+          chunks.push(value);
         }
-        chunks.push(value);
+      } finally {
+        outputReaders.delete(reader);
       }
-    } finally {
-      outputReaders.delete(reader);
+    };
+
+    const stdoutPromise = collect(child.stdout as ReadableStream<Uint8Array>);
+    const stderrPromise = collect(child.stderr as ReadableStream<Uint8Array>);
+    const [exitResult, stdoutResult, stderrResult] = await Promise.allSettled([
+      child.exited,
+      stdoutPromise,
+      stderrPromise,
+    ]);
+    clearTimeout(timeoutTimer);
+    if (failure && escalationPromise) await escalationPromise;
+    if (escalationTimer) clearTimeout(escalationTimer);
+
+    if (failure) throw failure;
+    if (
+      exitResult.status !== "fulfilled" ||
+      stdoutResult.status !== "fulfilled" ||
+      stderrResult.status !== "fulfilled"
+    ) {
+      throw new Error("Command execution failed");
     }
-  };
 
-  const stdoutPromise = collect(child.stdout as ReadableStream<Uint8Array>);
-  const stderrPromise = collect(child.stderr as ReadableStream<Uint8Array>);
-  const [exitResult, stdoutResult, stderrResult] = await Promise.allSettled([
-    child.exited,
-    stdoutPromise,
-    stderrPromise,
-  ]);
-  clearTimeout(timeoutTimer);
-  if (failure && escalationPromise) await escalationPromise;
-  if (escalationTimer) clearTimeout(escalationTimer);
-
-  if (failure) throw failure;
-  if (
-    exitResult.status !== "fulfilled" ||
-    stdoutResult.status !== "fulfilled" ||
-    stderrResult.status !== "fulfilled"
-  ) {
-    throw new Error("Command execution failed");
+    const decode = (chunks: Uint8Array[]) => {
+      const decoder = new TextDecoder();
+      return chunks.map((chunk, index) =>
+        decoder.decode(chunk, { stream: index < chunks.length - 1 }),
+      ).join("");
+    };
+    return {
+      exitCode: exitResult.value,
+      stdout: decode(stdoutResult.value),
+      stderr: decode(stderrResult.value),
+    };
+  } finally {
+    unregisterProcessGroup();
   }
-
-  const decode = (chunks: Uint8Array[]) => {
-    const decoder = new TextDecoder();
-    return chunks.map((chunk, index) =>
-      decoder.decode(chunk, { stream: index < chunks.length - 1 }),
-    ).join("");
-  };
-  return {
-    exitCode: exitResult.value,
-    stdout: decode(stdoutResult.value),
-    stderr: decode(stderrResult.value),
-  };
 }
 
 interface NpmPackRecord {

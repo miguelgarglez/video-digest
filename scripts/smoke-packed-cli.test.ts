@@ -1,13 +1,16 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   buildSmokePlan,
+  createNoExternalAccessShims,
   runPackedCliSmoke,
   validateDoctorReport,
   validateHelpOutput,
+  validateIsolatedDoctorReport,
 } from "./smoke-packed-cli";
+import { runBoundedProcess } from "./verify-package";
 import type {
   CommandInvocation,
   CommandResult,
@@ -28,7 +31,7 @@ const doctorReport = {
       capability: "transcript",
       id: "uv",
       message: "uv is not available",
-      remediation: "Install uv.",
+      remediation: "Install uv, source $HOME/.local/bin/env, or set UV_BIN.",
       status: "fail",
     },
     {
@@ -42,14 +45,14 @@ const doctorReport = {
       capability: "transcript",
       id: "python-runtime",
       message: "Managed Python runtime is missing",
-      remediation: "Run setup.",
+      remediation: "Run video-digest setup.",
       status: "fail",
     },
     {
       capability: "digest",
       id: "opencode-api-key",
-      message: "OPENCODE_API_KEY is missing",
-      remediation: "Set OPENCODE_API_KEY.",
+      message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
+      remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
       status: "warn",
     },
     {
@@ -144,6 +147,28 @@ async function materializeFakeInstall(invocation: CommandInvocation): Promise<vo
   await symlink("../lib/node_modules/video-digest/bin/video-digest", join(prefix, "bin", "video-digest"));
 }
 
+async function materializeFakeDoctorShimMarkers(invocation: CommandInvocation): Promise<void> {
+  const root = dirname(invocation.cwd);
+  await writeFile(
+    join(root, "security-invocations.jsonl"),
+    `${JSON.stringify({
+      argv: [
+        "find-generic-password",
+        "-a",
+        "opencode-api-key",
+        "-s",
+        "video-digest",
+        "-w",
+      ],
+      command: "security",
+    })}\n`,
+  );
+  await writeFile(
+    join(root, "uv-invocations.jsonl"),
+    `${JSON.stringify({ argv: ["--version"], command: "uv" })}\n`,
+  );
+}
+
 describe("packed CLI smoke plan", () => {
   test("executes the exact install and public probes from a separate work directory", () => {
     const plan = buildSmokePlan(
@@ -194,6 +219,24 @@ describe("doctor smoke contract", () => {
       "doctor returned an invalid JSON contract",
     );
   });
+
+  test("requires the exact isolated missing-runtime and missing-credential outcome", () => {
+    expect(() => validateIsolatedDoctorReport(doctorReport)).not.toThrow();
+    const configured = structuredClone(doctorReport) as unknown as {
+      checks: Array<Record<string, unknown>>;
+      ok: boolean;
+      schemaVersion: string;
+    };
+    configured.checks[4] = {
+      ...configured.checks[4],
+      message: "OPENCODE_API_KEY is configured via Keychain; digest generation is available",
+      remediation: null,
+      status: "pass",
+    };
+    expect(() => validateIsolatedDoctorReport(configured)).toThrow(
+      "doctor did not prove an isolated environment",
+    );
+  });
 });
 
 describe("help smoke contract", () => {
@@ -212,13 +255,15 @@ describe("help smoke contract", () => {
 });
 
 describe("isolated packed CLI smoke", () => {
-  test("uses canonical paths when rejecting a smoke workspace inside the repository", async () => {
+  test("rejects a canonical temp parent inside the repository before any mutation", async () => {
     const parent = await mkdtemp(join(tmpdir(), "video-digest-canonical-boundary-tests-"));
     const repositoryRoot = join(parent, "repository");
     const alias = join(parent, "repository-alias");
     await mkdir(repositoryRoot);
     await symlink(repositoryRoot, alias);
     let packCalled = false;
+    let temporaryDirectoryCalled = false;
+    let removeCalled = false;
     try {
       await expect(
         runPackedCliSmoke({
@@ -226,11 +271,20 @@ describe("isolated packed CLI smoke", () => {
             packCalled = true;
             throw new Error("pack must not run");
           },
-          repositoryRoot: alias,
-          tempRoot: repositoryRoot,
+          createTemporaryDirectory: async () => {
+            temporaryDirectoryCalled = true;
+            throw new Error("temporary directory must not be created");
+          },
+          removeDirectory: async () => {
+            removeCalled = true;
+          },
+          repositoryRoot,
+          tempRoot: alias,
         }),
-      ).rejects.toThrow("Smoke workspace must be outside the repository");
+      ).rejects.toThrow("Smoke temporary parent must be outside the repository");
       expect(packCalled).toBe(false);
+      expect(temporaryDirectoryCalled).toBe(false);
+      expect(removeCalled).toBe(false);
       expect(await readdir(repositoryRoot)).toEqual([]);
     } finally {
       await rm(parent, { force: true, recursive: true });
@@ -266,6 +320,61 @@ describe("isolated packed CLI smoke", () => {
       expect(packCleaned).toBe(true);
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
+  test("cleans a rejected post-allocation symlink without touching its target", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-post-allocation-tests-"));
+    const victim = await mkdtemp(join(tmpdir(), "video-digest-post-allocation-victim-"));
+    const sentinel = join(victim, "sentinel");
+    let allocatedPath = "";
+    let packCalled = false;
+    await writeFile(sentinel, "keep");
+    try {
+      await expect(
+        runPackedCliSmoke({
+          createTemporaryDirectory: async (prefix) => {
+            allocatedPath = `${prefix}injected`;
+            await symlink(victim, allocatedPath);
+            return allocatedPath;
+          },
+          packPackage: async () => {
+            packCalled = true;
+            throw new Error("pack must not run");
+          },
+          tempRoot,
+        }),
+      ).rejects.toThrow("Smoke workspace boundary changed during allocation");
+      expect(packCalled).toBe(false);
+      expect(await Bun.file(allocatedPath).exists()).toBe(false);
+      expect(await readFile(sentinel, "utf8")).toBe("keep");
+    } finally {
+      await rm(tempRoot, { force: true, recursive: true });
+      await rm(victim, { force: true, recursive: true });
+    }
+  });
+
+  test("never cleans a path outside the allocation prefix returned by an invalid allocator", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-invalid-allocator-tests-"));
+    const victim = await mkdtemp(join(tmpdir(), "video-digest-invalid-allocator-victim-"));
+    const sentinel = join(victim, "sentinel");
+    let removeCalled = false;
+    await writeFile(sentinel, "keep");
+    try {
+      await expect(
+        runPackedCliSmoke({
+          createTemporaryDirectory: async () => victim,
+          removeDirectory: async () => {
+            removeCalled = true;
+          },
+          tempRoot,
+        }),
+      ).rejects.toThrow("Smoke allocator returned an unsafe path");
+      expect(removeCalled).toBe(false);
+      expect(await readFile(sentinel, "utf8")).toBe("keep");
+    } finally {
+      await rm(tempRoot, { force: true, recursive: true });
+      await rm(victim, { force: true, recursive: true });
     }
   });
 
@@ -327,19 +436,24 @@ describe("isolated packed CLI smoke", () => {
     const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
     const invocations: CommandInvocation[] = [];
     let packCleanupCount = 0;
+    let observedPackOptions: PackAndVerifyOptions | undefined;
     await writeFile(tarballPath, "fixture");
     await writeFile(join(tempRoot, "sentinel"), "keep");
-    const packPackage = async (_options: PackAndVerifyOptions): Promise<VerifiedPackage> => ({
-      cleanup: async () => {
-        packCleanupCount += 1;
-        await rm(packRoot, { force: true, recursive: true });
-      },
-      tarballPath,
-      temporaryDirectory: packRoot,
-    });
+    const packPackage = async (options: PackAndVerifyOptions): Promise<VerifiedPackage> => {
+      observedPackOptions = options;
+      return {
+        cleanup: async () => {
+          packCleanupCount += 1;
+          await rm(packRoot, { force: true, recursive: true });
+        },
+        tarballPath,
+        temporaryDirectory: packRoot,
+      };
+    };
     const runCommand = async (invocation: CommandInvocation) => {
       invocations.push(invocation);
       if (invocation.executable === "npm") await materializeFakeInstall(invocation);
+      if (invocation.args.includes("doctor")) await materializeFakeDoctorShimMarkers(invocation);
       return successfulOutput(invocation);
     };
 
@@ -350,8 +464,14 @@ describe("isolated packed CLI smoke", () => {
         runCommand,
         tempRoot,
       });
+      const canonicalTempRoot = await realpath(tempRoot);
+      const canonicalRepositoryRoot = await realpath(repositoryRoot);
 
       expect(result).toEqual({ packageName: "video-digest", version: "0.1.0" });
+      expect(observedPackOptions).toMatchObject({
+        repositoryRoot: canonicalRepositoryRoot,
+        tempRoot: canonicalTempRoot,
+      });
       expect(packCleanupCount).toBe(1);
       expect(invocations.map(({ executable, args }) => [executable, ...args])).toEqual([
         [
@@ -367,9 +487,9 @@ describe("isolated packed CLI smoke", () => {
         [expect.stringContaining("/prefix/bin/video-digest"), "doctor", "--json"],
       ]);
       expect(invocations.every(({ cwd }) => !cwd.startsWith(repositoryRoot))).toBe(true);
-      expect(invocations.every(({ env }) => env?.HOME?.startsWith(tempRoot))).toBe(true);
-      expect(invocations.every(({ env }) => env?.XDG_CONFIG_HOME?.startsWith(tempRoot))).toBe(true);
-      expect(invocations.every(({ env }) => env?.TMPDIR?.startsWith(tempRoot))).toBe(true);
+      expect(invocations.every(({ env }) => env?.HOME?.startsWith(canonicalTempRoot))).toBe(true);
+      expect(invocations.every(({ env }) => env?.XDG_CONFIG_HOME?.startsWith(canonicalTempRoot))).toBe(true);
+      expect(invocations.every(({ env }) => env?.TMPDIR?.startsWith(canonicalTempRoot))).toBe(true);
       expect(invocations.every(({ env }) => !("OPENCODE_API_KEY" in (env ?? {})))).toBe(true);
       expect(invocations[0]!.env?.npm_config_ignore_scripts).toBe("true");
       expect(invocations[0]!.env?.npm_config_audit).toBe("false");
@@ -378,6 +498,32 @@ describe("isolated packed CLI smoke", () => {
       expect(invocations.every(({ maxOutputBytes }) => maxOutputBytes === 2 * 1024 * 1024)).toBe(true);
       expect(await readFile(join(tempRoot, "sentinel"), "utf8")).toBe("keep");
       expect(await Bun.file(dirname(invocations[0]!.cwd)).exists()).toBe(false);
+    } finally {
+      await rm(tempRoot, { force: true, recursive: true });
+      await rm(packRoot, { force: true, recursive: true });
+    }
+  });
+
+  test("fails when doctor bypasses the owned security and uv shims", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-missing-shim-marker-tests-"));
+    const packRoot = await mkdtemp(join(tmpdir(), "video-digest-missing-shim-pack-"));
+    const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
+    await writeFile(tarballPath, "fixture");
+    try {
+      await expect(
+        runPackedCliSmoke({
+          packPackage: async () => ({
+            cleanup: async () => rm(packRoot, { force: true, recursive: true }),
+            tarballPath,
+            temporaryDirectory: packRoot,
+          }),
+          runCommand: async (invocation) => {
+            if (invocation.executable === "npm") await materializeFakeInstall(invocation);
+            return successfulOutput(invocation);
+          },
+          tempRoot,
+        }),
+      ).rejects.toThrow("doctor did not invoke the isolated security shim");
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
       await rm(packRoot, { force: true, recursive: true });
@@ -421,6 +567,43 @@ describe("isolated packed CLI smoke", () => {
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
       await rm(packRoot, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("owned command shims", () => {
+  test("record exact argv safely under hostile path and argument spelling", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "video digest 'shim tests' "));
+    const shims = join(parent, "shims with spaces");
+    try {
+      const markers = await createNoExternalAccessShims(shims, parent);
+      const baseInvocation = {
+        cwd: parent,
+        env: { PATH: `${shims}:${dirname(process.execPath)}:/usr/bin:/bin` },
+        maxOutputBytes: 1024,
+        timeoutMs: 2_000,
+      };
+      const security = await runBoundedProcess({
+        ...baseInvocation,
+        args: ["value with spaces", "'quoted'", 'double"quoted'],
+        executable: join(shims, "security"),
+      });
+      const uv = await runBoundedProcess({
+        ...baseInvocation,
+        args: ["--version"],
+        executable: join(shims, "uv"),
+      });
+      expect([security.exitCode, uv.exitCode]).toEqual([44, 44]);
+      expect(JSON.parse((await readFile(markers.security, "utf8")).trim())).toEqual({
+        argv: ["value with spaces", "'quoted'", 'double"quoted'],
+        command: "security",
+      });
+      expect(JSON.parse((await readFile(markers.uv, "utf8")).trim())).toEqual({
+        argv: ["--version"],
+        command: "uv",
+      });
+    } finally {
+      await rm(parent, { force: true, recursive: true });
     }
   });
 });
