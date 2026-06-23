@@ -19,3 +19,10 @@ Use the canonical Matt Pocock triage roles as plain status names for local markd
 ### Domain docs
 
 This is a single-context project: use `CONTEXT.md` for domain language and `docs/adr/` for architectural decisions. See `docs/agents/domain.md`.
+
+### npm releases
+
+Future `video-digest` npm releases use the manual Trusted Publishing workflow and
+runbook in `docs/runbooks/npm-release.md`. Agents must read that runbook before
+changing release automation, bumping package versions, or helping publish a new npm
+version.
