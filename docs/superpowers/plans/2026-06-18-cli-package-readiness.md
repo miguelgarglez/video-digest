@@ -175,13 +175,12 @@ Create temporary prefix/work directories, execute the plan, assert version `0.1.
 parse doctor JSON, and remove only those temporary directories in `finally`. Do not run
 `setup`, contact providers, touch the real Keychain, or modify agent skills.
 
-- [ ] **Step 4: Run the isolated smoke test**
+- [x] **Step 4: Run the isolated smoke test**
 
 Run: `bun test scripts/smoke-packed-cli.test.ts && bun run smoke:package`  
 Expected: PASS from a working directory outside the repository.
 
-Status: pending explicit user approval because this command installs the packed
-tarball into a temporary global npm prefix.
+Status: verified after explicit user approval with `bun run smoke:package`.
 
 - [x] **Step 5: Commit**
 
@@ -228,9 +227,9 @@ do not silently weaken the job to x64.
 Run: `bun install --frozen-lockfile && bun test && bun run typecheck && bun run verify:package && bun run smoke:package`  
 Expected: every command exits 0; the tarball is not published.
 
-Status: partially verified with `bun test`, `bun run typecheck`, and
-`bun run verify:package`; pending explicit user approval for the install-based
-`bun run smoke:package` gate.
+Status: partially verified with `bun test`, `bun run typecheck`,
+`bun run verify:package`, and `bun run smoke:package`; pending explicit user
+approval for the install-based `bun install --frozen-lockfile` gate.
 
 - [x] **Step 3: Recheck the public package name**
 
