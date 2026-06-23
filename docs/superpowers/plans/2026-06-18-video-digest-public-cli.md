@@ -34,7 +34,7 @@ Follow [2026-06-18-cli-docs-agent-skill.md](./2026-06-18-cli-docs-agent-skill.md
 Exit gate: public contracts, README, MIT license, and safe Agent Skill are complete and
 validated without installing the skill.
 
-- [ ] **Phase 5: Verify the npm package without publishing**
+- [x] **Phase 5: Verify the npm package without publishing**
 
 Follow [2026-06-18-cli-package-readiness.md](./2026-06-18-cli-package-readiness.md).
 Exit gate: the full suite, typecheck, tarball allowlist, isolated global installation,

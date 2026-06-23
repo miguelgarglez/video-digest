@@ -222,14 +222,14 @@ Confirm from the GitHub runner documentation that the selected label is Apple Si
 at implementation time. If it is not, replace it with the current official ARM label;
 do not silently weaken the job to x64.
 
-- [ ] **Step 2: Run the complete local release-readiness suite**
+- [x] **Step 2: Run the complete local release-readiness suite**
 
 Run: `bun install --frozen-lockfile && bun test && bun run typecheck && bun run verify:package && bun run smoke:package`  
 Expected: every command exits 0; the tarball is not published.
 
-Status: partially verified with `bun test`, `bun run typecheck`,
-`bun run verify:package`, and `bun run smoke:package`; pending explicit user
-approval for the install-based `bun install --frozen-lockfile` gate.
+Status: verified after explicit user approval with `bun install --frozen-lockfile`,
+`bun test`, `bun run typecheck`, `bun run verify:package`, and
+`bun run smoke:package`.
 
 - [x] **Step 3: Recheck the public package name**
 
