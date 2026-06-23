@@ -49,9 +49,25 @@ Recommended protection:
 The workflow itself is manual-only through `workflow_dispatch`, refuses non-`main`
 refs, and verifies the package identity before publishing.
 
-## Publishing a new version
+## Release Please
 
-1. Update `package.json` to the next semver version.
+Release Please runs on pushes to `main`, reads Conventional Commits, and maintains a
+Release PR. That PR owns version bumps and `CHANGELOG.md`; merging it creates the
+matching Git tag and GitHub Release.
+
+When a Release PR appears:
+
+1. Review the proposed `package.json` version and `CHANGELOG.md`.
+2. Wait for CI on the Release PR.
+3. Merge the Release PR when the release notes and version are correct.
+4. Release Please will create the matching Git tag and GitHub Release.
+
+Do not publish npm directly from the Release Please workflow. npm publication remains a
+separate gated step through the Trusted Publishing workflow below.
+
+## Publishing a new npm version
+
+1. Merge the Release PR to `main`.
 2. Run the local release-readiness suite:
 
    ```bash
@@ -62,11 +78,10 @@ refs, and verifies the package identity before publishing.
    bun run smoke:package
    ```
 
-3. Merge the version bump to `main`.
-4. Open GitHub Actions → `Publish npm package` → `Run workflow`.
-5. Select branch `main`.
-6. Enter the exact version from `package.json`.
-7. Approve the `npm-production` GitHub environment deployment if prompted.
+3. Open GitHub Actions → `Publish npm package` → `Run workflow`.
+4. Select branch `main`.
+5. Enter the exact version from the Release Please PR.
+6. Approve the `npm-production` GitHub environment deployment if prompted.
 
 The workflow will stop before publishing if:
 
