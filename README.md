@@ -41,9 +41,9 @@ Video Digest `0.1.0` is public, experimental, English-only software licensed und
 MIT. The supported platform is macOS on Apple Silicon. macOS Intel, Linux, and Windows
 are not supported in this release.
 
-The npm package has not been published. Repository CI is configured on the supported
-Apple Silicon platform to verify the tests, types, exact tarball contents, and an
-isolated installation of the packed CLI; this does not publish the package.
+The npm package is published as `video-digest@0.1.0`. Repository CI is configured on
+the supported Apple Silicon platform to verify the tests, types, exact tarball
+contents, and an isolated installation of the packed CLI.
 
 Compatibility may change before `1.0.0`. Human-facing behavior can evolve during
 `0.x`; machine-facing changes are versioned and documented in the
@@ -58,8 +58,22 @@ Video Digest manages its own Python 3.12 runtime. It does not modify system Pyth
 
 ## Install
 
-Video Digest `0.1.0` is being prepared for npm publication but has not been published.
-To run the current source, clone this repository and install its locked JavaScript
+Install the published package globally:
+
+```sh
+npm install --global video-digest
+```
+
+The Bun alternative is:
+
+```sh
+bun add --global video-digest
+```
+
+Both installations expose `video-digest`; Bun must remain available on `PATH` because
+the executable uses Bun at runtime.
+
+To run from source instead, clone this repository and install its locked JavaScript
 dependencies:
 
 ```sh
@@ -70,24 +84,9 @@ bun run video-digest --version
 bun run video-digest --help
 ```
 
-Commands elsewhere in this README use the eventual installed command
-`video-digest`. From a source checkout, replace that prefix with
+Commands elsewhere in this README use the installed command `video-digest`. From a
+source checkout, replace that prefix with
 `bun run video-digest`; for example, run `bun run video-digest doctor`.
-
-After the package is published, the primary global installation command will be:
-
-```sh
-bun add --global video-digest
-```
-
-The npm alternative after publication will be:
-
-```sh
-npm install --global video-digest
-```
-
-Both installations expose `video-digest`; Bun must remain available on `PATH` because
-the executable uses Bun at runtime.
 
 After publication, confirm a global installation with:
 
@@ -244,7 +243,7 @@ and never parse human output. The exact success and failure shapes are defined i
 [JSON contracts](docs/cli/json-contracts.md), with numeric meanings in the
 [exit-code reference](docs/cli/exit-codes.md).
 
-The prepared `0.1.0` release will also contain a portable, independently installed
+The `0.1.0` release also contains a portable, independently installed
 [Video Digest agent skill](https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md).
 Review the source first, then copy the command you intend to run:
 

@@ -23,7 +23,7 @@
   },
   "type": "module",
   "bin": {
-    "video-digest": "./bin/video-digest"
+    "video-digest": "bin/video-digest"
   },
   "files": [
     "bin",

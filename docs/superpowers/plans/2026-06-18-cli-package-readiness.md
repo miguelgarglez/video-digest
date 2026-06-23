@@ -23,7 +23,7 @@ test("declares the public package contract", async () => {
   const pkg = JSON.parse(await readFile("package.json", "utf8"));
   expect(pkg).toMatchObject({
     name: "video-digest", version: "0.1.0", license: "MIT",
-    os: ["darwin"], cpu: ["arm64"], bin: { "video-digest": "./bin/video-digest" },
+    os: ["darwin"], cpu: ["arm64"], bin: { "video-digest": "bin/video-digest" },
     repository: { type: "git", url: "git+https://github.com/miguelgarglez/personal-video-digest.git" },
   });
   expect(pkg.private).not.toBe(true);

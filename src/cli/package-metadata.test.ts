@@ -52,7 +52,7 @@ describe("package metadata", () => {
       license: "MIT",
       os: ["darwin"],
       cpu: ["arm64"],
-      bin: { "video-digest": "./bin/video-digest" },
+      bin: { "video-digest": "bin/video-digest" },
       repository: {
         type: "git",
         url: "git+https://github.com/miguelgarglez/personal-video-digest.git",
@@ -116,7 +116,7 @@ describe("package metadata", () => {
     }
     expect(JSON.stringify(packageJson)).not.toMatch(/(?:_auth|authToken|npmToken)/i);
 
-    expect(binPath).toBe("./bin/video-digest");
+    expect(binPath).toBe("bin/video-digest");
     await access(join(process.cwd(), binPath!));
   });
 

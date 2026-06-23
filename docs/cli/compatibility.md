@@ -1,16 +1,16 @@
 # Compatibility and versioning
 
-Video Digest `0.1.0` is an experimental source-distributed CLI. Its supported
-platform is macOS on Apple Silicon (`darwin`/`arm64`). macOS on Intel, Linux, and
-Windows are outside the supported compatibility contract.
+Video Digest `0.1.0` is an experimental npm-distributed CLI. Its supported platform
+is macOS on Apple Silicon (`darwin`/`arm64`). macOS on Intel, Linux, and Windows are
+outside the supported compatibility contract.
 
 See the [JSON contracts](./json-contracts.md) and [Exit codes](./exit-codes.md).
 
 ## Runtime contract
 
 - Bun is the JavaScript runtime and the executable selected by the installed
-  command. Installing through npm does not replace the Bun requirement. No minimum
-  Bun version is promised until package metadata declares one.
+  command. Installing through npm does not replace the Bun requirement. The package
+  metadata declares the supported Bun engine range.
 - `uv` is the manually installed runtime manager used only by explicit setup.
 - `video-digest setup` may install an isolated Python 3.12 runtime and dependencies
   locked by the shipped `python/uv.lock`. It requires interactive confirmation or
@@ -49,4 +49,3 @@ for an explicit Video operation (public YouTube metadata or Transcript retrieval
 and OpenCode Digest generation) or consented runtime preparation. Package
 installation itself must not prepare Python, run a postinstall setup, or modify
 agent configuration.
-
