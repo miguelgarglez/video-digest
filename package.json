@@ -1,13 +1,65 @@
 {
-  "name": "personal-video-digest",
+  "name": "video-digest",
+  "version": "0.1.0",
+  "description": "Turn YouTube videos into local transcripts and structured digests.",
+  "license": "MIT",
+  "author": "Miguel García González",
+  "keywords": [
+    "youtube",
+    "transcript",
+    "digest",
+    "cli",
+    "tui",
+    "bun"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "type": "module",
-  "private": true,
   "bin": {
     "video-digest": "./bin/video-digest"
   },
+  "files": [
+    "bin",
+    "src",
+    "!src/**/*.test.*",
+    "!src/**/*.spec.*",
+    "!src/**/__snapshot__/**",
+    "!src/**/__snapshots__/**",
+    "!src/**/snapshot/**",
+    "!src/**/snapshots/**",
+    "!src/**/__fixture__/**",
+    "!src/**/__fixtures__/**",
+    "!src/**/fixture/**",
+    "!src/**/fixtures/**",
+    "!src/**/*.snap",
+    "python/fetch_transcript.py",
+    "python/pyproject.toml",
+    "python/uv.lock",
+    ".agents/skills/video-digest",
+    "docs/cli",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/miguelgarglez/personal-video-digest.git"
+  },
+  "bugs": {
+    "url": "https://github.com/miguelgarglez/personal-video-digest/issues"
+  },
+  "homepage": "https://github.com/miguelgarglez/personal-video-digest#readme",
   "scripts": {
     "test": "bun test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
+    "verify:package": "bun --silent run scripts/verify-package.ts",
+    "smoke:package": "bun --silent run scripts/smoke-packed-cli.ts",
     "video-digest": "bun --silent run src/cli/main.ts",
     "web": "bun run src/web/server.ts",
     "start": "bun run src/web/server.ts"
@@ -15,5 +67,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@opentui/core": "0.4.1"
   }
 }

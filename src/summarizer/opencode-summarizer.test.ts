@@ -6,6 +6,22 @@ import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 
 describe("OpenCodeSummarizer", () => {
+  test("forwards cancellation to the provider request", async () => {
+    const abort = new AbortController();
+    let received: AbortSignal | null | undefined;
+    const summarizer = new OpenCodeSummarizer({
+      apiKey: "test-key",
+      fetch: async (_url, init) => {
+        received = init?.signal;
+        return Response.json({ output_text: JSON.stringify(digestDraft()) });
+      },
+    });
+
+    await summarizer.generateDigest({ ...input(), signal: abort.signal });
+
+    expect(received).toBe(abort.signal);
+  });
+
   test("fails before provider call when API key is missing", async () => {
     let called = false;
     const fetch: FetchLike = async () => {
@@ -58,13 +74,16 @@ describe("OpenCodeSummarizer", () => {
   });
 
   test("maps provider errors to structured errors", async () => {
-    const fetch: FetchLike = async () => new Response("bad request", { status: 400 });
+    const echoedSecret = "Bearer test-key should never leave the provider boundary";
+    const fetch: FetchLike = async () => new Response(echoedSecret, { status: 400 });
     const summarizer = new OpenCodeSummarizer({ apiKey: "test-key", fetch });
 
-    await expect(summarizer.generateDigest(input())).rejects.toMatchObject({
+    const failure = summarizer.generateDigest(input());
+    await expect(failure).rejects.toMatchObject({
       code: "provider-failed",
-      message: "OpenCode request failed with status 400: bad request",
+      message: "OpenCode request failed with HTTP 400.",
     } satisfies Partial<SummarizerError>);
+    await expect(failure).rejects.not.toThrow(echoedSecret);
   });
 });
 

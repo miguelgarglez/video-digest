@@ -1,4 +1,5 @@
 import type { YouTubeVideo } from "../video/youtube-url";
+import type { PublicCliErrorCode } from "../cli/public-contract";
 
 export type TranscriptSegment = {
   duration: number | null;
@@ -19,10 +20,10 @@ export type Transcript = {
   videoId: string;
 };
 
-export type TranscriptSourceErrorCode =
+export type TranscriptSourceErrorCode = Extract<PublicCliErrorCode,
   | "provider-failed"
   | "transcript-unavailable"
-  | "invalid-provider-response";
+  | "invalid-provider-response">;
 
 export class TranscriptSourceError extends Error {
   constructor(
@@ -35,5 +36,5 @@ export class TranscriptSourceError extends Error {
 }
 
 export type TranscriptSource = {
-  fetch(video: YouTubeVideo): Promise<Transcript>;
+  fetch(video: YouTubeVideo, options?: { signal?: AbortSignal }): Promise<Transcript>;
 };

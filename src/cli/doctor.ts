@@ -1,13 +1,23 @@
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./credentials";
+import { resolveAppPaths } from "./app-paths";
+import { resolvePackageResources } from "./package-resources";
+import { inspectRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
+import {
+  PUBLIC_DOCTOR_CHECK_CAPABILITY,
+  PUBLIC_DOCTOR_CHECK_ID,
+  type PublicDoctorCapability,
+  type PublicDoctorCheckId,
+} from "./public-contract";
 
-export type DoctorCapability = "transcript" | "digest";
+export type DoctorCapability = PublicDoctorCapability;
 
 export type DoctorCheck = {
   capability: DoctorCapability;
-  id: string;
+  id: PublicDoctorCheckId;
   message: string;
   remediation: string | null;
   status: "pass" | "warn" | "fail";
@@ -24,36 +34,48 @@ export type DoctorProbe = {
   env: Record<string, string | undefined>;
   fileExists: (path: string) => Promise<boolean>;
   getStoredOpenCodeApiKey?: () => Promise<string | null>;
+  outputDir?: string;
+  runtimeReadiness: () => Promise<RuntimeReadiness>;
+  sidecarPath?: string;
   uvAvailable: (uvPath: string) => Promise<boolean>;
 };
 
 export async function defaultDoctor(
   credentialStore: CredentialStore = new MacOSKeychainCredentialStore(),
+  outputDir = resolveAppPaths(homedir()).defaultArtifactLibrary,
 ): Promise<DoctorReport> {
+  const resources = resolvePackageResources(import.meta.url);
+  const appPaths = resolveAppPaths(homedir());
+  const lockContents = await readFile(resources.uvLock, "utf8");
   return buildDoctorReport({
     bunVersion: Bun.version,
-    canWriteOutputDir: async (outputDir) => directoryWritableOrCreatable(outputDir),
+    canWriteOutputDir: async (path) => isOutputDirectoryWritable(path),
     env: process.env,
     fileExists: async (path) => fileExists(path),
     getStoredOpenCodeApiKey: async () => credentialStore.getOpenCodeApiKey(),
+    outputDir,
+    runtimeReadiness: async () => inspectRuntime(appPaths.runtimeDir, lockContents),
+    sidecarPath: resources.sidecarScript,
     uvAvailable: async (uvPath) => uvAvailable(uvPath),
   });
 }
 
 export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorReport> {
-  const outputDir = probe.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
-  const uvPath = probe.env.UV_BIN ?? (probe.env.HOME ? `${probe.env.HOME}/.local/bin/uv` : "uv");
-  const sidecarPath = join(import.meta.dir, "../../python/fetch_transcript.py");
+  const outputDir = probe.outputDir ?? probe.env.VIDEO_DIGEST_OUTPUT_DIR ?? "outputs";
+  const uvPath = resolveUvExecutable(probe.env);
+  const sidecarPath = probe.sidecarPath ?? join(import.meta.dir, "../../python/fetch_transcript.py");
+  const readiness = await probe.runtimeReadiness();
   const checks: DoctorCheck[] = [
     {
-      capability: "transcript",
-      id: "bun",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.bun],
+      id: PUBLIC_DOCTOR_CHECK_ID.bun,
       message: `Bun runtime is available (${probe.bunVersion})`,
       remediation: null,
       status: "pass",
     },
-    await uvCheck(probe, uvPath),
+    await uvCheck(probe, uvPath, readiness),
     await sidecarCheck(probe, sidecarPath),
+    runtimeCheck(readiness),
     await opencodeCheck(probe),
     await outputDirCheck(probe, outputDir),
   ];
@@ -64,23 +86,42 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
   };
 }
 
-async function uvCheck(probe: DoctorProbe, uvPath: string): Promise<DoctorCheck> {
+function runtimeCheck(readiness: RuntimeReadiness): DoctorCheck {
+  if (readiness.status === "ready") {
+    return {
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonRuntime],
+      id: PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
+      message: "Managed Python runtime is ready",
+      remediation: null,
+      status: "pass",
+    };
+  }
+  return {
+    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonRuntime],
+    id: PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
+    message: `Managed Python runtime is ${readiness.status}`,
+    remediation: readiness.remediation,
+    status: "fail",
+  };
+}
+
+async function uvCheck(probe: DoctorProbe, uvPath: string, readiness: RuntimeReadiness): Promise<DoctorCheck> {
   const available = await probe.uvAvailable(uvPath);
 
   return available
     ? {
-        capability: "transcript",
-        id: "uv",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.uv],
+        id: PUBLIC_DOCTOR_CHECK_ID.uv,
         message: uvPath === "uv" ? "uv is available" : `uv is available at ${uvPath}`,
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "uv",
-        message: `${uvPath} is not available and uv is not on PATH`,
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.uv],
+        id: PUBLIC_DOCTOR_CHECK_ID.uv,
+        message: `${uvPath} is not available`,
         remediation: "Install uv, source $HOME/.local/bin/env, or set UV_BIN.",
-        status: "fail",
+        status: readiness.status === "ready" ? "warn" : "fail",
       };
 }
 
@@ -89,15 +130,15 @@ async function sidecarCheck(probe: DoctorProbe, sidecarPath: string): Promise<Do
 
   return exists
     ? {
-        capability: "transcript",
-        id: "python-sidecar",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonSidecar],
+        id: PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
         message: "Python transcript sidecar exists",
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "python-sidecar",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.pythonSidecar],
+        id: PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
         message: `${sidecarPath} is not available`,
         remediation: "Restore python/fetch_transcript.py.",
         status: "fail",
@@ -107,8 +148,8 @@ async function sidecarCheck(probe: DoctorProbe, sidecarPath: string): Promise<Do
 async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
   if (probe.env.OPENCODE_API_KEY) {
     return {
-      capability: "digest",
-      id: "opencode-api-key",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
       message: "OPENCODE_API_KEY is configured via env; digest generation is available",
       remediation: null,
       status: "pass",
@@ -117,8 +158,8 @@ async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
 
   if (await probe.getStoredOpenCodeApiKey?.()) {
     return {
-      capability: "digest",
-      id: "opencode-api-key",
+      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
       message: "OPENCODE_API_KEY is configured via Keychain; digest generation is available",
       remediation: null,
       status: "pass",
@@ -126,8 +167,8 @@ async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
   }
 
   return {
-    capability: "digest",
-    id: "opencode-api-key",
+    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
+    id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
     message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
     remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
     status: "warn",
@@ -139,15 +180,15 @@ async function outputDirCheck(probe: DoctorProbe, outputDir: string): Promise<Do
 
   return writable
     ? {
-        capability: "transcript",
-        id: "output-dir",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.outputDir],
+        id: PUBLIC_DOCTOR_CHECK_ID.outputDir,
         message: "Output directory is writable or can be created",
         remediation: null,
         status: "pass",
       }
     : {
-        capability: "transcript",
-        id: "output-dir",
+        capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.outputDir],
+        id: PUBLIC_DOCTOR_CHECK_ID.outputDir,
         message: `Output directory is not writable at ${outputDir}`,
         remediation: "Choose a writable VIDEO_DIGEST_OUTPUT_DIR.",
         status: "fail",
@@ -164,27 +205,30 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function uvAvailable(uvPath: string): Promise<boolean> {
-  if (await fileExists(uvPath)) {
-    return true;
+  try {
+    const process = Bun.spawn([uvPath, "--version"], { stderr: "pipe", stdout: "pipe" });
+    return (await process.exited) === 0;
+  } catch {
+    return false;
   }
-
-  const process = Bun.spawn(["uv", "--version"], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  return (await process.exited) === 0;
 }
 
-async function directoryWritableOrCreatable(outputDir: string): Promise<boolean> {
-  try {
-    await access(outputDir, constants.W_OK);
-    return true;
-  } catch {
+export async function isOutputDirectoryWritable(
+  outputDir: string,
+  accessPath: (path: string, mode?: number) => Promise<void> = access,
+): Promise<boolean> {
+  let candidate = outputDir;
+  while (true) {
     try {
-      await access(".", constants.W_OK);
-      return true;
-    } catch {
-      return false;
+      const metadata = await stat(candidate);
+      if (candidate === outputDir && !metadata.isDirectory()) return false;
+      await accessPath(candidate, constants.W_OK | constants.X_OK);
+      return metadata.isDirectory();
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;
+      const parent = dirname(candidate);
+      if (parent === candidate) return false;
+      candidate = parent;
     }
   }
 }

@@ -6,6 +6,26 @@ import { fetchTranscriptOnly } from "./transcript-only";
 import type { Transcript } from "../transcript/transcript-source";
 
 describe("fetchTranscriptOnly", () => {
+  test("stops before writing when cancellation reaches metadata enrichment", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-cancel-"));
+    const abort = new AbortController();
+    const pending = fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          abort.abort(new Error("cancelled"));
+          throw abort.signal.reason;
+        },
+      },
+      outputDir,
+      signal: abort.signal,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    await expect(pending).rejects.toThrow("cancelled");
+    await expect(readFile(join(outputDir, "metadata", `${video.videoId}.json`), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   test("fetches transcript, scores quality, and writes transcript artifacts", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
     const progressStages: string[] = [];
@@ -23,10 +43,13 @@ describe("fetchTranscriptOnly", () => {
     });
 
     expect(result).toEqual({
+      cleanText: expect.any(String),
       exitCode: 0,
       paths: {
         metadataPath: join(outputDir, "metadata", "1ZgUcrR0K7I.json"),
-        transcriptPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+        transcriptJsonPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.json"),
+        transcriptMarkdownPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.md"),
+        transcriptTextPath: join(outputDir, "transcripts", "1ZgUcrR0K7I.txt"),
       },
       status: "completed",
       transcriptQuality: expect.objectContaining({
@@ -34,9 +57,67 @@ describe("fetchTranscriptOnly", () => {
       }),
     });
     expect(progressStages).toEqual(["fetching-transcript", "scoring-transcript", "writing-outputs", "completed"]);
-    expect(await readFile(result.paths.transcriptPath, "utf8")).toContain("transcript.v0");
+    expect(await readFile(result.paths.transcriptJsonPath, "utf8")).toContain("transcript.v0");
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain(
+      "**00:00** This is a substantial transcript segment with useful content.",
+    );
+    expect(await readFile(result.paths.transcriptTextPath, "utf8")).toContain(
+      "This is a substantial transcript segment with useful content.",
+    );
+    expect(result.cleanText).toBe(await readFile(result.paths.transcriptTextPath, "utf8"));
+  });
+
+  test("persists one best-effort metadata lookup in JSON and Markdown", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
+    let metadataCalls = 0;
+
+    const result = await fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          metadataCalls += 1;
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    expect(metadataCalls).toBe(1);
+    expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+      video: { channel: "A channel", videoTitle: "A title" },
+    });
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain(
+      "# A title\n\nURL: https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+    );
+    expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("Channel: A channel");
+  });
+
+  test("continues with null metadata when lookup fails", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-transcript-only-"));
+
+    const result = await fetchTranscriptOnly({
+      metadataSource: {
+        async fetch() {
+          throw new Error("offline");
+        },
+      },
+      outputDir,
+      transcriptSource: { fetch: async () => transcript },
+      video,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+      video: { channel: null, videoTitle: null },
+    });
   });
 });
+
+const video = {
+  canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+  videoId: "1ZgUcrR0K7I",
+};
 
 const transcript: Transcript = {
   language: "en",

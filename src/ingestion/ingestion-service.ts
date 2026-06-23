@@ -65,7 +65,7 @@ export async function runIngestionFromUrl(
         digestTitle: metadata.digest?.digestTitle ?? null,
         metadataPath: result.paths.metadataPath,
         status: "completed",
-        transcriptPath: result.paths.transcriptPath,
+        transcriptPath: result.paths.transcriptJsonPath,
         transcriptQualityStatus: result.transcriptQuality.status,
         videoId: video.videoId,
         warnings: result.transcriptQuality.warnings,

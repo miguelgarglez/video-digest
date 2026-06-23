@@ -1,5 +1,7 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { resolveAppPaths } from "../cli/app-paths";
+import { resolvePackageResources } from "../cli/package-resources";
+import { managedInterpreterPath } from "../cli/runtime-manager";
 import type { YouTubeVideo } from "../video/youtube-url";
 import {
   TranscriptSourceError,
@@ -15,11 +17,16 @@ export type CommandResult = {
   stdout: string;
 };
 
-export type CommandRunner = (command: string[], options: { cwd: string }) => Promise<CommandResult>;
+export type CommandRunner = (
+  command: string[],
+  options: { cwd: string; signal?: AbortSignal },
+) => Promise<CommandResult>;
 
 export type PythonYoutubeTranscriptSourceOptions = {
+  pythonDir?: string;
   runner?: CommandRunner;
-  uvPath?: string;
+  runtimePython?: string;
+  sidecarScript?: string;
 };
 
 type SidecarTranscript = {
@@ -30,24 +37,26 @@ type SidecarTranscript = {
   videoId?: unknown;
 };
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(currentDir, "../..");
-const pythonDir = resolve(repoRoot, "python");
-const sidecarScript = resolve(pythonDir, "fetch_transcript.py");
-
 export class PythonYoutubeTranscriptSource implements TranscriptSource {
+  private readonly pythonDir: string;
   private readonly runner: CommandRunner;
-  private readonly uvPath: string;
+  private readonly runtimePython: string;
+  private readonly sidecarScript: string;
 
   constructor(options: PythonYoutubeTranscriptSourceOptions = {}) {
+    const resources = resolvePackageResources(import.meta.url);
+    const runtimeDir = resolveAppPaths(homedir()).runtimeDir;
+    this.pythonDir = options.pythonDir ?? resources.pythonDir;
     this.runner = options.runner ?? runCommand;
-    this.uvPath = options.uvPath ?? defaultUvPath();
+    this.runtimePython = options.runtimePython ?? managedInterpreterPath(runtimeDir);
+    this.sidecarScript = options.sidecarScript ?? resources.sidecarScript;
   }
 
-  async fetch(video: YouTubeVideo): Promise<Transcript> {
+  async fetch(video: YouTubeVideo, options: { signal?: AbortSignal } = {}): Promise<Transcript> {
+    options.signal?.throwIfAborted();
     const result = await this.runner(
-      [this.uvPath, "run", "python", sidecarScript, video.videoId],
-      { cwd: pythonDir },
+      [this.runtimePython, this.sidecarScript, video.videoId],
+      { cwd: this.pythonDir, ...(options.signal ? { signal: options.signal } : {}) },
     );
 
     if (result.exitCode !== 0) {
@@ -124,9 +133,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function runCommand(command: string[], options: { cwd: string }): Promise<CommandResult> {
+async function runCommand(
+  command: string[],
+  options: { cwd: string; signal?: AbortSignal },
+): Promise<CommandResult> {
   const process = Bun.spawn(command, {
     cwd: options.cwd,
+    signal: options.signal,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -142,16 +155,4 @@ async function runCommand(command: string[], options: { cwd: string }): Promise<
     stderr,
     stdout,
   };
-}
-
-function defaultUvPath(): string {
-  if (process.env.UV_BIN) {
-    return process.env.UV_BIN;
-  }
-
-  if (process.env.HOME) {
-    return `${process.env.HOME}/.local/bin/uv`;
-  }
-
-  return "uv";
 }

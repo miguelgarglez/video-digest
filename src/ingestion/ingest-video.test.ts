@@ -8,6 +8,31 @@ import type { Transcript, TranscriptSource } from "../transcript/transcript-sour
 import type { YouTubeVideo } from "../video/youtube-url";
 
 describe("ingestVideo", () => {
+  test("stops before summarization and writes when cancellation reaches metadata enrichment", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-cancel-"));
+    const abort = new AbortController();
+    let summarizerCalls = 0;
+    const pending = ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          abort.abort(new Error("cancelled"));
+          throw abort.signal.reason;
+        },
+      },
+      outputDir,
+      signal: abort.signal,
+      summarizer: {
+        async generateDigest() { summarizerCalls += 1; return fakeDigestDraft(); },
+      },
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(summarizerCalls).toBe(0);
+  });
+
   test("writes outputs for usable transcripts", async () => {
     const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
     const progressStages: string[] = [];
@@ -26,6 +51,7 @@ describe("ingestVideo", () => {
     if (result.status === "completed") {
       expect(result.paths.emailPreviewPath).toBe(join(outputDir, "emails", "1ZgUcrR0K7I.md"));
       expect(await readFile(result.paths.digestPath, "utf8")).toContain("# Useful Digest");
+      expect(result.cleanText).toBe(await readFile(result.paths.transcriptTextPath, "utf8"));
     }
     expect(progressStages).toEqual([
       "fetching-transcript",
@@ -88,6 +114,83 @@ describe("ingestVideo", () => {
         transcriptQuality: {
           status: "unusable",
         },
+      });
+    }
+  });
+
+  test("persists enriched metadata for completed ingestion", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+    let metadataCalls = 0;
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          metadataCalls += 1;
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    expect(metadataCalls).toBe(1);
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: "A channel", videoTitle: "A title" },
+      });
+      expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("# A title");
+    }
+  });
+
+  test("persists enriched metadata for unusable transcripts without generating a digest", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          return { channel: "A channel", title: "A title" };
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource({ ...usableTranscript(), segments: [] }),
+      video,
+    });
+
+    expect(result.status).toBe("unusable-transcript");
+    if (result.status === "unusable-transcript") {
+      expect(JSON.parse(await readFile(result.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: "A channel", videoTitle: "A title" },
+      });
+    }
+  });
+
+  test("continues digest creation when metadata lookup fails", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "video-digest-"));
+
+    const result = await ingestVideo({
+      emailPreview: false,
+      metadataSource: {
+        async fetch() {
+          throw new Error("offline");
+        },
+      },
+      outputDir,
+      summarizer: fakeSummarizer(),
+      transcriptSource: fakeTranscriptSource(usableTranscript()),
+      video,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+        video: { channel: null, videoTitle: null },
       });
     }
   });
