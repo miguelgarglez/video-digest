@@ -47,7 +47,6 @@ describe("package metadata", () => {
 
     expect(packageJson).toMatchObject({
       name: "video-digest",
-      version: "0.1.0",
       description: "Turn YouTube videos into local transcripts and structured digests.",
       license: "MIT",
       os: ["darwin"],
@@ -63,6 +62,7 @@ describe("package metadata", () => {
       homepage: "https://github.com/miguelgarglez/personal-video-digest#readme",
       engines: { bun: ">=1.3.14" },
     });
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.author).toBe("Miguel García González");
     expect(packageJson.keywords).toEqual([

@@ -1,11 +1,22 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "video-digest";
-const PACKAGE_VERSION = "0.1.0";
-const TARBALL_FILENAME = "video-digest-0.1.0.tgz";
+const packageJsonPath = new URL("../package.json", import.meta.url);
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+  name?: string;
+  version?: string;
+};
+const PACKAGE_VERSION =
+  packageJson.name === PACKAGE_NAME && typeof packageJson.version === "string"
+    ? packageJson.version
+    : (() => {
+        throw new Error("package.json does not declare the video-digest package version");
+      })();
+const TARBALL_FILENAME = `${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz`;
 const DEFAULT_PACK_TIMEOUT_MS = 60_000;
 const DEFAULT_TAR_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;

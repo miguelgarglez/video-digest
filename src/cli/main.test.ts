@@ -32,6 +32,12 @@ async function runCli(args: string[], io: CliIO, dependencies: CliDependencies =
   });
 }
 
+async function packageVersion(): Promise<string> {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version?: string };
+  if (typeof packageJson.version !== "string") throw new Error("package.json version is missing");
+  return packageJson.version;
+}
+
 describe("runCli", () => {
   test("transcript --stdout writes artifacts and emits exact clean text only", async () => {
     const logs: string[] = [];
@@ -190,7 +196,7 @@ describe("runCli", () => {
       configStore: { load: async () => { throw new Error("must not load"); }, save: async () => {} },
     });
     expect(exitCode).toBe(0);
-    expect(logs).toEqual(["video-digest 0.1.0"]);
+    expect(logs).toEqual([`video-digest ${await packageVersion()}`]);
   });
 
   test("prints command-scoped transcript help", async () => {
