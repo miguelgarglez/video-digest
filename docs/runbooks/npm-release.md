@@ -18,6 +18,9 @@ npm trust github video-digest \
   --allow-publish
 ```
 
+Use npm `11.17.0` or newer for this command. Older npm versions may not expose the
+Trusted Publisher permission flags.
+
 Equivalent npmjs.com fields:
 
 | Field | Value |

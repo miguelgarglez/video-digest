@@ -33,6 +33,9 @@ The npm package should configure a Trusted Publisher for:
 - optional GitHub environment: `npm-production`;
 - allowed action: `npm publish`.
 
+For npm CLI setup, use npm `11.17.0` or newer so the documented `--allow-publish`
+Trusted Publisher permission flag is available.
+
 ## Safety properties
 
 The workflow does not accept arbitrary package names or publish from branches other
