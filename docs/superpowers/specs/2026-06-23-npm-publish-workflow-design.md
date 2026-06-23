@@ -23,7 +23,8 @@ the exact version to publish. The workflow refuses to run unless:
 
 The workflow uses npm Trusted Publishing through GitHub Actions OIDC instead of
 long-lived npm tokens. It grants only `contents: read` and `id-token: write`, uses a
-GitHub-hosted macOS ARM runner, and publishes with `npm publish --access public`.
+GitHub-hosted macOS ARM runner, sets up Node 24 so npm Trusted Publishing has a
+compatible Node/npm runtime, and publishes with `npm publish --access public`.
 
 The npm package should configure a Trusted Publisher for:
 

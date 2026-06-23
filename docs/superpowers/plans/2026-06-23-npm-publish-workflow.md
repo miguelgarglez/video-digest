@@ -15,7 +15,7 @@
 **Files:**
 - Create: `scripts/npm-publish-workflow.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create tests that read `.github/workflows/npm-publish.yml` and
 `docs/runbooks/npm-release.md`, then assert:
@@ -27,7 +27,7 @@ Create tests that read `.github/workflows/npm-publish.yml` and
 - release gates run before `npm publish --access public`;
 - the runbook documents Trusted Publisher setup and post-publish verification.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `bun test scripts/npm-publish-workflow.test.ts`
 
@@ -38,7 +38,7 @@ Expected: FAIL because the workflow and runbook do not exist.
 **Files:**
 - Create: `.github/workflows/npm-publish.yml`
 
-- [ ] **Step 1: Add workflow**
+- [x] **Step 1: Add workflow**
 
 Add a `workflow_dispatch` workflow with a required `version` input, `environment:
 npm-production`, macOS ARM runner, pinned checkout/setup-bun actions, and these gates:
@@ -53,7 +53,7 @@ npm-production`, macOS ARM runner, pinned checkout/setup-bun actions, and these 
 8. run `bun run smoke:package`;
 9. run `npm publish --access public`.
 
-- [ ] **Step 2: Verify workflow tests pass**
+- [x] **Step 2: Verify workflow tests pass**
 
 Run: `bun test scripts/npm-publish-workflow.test.ts`
 
@@ -64,12 +64,12 @@ Expected: PASS.
 **Files:**
 - Create: `docs/runbooks/npm-release.md`
 
-- [ ] **Step 1: Document setup and operation**
+- [x] **Step 1: Document setup and operation**
 
 Document npm Trusted Publisher setup, GitHub environment protection, release steps,
 post-publish verification, and rollback/yank guidance.
 
-- [ ] **Step 2: Verify runbook tests pass**
+- [x] **Step 2: Verify runbook tests pass**
 
 Run: `bun test scripts/npm-publish-workflow.test.ts`
 
@@ -80,7 +80,7 @@ Expected: PASS.
 **Files:**
 - Modify: none unless verification reveals a gap.
 
-- [ ] **Step 1: Run focused and full safe checks**
+- [x] **Step 1: Run focused and full safe checks**
 
 Run: `bun test scripts/npm-publish-workflow.test.ts scripts/ci-quality.test.ts`
 
@@ -90,7 +90,7 @@ Run: `bun run typecheck`
 
 Expected: PASS.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add .github/workflows/npm-publish.yml docs/runbooks/npm-release.md scripts/npm-publish-workflow.test.ts docs/superpowers/specs/2026-06-23-npm-publish-workflow-design.md docs/superpowers/plans/2026-06-23-npm-publish-workflow.md
