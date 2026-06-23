@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,6 +18,13 @@ import type {
   PackAndVerifyOptions,
   VerifiedPackage,
 } from "./verify-package";
+
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
+const PACKAGE_NAME = "video-digest";
+const PACKAGE_VERSION = packageJson.version;
+const TARBALL_FILENAME = `${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz`;
 
 const doctorReport = {
   checks: [
@@ -113,7 +121,7 @@ const expectedHelp = [
 
 function successfulOutput(invocation: CommandInvocation): CommandResult {
   if (invocation.args.includes("--version")) {
-    return { exitCode: 0, stderr: "", stdout: "video-digest 0.1.0\n" };
+    return { exitCode: 0, stderr: "", stdout: `${PACKAGE_NAME} ${PACKAGE_VERSION}\n` };
   }
   if (invocation.args.includes("--help")) {
     return { exitCode: 0, stderr: "", stdout: expectedHelp };
@@ -138,7 +146,7 @@ async function materializeFakeInstall(invocation: CommandInvocation): Promise<vo
     JSON.stringify({
       dependencies: { "@opentui/core": "0.4.1" },
       name: "video-digest",
-      version: "0.1.0",
+      version: PACKAGE_VERSION,
     }),
   );
   await writeFile(join(dependencyRoot, "package.json"), JSON.stringify({ name: "@opentui/core" }));
@@ -381,7 +389,7 @@ describe("isolated packed CLI smoke", () => {
   test("rejects an installed package root that resolves outside the isolated prefix", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-install-boundary-tests-"));
     const packRoot = await mkdtemp(join(tempRoot, "pack-"));
-    const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
+    const tarballPath = join(packRoot, TARBALL_FILENAME);
     const externalPackageRoot = join(tempRoot, "escaped-package");
     await writeFile(tarballPath, "fixture");
     let probes = 0;
@@ -408,7 +416,7 @@ describe("isolated packed CLI smoke", () => {
               JSON.stringify({
                 dependencies: { "@opentui/core": "0.4.1" },
                 name: "video-digest",
-                version: "0.1.0",
+                version: PACKAGE_VERSION,
               }),
             );
             await writeFile(externalExecutable, "#!/usr/bin/env bun\n", { mode: 0o755 });
@@ -433,7 +441,7 @@ describe("isolated packed CLI smoke", () => {
     const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
     const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-smoke-tests-"));
     const packRoot = await mkdtemp(join(tmpdir(), "video-digest-pack-fixture-"));
-    const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
+    const tarballPath = join(packRoot, TARBALL_FILENAME);
     const invocations: CommandInvocation[] = [];
     let packCleanupCount = 0;
     let observedPackOptions: PackAndVerifyOptions | undefined;
@@ -467,7 +475,7 @@ describe("isolated packed CLI smoke", () => {
       const canonicalTempRoot = await realpath(tempRoot);
       const canonicalRepositoryRoot = await realpath(repositoryRoot);
 
-      expect(result).toEqual({ packageName: "video-digest", version: "0.1.0" });
+      expect(result).toEqual({ packageName: PACKAGE_NAME, version: PACKAGE_VERSION });
       expect(observedPackOptions).toMatchObject({
         repositoryRoot: canonicalRepositoryRoot,
         tempRoot: canonicalTempRoot,
@@ -507,7 +515,7 @@ describe("isolated packed CLI smoke", () => {
   test("fails when doctor bypasses the owned security and uv shims", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-missing-shim-marker-tests-"));
     const packRoot = await mkdtemp(join(tmpdir(), "video-digest-missing-shim-pack-"));
-    const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
+    const tarballPath = join(packRoot, TARBALL_FILENAME);
     await writeFile(tarballPath, "fixture");
     try {
       await expect(
@@ -534,7 +542,7 @@ describe("isolated packed CLI smoke", () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "video-digest-smoke-failure-tests-"));
     await writeFile(join(tempRoot, "sentinel"), "keep");
     const packRoot = await mkdtemp(join(tmpdir(), "video-digest-pack-failure-fixture-"));
-    const tarballPath = join(packRoot, "video-digest-0.1.0.tgz");
+    const tarballPath = join(packRoot, TARBALL_FILENAME);
     await writeFile(tarballPath, "fixture");
     let packCleaned = false;
     let smokeRoot = "";

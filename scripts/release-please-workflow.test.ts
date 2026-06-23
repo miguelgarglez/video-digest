@@ -5,6 +5,7 @@ const workflowPath = new URL("../.github/workflows/release-please.yml", import.m
 const configPath = new URL("../release-please-config.json", import.meta.url);
 const manifestPath = new URL("../.release-please-manifest.json", import.meta.url);
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
+const packageJsonPath = new URL("../package.json", import.meta.url);
 const runbookPath = new URL("../docs/runbooks/npm-release.md", import.meta.url);
 
 async function readText(url: URL): Promise<string> {
@@ -49,6 +50,7 @@ describe("Release Please configuration", () => {
   test("tracks the root node package from the current published version", async () => {
     const config = JSON.parse(await readText(configPath));
     const manifest = JSON.parse(await readText(manifestPath));
+    const packageJson = JSON.parse(await readText(packageJsonPath));
 
     expect(config).toEqual({
       packages: {
@@ -60,16 +62,16 @@ describe("Release Please configuration", () => {
         },
       },
     });
-    expect(manifest).toEqual({ ".": "0.1.0" });
+    expect(manifest).toEqual({ ".": packageJson.version });
   });
 
-  test("documents the initial published release without inventing tag history", async () => {
+  test("documents release history and keeps the initial npm release note", async () => {
     const changelog = await readText(changelogPath);
+    const manifest = JSON.parse(await readText(manifestPath));
 
     expect(changelog).toContain("# Changelog");
-    expect(changelog).toContain("## 0.1.0");
+    expect(changelog).toContain(manifest["."]);
     expect(changelog).toContain("Initial public npm release of `video-digest`.");
-    expect(changelog).not.toContain("v0.1.0");
   });
 });
 

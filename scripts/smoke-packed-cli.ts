@@ -1,4 +1,4 @@
-import { constants, type Stats } from "node:fs";
+import { constants, readFileSync, type Stats } from "node:fs";
 import {
   access,
   chmod,
@@ -31,7 +31,17 @@ import {
 } from "./verify-package";
 
 const PACKAGE_NAME = "video-digest";
-const PACKAGE_VERSION = "0.1.0";
+const packageJsonPath = new URL("../package.json", import.meta.url);
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+  name?: string;
+  version?: string;
+};
+const PACKAGE_VERSION =
+  packageJson.name === PACKAGE_NAME && typeof packageJson.version === "string"
+    ? packageJson.version
+    : (() => {
+        throw new Error("package.json does not declare the video-digest package version");
+      })();
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 120_000;
 const PROBE_TIMEOUT_MS = 15_000;

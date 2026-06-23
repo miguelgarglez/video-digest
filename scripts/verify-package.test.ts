@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,13 @@ import {
   type ProcessLifecycleEvent,
   type ProcessLifecycleHost,
 } from "./verify-package";
+
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
+const PACKAGE_NAME = "video-digest";
+const PACKAGE_VERSION = packageJson.version;
+const TARBALL_FILENAME = `${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz`;
 
 class FakeProcessLifecycleHost implements ProcessLifecycleHost {
   readonly preservedSignals: NodeJS.Signals[] = [];
@@ -131,10 +139,10 @@ function expectedMode(path: string): number {
 function npmPackJson(paths: readonly string[] = validPackedFiles): string {
   return JSON.stringify([
     {
-      id: "video-digest@0.1.0",
-      name: "video-digest",
-      version: "0.1.0",
-      filename: "video-digest-0.1.0.tgz",
+      id: `${PACKAGE_NAME}@${PACKAGE_VERSION}`,
+      name: PACKAGE_NAME,
+      version: PACKAGE_VERSION,
+      filename: TARBALL_FILENAME,
       files: paths.map((path) => ({
         path: path.slice("package/".length),
         mode: expectedMode(path),
@@ -299,7 +307,7 @@ describe("package creation", () => {
         if (invocation.executable === "npm") {
           const destination = invocation.args.at(-1)!;
           await mkdir(destination, { recursive: true });
-          await writeFile(join(destination, "video-digest-0.1.0.tgz"), "fixture");
+          await writeFile(join(destination, TARBALL_FILENAME), "fixture");
           return {
             exitCode: 0,
             stdout: npmPackJson(),
@@ -334,7 +342,7 @@ describe("package creation", () => {
         { timeoutMs: 15_000, maxOutputBytes: 2 * 1024 * 1024 },
       ]);
       expect(result.tarballPath).toBe(
-        join(result.temporaryDirectory, "video-digest-0.1.0.tgz"),
+        join(result.temporaryDirectory, TARBALL_FILENAME),
       );
       expect(result.temporaryDirectory.startsWith(tempRoot)).toBe(true);
       await result.cleanup();
@@ -398,7 +406,7 @@ describe("package creation", () => {
     };
     const runCommand = async (invocation: CommandInvocation) => {
       if (invocation.executable === "npm") {
-        await writeFile(join(invocation.args.at(-1)!, "video-digest-0.1.0.tgz"), "fixture");
+        await writeFile(join(invocation.args.at(-1)!, TARBALL_FILENAME), "fixture");
         return { exitCode: 0, stdout: npmPackJson(), stderr: "" };
       }
       return {
