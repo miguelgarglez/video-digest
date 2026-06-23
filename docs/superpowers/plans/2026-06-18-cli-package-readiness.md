@@ -16,7 +16,7 @@
 - Modify: `package.json`
 - Modify: `src/cli/package-metadata.test.ts`
 
-- [ ] **Step 1: Expand the failing metadata test**
+- [x] **Step 1: Expand the failing metadata test**
 
 ```ts
 test("declares the public package contract", async () => {
@@ -31,12 +31,12 @@ test("declares the public package contract", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test src/cli/package-metadata.test.ts`  
 Expected: FAIL on the old private name and missing version.
 
-- [ ] **Step 3: Add complete npm metadata and allowlist**
+- [x] **Step 3: Add complete npm metadata and allowlist**
 
 ```json
 {
@@ -56,12 +56,12 @@ Expected: FAIL on the old private name and missing version.
 Keep the approved `@opentui/core` dependency and development scripts. Pin direct
 runtime dependency versions; do not add publish credentials or a publish script.
 
-- [ ] **Step 4: Run metadata tests and typecheck**
+- [x] **Step 4: Run metadata tests and typecheck**
 
 Run: `bun test src/cli/package-metadata.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json src/cli/package-metadata.test.ts
@@ -75,7 +75,7 @@ git commit -m "build(npm): define public package"
 - Create: `scripts/verify-package.test.ts`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write a failing manifest-validation test**
+- [x] **Step 1: Write a failing manifest-validation test**
 
 ```ts
 test("rejects internal files", () => {
@@ -87,12 +87,12 @@ test("requires runtime resources", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test scripts/verify-package.test.ts`  
 Expected: FAIL because the verifier is missing.
 
-- [ ] **Step 3: Implement tarball validation**
+- [x] **Step 3: Implement tarball validation**
 
 ```ts
 const allowedRoots = [
@@ -125,12 +125,12 @@ The executable script runs `npm pack --json`, lists the generated `.tgz` with
 `tar -tzf`, validates it, prints the tarball path, and removes no user files. Add
 `"verify:package": "bun run scripts/verify-package.ts"`.
 
-- [ ] **Step 4: Run verifier tests and a real pack**
+- [x] **Step 4: Run verifier tests and a real pack**
 
 Run: `bun test scripts/verify-package.test.ts && bun run verify:package`  
 Expected: PASS and one local `video-digest-0.1.0.tgz` path; no npm publication.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/verify-package.ts scripts/verify-package.test.ts package.json
@@ -144,7 +144,7 @@ git commit -m "test(npm): verify packed contents"
 - Create: `scripts/smoke-packed-cli.test.ts`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write a failing command-plan test**
+- [x] **Step 1: Write a failing command-plan test**
 
 ```ts
 test("smoke test executes outside the repository", () => {
@@ -154,12 +154,12 @@ test("smoke test executes outside the repository", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test scripts/smoke-packed-cli.test.ts`  
 Expected: FAIL because the smoke planner is missing.
 
-- [ ] **Step 3: Implement isolated install and assertions**
+- [x] **Step 3: Implement isolated install and assertions**
 
 ```ts
 export function buildSmokePlan(tarball: string, prefix: string, cwd: string) {
@@ -180,7 +180,10 @@ parse doctor JSON, and remove only those temporary directories in `finally`. Do 
 Run: `bun test scripts/smoke-packed-cli.test.ts && bun run smoke:package`  
 Expected: PASS from a working directory outside the repository.
 
-- [ ] **Step 5: Commit**
+Status: pending explicit user approval because this command installs the packed
+tarball into a temporary global npm prefix.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/smoke-packed-cli.ts scripts/smoke-packed-cli.test.ts package.json
@@ -193,7 +196,7 @@ git commit -m "test(npm): smoke test packed CLI"
 - Create: `.github/workflows/cli-quality.yml`
 - Modify: `README.md`
 
-- [ ] **Step 1: Add a workflow matching the supported platform**
+- [x] **Step 1: Add a workflow matching the supported platform**
 
 ```yaml
 name: CLI quality
@@ -225,24 +228,28 @@ do not silently weaken the job to x64.
 Run: `bun install --frozen-lockfile && bun test && bun run typecheck && bun run verify:package && bun run smoke:package`  
 Expected: every command exits 0; the tarball is not published.
 
-- [ ] **Step 3: Recheck the public package name**
+Status: partially verified with `bun test`, `bun run typecheck`, and
+`bun run verify:package`; pending explicit user approval for the install-based
+`bun run smoke:package` gate.
+
+- [x] **Step 3: Recheck the public package name**
 
 Run: `npm view video-digest name version --json`  
 Expected before first publication: npm returns `E404`. If a package now occupies the
 name, stop and ask the user to choose a new name; do not publish or silently switch to
 a scoped package.
 
-- [ ] **Step 4: Inspect the final tarball metadata**
+- [x] **Step 4: Inspect the final tarball metadata**
 
 Run: `npm pack --dry-run --json`  
 Expected: name `video-digest`, version `0.1.0`, only allowlisted files, and no metadata error.
 
-- [ ] **Step 5: Update README verification status without claiming publication**
+- [x] **Step 5: Update README verification status without claiming publication**
 
 State that the repository is publication-ready and experimental. Do not add an npm
 version badge or installation claim that implies the package is already public.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .github/workflows/cli-quality.yml README.md
