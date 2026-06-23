@@ -113,6 +113,7 @@ describe("npm release runbook", () => {
       expect(runbook).toContain(required);
     }
 
+    expect(runbook).toContain("--allow-publish");
     expect(runbook).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/i);
   });
 });
