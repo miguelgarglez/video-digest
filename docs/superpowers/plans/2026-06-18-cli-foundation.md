@@ -18,7 +18,7 @@
 - Create: `src/cli/config-store.ts`
 - Create: `src/cli/config-store.test.ts`
 
-- [ ] **Step 1: Write failing path and config-store tests**
+- [x] **Step 1: Write failing path and config-store tests**
 
 ```ts
 test("uses macOS support paths and the Documents library default", () => {
@@ -37,12 +37,12 @@ test("round-trips config.v0 without secrets", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests and verify missing-module failures**
+- [x] **Step 2: Run the tests and verify missing-module failures**
 
 Run: `bun test src/cli/app-paths.test.ts src/cli/config-store.test.ts`  
 Expected: FAIL because both modules are missing.
 
-- [ ] **Step 3: Implement focused path and config modules**
+- [x] **Step 3: Implement focused path and config modules**
 
 ```ts
 export type AppConfig = { artifactLibrary: string; schemaVersion: "config.v0" };
@@ -78,12 +78,12 @@ function parseConfig(value: unknown): AppConfig {
 }
 ```
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `bun test src/cli/app-paths.test.ts src/cli/config-store.test.ts && bun run typecheck`  
 Expected: all tests PASS and TypeScript exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/app-paths.ts src/cli/app-paths.test.ts src/cli/config-store.ts src/cli/config-store.test.ts
@@ -100,7 +100,7 @@ git commit -m "feat(cli): add application configuration"
 - Modify: `src/cli/main.ts`
 - Modify: `src/cli/main.test.ts`
 
-- [ ] **Step 1: Write failing precedence and parsing tests**
+- [x] **Step 1: Write failing precedence and parsing tests**
 
 ```ts
 test("resolves flag before env, config, and default", () => {
@@ -117,12 +117,12 @@ test("parses output-dir and persistent config", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/cli/artifact-library.test.ts src/cli/parse-args.test.ts`  
 Expected: FAIL because output-directory parsing and resolution do not exist.
 
-- [ ] **Step 3: Implement the resolver and thread it through commands**
+- [x] **Step 3: Implement the resolver and thread it through commands**
 
 ```ts
 export function resolveArtifactLibrary(input: {
@@ -136,12 +136,12 @@ Load `FileConfigStore` once in `runCli`, apply the documented precedence to
 `ingest`, `transcript`, `list`, and `open`, and make `config get --json` return the
 saved Artifact Library without exposing Keychain values.
 
-- [ ] **Step 4: Run CLI tests and typecheck**
+- [x] **Step 4: Run CLI tests and typecheck**
 
 Run: `bun test src/cli/artifact-library.test.ts src/cli/parse-args.test.ts src/cli/main.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/artifact-library.ts src/cli/artifact-library.test.ts src/cli/parse-args.ts src/cli/parse-args.test.ts src/cli/main.ts src/cli/main.test.ts
@@ -158,7 +158,7 @@ git commit -m "feat(cli): configure artifact library"
 - Modify: `src/transcript/python-youtube-transcript-source.ts`
 - Modify: `src/transcript/python-youtube-transcript-source.test.ts`
 
-- [ ] **Step 1: Write failing resource and readiness tests**
+- [x] **Step 1: Write failing resource and readiness tests**
 
 ```ts
 test("resolves shipped resources from a module URL", () => {
@@ -174,12 +174,12 @@ test("marks a matching lock hash ready", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/cli/package-resources.test.ts src/cli/runtime-manager.test.ts`  
 Expected: FAIL because the modules are missing.
 
-- [ ] **Step 3: Implement resource lookup and a pure readiness model**
+- [x] **Step 3: Implement resource lookup and a pure readiness model**
 
 ```ts
 export type RuntimeReadiness =
@@ -196,12 +196,12 @@ Inject resolved `pythonDir`, `sidecarScript`, and managed interpreter paths into
 `PythonYoutubeTranscriptSource`; remove its repository-root calculation and prevent
 `uv run` from synchronizing dependencies during normal execution.
 
-- [ ] **Step 4: Run transcript and runtime tests**
+- [x] **Step 4: Run transcript and runtime tests**
 
 Run: `bun test src/cli/package-resources.test.ts src/cli/runtime-manager.test.ts src/transcript/python-youtube-transcript-source.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/package-resources.ts src/cli/package-resources.test.ts src/cli/runtime-manager.ts src/cli/runtime-manager.test.ts src/transcript/python-youtube-transcript-source.ts src/transcript/python-youtube-transcript-source.test.ts
@@ -222,7 +222,7 @@ git commit -m "refactor(cli): resolve packaged runtime"
 - Modify: `src/cli/credentials.ts`
 - Modify: `src/cli/credentials.test.ts`
 
-- [ ] **Step 1: Write failing setup and doctor tests**
+- [x] **Step 1: Write failing setup and doctor tests**
 
 ```ts
 test("setup refuses non-interactive mutation without --yes", async () => {
@@ -236,12 +236,12 @@ test("doctor distinguishes obsolete runtime", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/cli/runtime-manager.test.ts src/cli/main.test.ts src/cli/doctor.test.ts src/cli/credentials.test.ts`  
 Expected: FAIL on missing setup behavior and old Keychain service.
 
-- [ ] **Step 3: Implement atomic consented setup**
+- [x] **Step 3: Implement atomic consented setup**
 
 ```ts
 export type PrepareRuntimeInput = {
@@ -274,12 +274,12 @@ reports. `setup --yes --json` emits exactly
 `{"schemaVersion":"setup-result.v0","status":"ready"}` on stdout; a refused or
 failed setup uses the same schema with a stable error object.
 
-- [ ] **Step 4: Run the complete phase verification**
+- [x] **Step 4: Run the complete phase verification**
 
 Run: `bun test src/cli src/transcript/python-youtube-transcript-source.test.ts && bun run typecheck`  
 Expected: PASS with zero failed tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli src/transcript/python-youtube-transcript-source.ts src/transcript/python-youtube-transcript-source.test.ts

@@ -20,7 +20,7 @@
 - Modify: `src/ingestion/transcript-only.ts`
 - Modify: `src/ingestion/transcript-only.test.ts`
 
-- [ ] **Step 1: Write failing renderer tests**
+- [x] **Step 1: Write failing renderer tests**
 
 ```ts
 test("renders clean text without timestamps", () => {
@@ -32,12 +32,12 @@ test("renders readable markdown with provenance", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/output/transcript-renderer.test.ts src/output/output-writer.test.ts`  
 Expected: FAIL because the renderer and new paths do not exist.
 
-- [ ] **Step 3: Implement pure renderers and write three representations**
+- [x] **Step 3: Implement pure renderers and write three representations**
 
 ```ts
 export function renderTranscriptText(transcript: Transcript): string {
@@ -69,12 +69,12 @@ Extend output result types with `transcriptJsonPath`, `transcriptMarkdownPath`, 
 `transcriptTextPath`; write all files through temporary siblings followed by rename so
 an interrupted replacement preserves the prior Library Entry.
 
-- [ ] **Step 4: Run output and ingestion tests**
+- [x] **Step 4: Run output and ingestion tests**
 
 Run: `bun test src/output src/ingestion/transcript-only.test.ts src/ingestion/ingest-video.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/output src/ingestion/transcript-only.ts src/ingestion/transcript-only.test.ts src/ingestion/ingest-video.test.ts
@@ -93,7 +93,7 @@ git commit -m "feat(output): add transcript representations"
 - Modify: `src/ingestion/transcript-only.test.ts`
 - Modify: `src/output/output-writer.ts`
 
-- [ ] **Step 1: Write failing oEmbed success and fallback tests**
+- [x] **Step 1: Write failing oEmbed success and fallback tests**
 
 ```ts
 test("maps public oEmbed metadata", async () => {
@@ -107,12 +107,12 @@ test("ingestion continues when metadata lookup fails", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/video/youtube-oembed-metadata-source.test.ts src/ingestion/transcript-only.test.ts`  
 Expected: FAIL because the metadata port is missing.
 
-- [ ] **Step 3: Implement the optional port**
+- [x] **Step 3: Implement the optional port**
 
 ```ts
 export type VideoMetadata = { channel: string | null; title: string | null };
@@ -134,12 +134,12 @@ export class YouTubeOEmbedMetadataSource implements VideoMetadataSource {
 Catch enrichment failure at the application-service boundary, persist null metadata,
 and never change the Transcript exit code.
 
-- [ ] **Step 4: Run Video and Ingestion tests**
+- [x] **Step 4: Run Video and Ingestion tests**
 
 Run: `bun test src/video src/ingestion src/output/output-writer.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/video src/ingestion src/output/output-writer.ts src/output/output-writer.test.ts
@@ -154,7 +154,7 @@ git commit -m "feat(video): enrich public metadata"
 - Modify: `src/cli/main.test.ts`
 - Create: `src/cli/library.test.ts`
 
-- [ ] **Step 1: Write a failing transcript-only Library Entry test**
+- [x] **Step 1: Write a failing transcript-only Library Entry test**
 
 ```ts
 test("lists one entry per Video with available artifacts", async () => {
@@ -167,12 +167,12 @@ test("lists one entry per Video with available artifacts", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test src/cli/library.test.ts`  
 Expected: FAIL because discovery scans only `digests/`.
 
-- [ ] **Step 3: Implement metadata-driven entries**
+- [x] **Step 3: Implement metadata-driven entries**
 
 ```ts
 export type LibraryEntry = {
@@ -188,12 +188,12 @@ Rename discovery functions to `listLibraryEntries` and `resolveLibraryEntry`; de
 available paths from metadata and filesystem existence, sort by `processedAt`, and
 make `open` choose Digest first, then Transcript Markdown.
 
-- [ ] **Step 4: Run library and CLI tests**
+- [x] **Step 4: Run library and CLI tests**
 
 Run: `bun test src/cli/library.test.ts src/cli/main.test.ts && bun run typecheck`  
 Expected: PASS, including transcript-only `list --json` and `open latest --json`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/artifacts.ts src/cli/library.test.ts src/cli/main.ts src/cli/main.test.ts
@@ -211,7 +211,7 @@ git commit -m "feat(cli): model library entries"
 - Modify: `src/cli/main.test.ts`
 - Modify: `src/cli/package-metadata.test.ts`
 
-- [ ] **Step 1: Write failing option and adapter tests**
+- [x] **Step 1: Write failing option and adapter tests**
 
 ```ts
 test("rejects json with stdout", () => {
@@ -225,12 +225,12 @@ test("copies exact clean text through pbcopy", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run: `bun test src/cli/system-actions.test.ts src/cli/parse-args.test.ts src/cli/main.test.ts`  
 Expected: FAIL for missing flags and actions.
 
-- [ ] **Step 3: Implement injected system actions and output modes**
+- [x] **Step 3: Implement injected system actions and output modes**
 
 ```ts
 export type SystemActions = {
@@ -244,12 +244,12 @@ Parse `--copy`, `--open`, and `--stdout`; keep artifact writes unchanged; suppre
 progress and all other stdout for `--stdout`. Add command-scoped help, package-backed
 `--version`, and OSC 8 links with a plain-path fallback.
 
-- [ ] **Step 4: Run complete direct-CLI verification**
+- [x] **Step 4: Run complete direct-CLI verification**
 
 Run: `bun test src/cli src/output src/ingestion src/video && bun run typecheck`  
 Expected: PASS with stdout contract tests asserting exact strings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli

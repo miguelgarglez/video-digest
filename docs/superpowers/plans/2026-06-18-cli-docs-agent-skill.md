@@ -18,7 +18,7 @@
 - Create: `docs/cli/compatibility.md`
 - Create: `src/cli/documented-contracts.test.ts`
 
-- [ ] **Step 1: Write a failing documentation-contract test**
+- [x] **Step 1: Write a failing documentation-contract test**
 
 ```ts
 test("documents every emitted schema version and exit code", async () => {
@@ -31,12 +31,12 @@ test("documents every emitted schema version and exit code", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test src/cli/documented-contracts.test.ts`  
 Expected: FAIL because the public contract documents are missing.
 
-- [ ] **Step 3: Write exact contracts with real examples**
+- [x] **Step 3: Write exact contracts with real examples**
 
 Document one complete success and failure JSON object per command, the rule that JSON
 mode writes one value to stdout, diagnostic stderr behavior, exact numeric exit codes,
@@ -46,12 +46,12 @@ and the rule that breaking machine changes increment `schemaVersion` during `0.x
 {"schemaVersion":"cli-result.v0","status":"completed","videoId":"1ZgUcrR0K7I","paths":{"transcriptJsonPath":"...","transcriptMarkdownPath":"...","transcriptTextPath":"..."}}
 ```
 
-- [ ] **Step 4: Run the contract test**
+- [x] **Step 4: Run the contract test**
 
 Run: `bun test src/cli/documented-contracts.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/cli src/cli/documented-contracts.test.ts
@@ -65,7 +65,7 @@ git commit -m "docs(cli): define public contracts"
 - Create: `LICENSE`
 - Modify: `.env.example`
 
-- [ ] **Step 1: Write the README outline with runnable commands**
+- [x] **Step 1: Write the README outline with runnable commands**
 
 Use these exact top-level sections:
 
@@ -85,24 +85,24 @@ Use these exact top-level sections:
 ## License
 ```
 
-- [ ] **Step 2: Fill the quickstart and operational details**
+- [x] **Step 2: Fill the quickstart and operational details**
 
 Document `bun add --global video-digest`, the npm alternative, progressive TUI
 onboarding, `video-digest setup`, Keychain configuration, Transcript output flags,
 Artifact Library precedence, `doctor`, no telemetry, macOS ARM support, and the
 experimental compatibility policy. Use public examples and never include a real key.
 
-- [ ] **Step 3: Add the MIT license and safe environment example**
+- [x] **Step 3: Add the MIT license and safe environment example**
 
 Use the standard MIT text with copyright `2026 Miguel Garglez`. Keep `.env.example`
 limited to documented non-secret placeholders and supported environment variables.
 
-- [ ] **Step 4: Verify commands and links referenced by the README**
+- [x] **Step 4: Verify commands and links referenced by the README**
 
 Run: `bun run video-digest --help && bun run video-digest --version && rtk rg -n 'docs/cli|SKILL.md|video-digest setup' README.md`  
 Expected: commands exit 0 and all referenced local paths exist.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md LICENSE .env.example
@@ -116,7 +116,7 @@ git commit -m "docs: add public CLI onboarding"
 - Create: `.agents/skills/video-digest/references/contracts.md`
 - Create: `src/cli/agent-skill.test.ts`
 
-- [ ] **Step 1: Write a failing skill safety test**
+- [x] **Step 1: Write a failing skill safety test**
 
 ```ts
 test("skill is portable and requires consent for setup", async () => {
@@ -128,12 +128,12 @@ test("skill is portable and requires consent for setup", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test src/cli/agent-skill.test.ts`  
 Expected: FAIL because the skill is missing.
 
-- [ ] **Step 3: Write the canonical skill**
+- [x] **Step 3: Write the canonical skill**
 
 ```markdown
 ---
@@ -152,7 +152,7 @@ license: MIT
 Put payload and exit-code details in `references/contracts.md` so the main skill uses
 progressive disclosure.
 
-- [ ] **Step 4: Validate and test the skill**
+- [x] **Step 4: Validate and test the skill**
 
 Run: `bun test src/cli/agent-skill.test.ts`  
 Expected: PASS.
@@ -166,7 +166,7 @@ gh skill publish --dry-run
 Expected: validation passes without publishing. If the command is unavailable, record
 that fact; do not update or install GitHub CLI without user approval.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .agents/skills/video-digest src/cli/agent-skill.test.ts
@@ -180,7 +180,7 @@ git commit -m "docs(skill): teach agent CLI usage"
 - Modify: `src/tui/screens.test.ts`
 - Modify: `README.md`
 
-- [ ] **Step 1: Write a failing Agent Skill screen test**
+- [x] **Step 1: Write a failing Agent Skill screen test**
 
 ```ts
 test("agent skill screen is review-first", () => {
@@ -191,22 +191,22 @@ test("agent skill screen is review-first", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the test fails**
+- [x] **Step 2: Verify the test fails**
 
 Run: `bun test src/tui/screens.test.ts`  
 Expected: FAIL until the approved copy is present.
 
-- [ ] **Step 3: Add review, install, and source-link instructions**
+- [x] **Step 3: Add review, install, and source-link instructions**
 
 Render the two copyable commands and an OSC 8 link to the repository's canonical
 `SKILL.md`; never invoke `gh skill` from the TUI.
 
-- [ ] **Step 4: Run documentation and TUI tests**
+- [x] **Step 4: Run documentation and TUI tests**
 
 Run: `bun test src/cli/documented-contracts.test.ts src/cli/agent-skill.test.ts src/tui/screens.test.ts && bun run typecheck`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/tui/screens.ts src/tui/screens.test.ts README.md
