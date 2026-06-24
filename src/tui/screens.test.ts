@@ -239,9 +239,9 @@ describe("buildScreenView", () => {
     });
 
     const skill = buildScreenView(readyModel({ screen: "agent-skill" }));
-    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
-    const install = "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
-    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+    const preview = "gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs";
+    const install = "gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs";
+    const source = "https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
     expect(skill.body).toContain(preview);
     expect(skill.body).toContain(install);
     expect(skill.body).toContain(source);

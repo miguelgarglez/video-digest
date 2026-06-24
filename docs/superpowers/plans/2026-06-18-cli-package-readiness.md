@@ -24,7 +24,7 @@ test("declares the public package contract", async () => {
   expect(pkg).toMatchObject({
     name: "video-digest", version: "0.1.0", license: "MIT",
     os: ["darwin"], cpu: ["arm64"], bin: { "video-digest": "bin/video-digest" },
-    repository: { type: "git", url: "git+https://github.com/miguelgarglez/personal-video-digest.git" },
+    repository: { type: "git", url: "git+https://github.com/miguelgarglez/video-digest.git" },
   });
   expect(pkg.private).not.toBe(true);
   expect(pkg.scripts?.postinstall).toBeUndefined();
@@ -47,9 +47,9 @@ Expected: FAIL on the old private name and missing version.
   "os": ["darwin"],
   "cpu": ["arm64"],
   "files": ["bin", "src", "python/fetch_transcript.py", "python/pyproject.toml", "python/uv.lock", ".agents/skills/video-digest", "docs/cli", "README.md", "LICENSE"],
-  "repository": { "type": "git", "url": "git+https://github.com/miguelgarglez/personal-video-digest.git" },
-  "bugs": { "url": "https://github.com/miguelgarglez/personal-video-digest/issues" },
-  "homepage": "https://github.com/miguelgarglez/personal-video-digest#readme"
+  "repository": { "type": "git", "url": "git+https://github.com/miguelgarglez/video-digest.git" },
+  "bugs": { "url": "https://github.com/miguelgarglez/video-digest/issues" },
+  "homepage": "https://github.com/miguelgarglez/video-digest#readme"
 }
 ```
 

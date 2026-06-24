@@ -101,7 +101,7 @@ describe("npm release runbook", () => {
 
     for (const required of [
       "Trusted Publisher",
-      "miguelgarglez/personal-video-digest",
+      "miguelgarglez/video-digest",
       "npm-publish.yml",
       "npm-production",
       "workflow_dispatch",

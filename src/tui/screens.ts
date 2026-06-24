@@ -6,9 +6,9 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "graphem
 
 export const TUI_COPY = Object.freeze({
   agentSkill: {
-    install: "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
-    preview: "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
-    source: "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md",
+    install: "gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs",
+    preview: "gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs",
+    source: "https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md",
   },
   footer: {
     back: "Esc Back",

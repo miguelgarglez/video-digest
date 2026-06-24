@@ -17,15 +17,15 @@ describe("portable Video Digest agent skill", () => {
       readFile("docs/superpowers/specs/2026-06-18-video-digest-public-cli-design.md", "utf8"),
       readFile("docs/superpowers/plans/2026-06-18-cli-docs-agent-skill.md", "utf8"),
     ]);
-    const preview = "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
-    const install = "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs";
+    const preview = "gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs";
+    const install = "gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs";
 
     for (const document of [readme, specification, plan]) {
       expect(document).toContain(preview);
       expect(document).toContain(install);
       expect(document).not.toMatch(/^gh skill (?:preview|install) .* video-digest$/m);
     }
-    expect(readme).toContain("https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md");
+    expect(readme).toContain("https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md");
     expect(readme).toMatch(/GitHub CLI version that includes `gh skill`/);
     expect(readme).toMatch(/never (?:installs|updates).*GitHub CLI/i);
   });

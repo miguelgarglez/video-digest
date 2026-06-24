@@ -263,8 +263,8 @@ describe("Library, Settings, diagnostics, and skill discovery", () => {
     const skill = update(readyModel({ screen: "settings" }), { type: "open-agent-skill" }).model;
     expect(skill.screen).toBe("agent-skill");
     for (const text of [
-      "gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
-      "gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs",
+      "gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs",
+      "gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs",
     ]) {
       expect(update(skill, { text, type: "copy-text" }).effects).toEqual([
         { requestId: 1, text, type: "copy" },

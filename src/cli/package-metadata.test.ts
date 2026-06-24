@@ -54,12 +54,12 @@ describe("package metadata", () => {
       bin: { "video-digest": "bin/video-digest" },
       repository: {
         type: "git",
-        url: "git+https://github.com/miguelgarglez/personal-video-digest.git",
+        url: "git+https://github.com/miguelgarglez/video-digest.git",
       },
       bugs: {
-        url: "https://github.com/miguelgarglez/personal-video-digest/issues",
+        url: "https://github.com/miguelgarglez/video-digest/issues",
       },
-      homepage: "https://github.com/miguelgarglez/personal-video-digest#readme",
+      homepage: "https://github.com/miguelgarglez/video-digest#readme",
       engines: { bun: ">=1.3.14" },
     });
     expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);

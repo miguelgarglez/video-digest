@@ -77,8 +77,8 @@ To run from source instead, clone this repository and install its locked JavaScr
 dependencies:
 
 ```sh
-git clone https://github.com/miguelgarglez/personal-video-digest.git
-cd personal-video-digest
+git clone https://github.com/miguelgarglez/video-digest.git
+cd video-digest
 bun install --frozen-lockfile
 bun run video-digest --version
 bun run video-digest --help
@@ -244,12 +244,12 @@ and never parse human output. The exact success and failure shapes are defined i
 [exit-code reference](docs/cli/exit-codes.md).
 
 The `0.1.0` release also contains a portable, independently installed
-[Video Digest agent skill](https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md).
+[Video Digest agent skill](https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md).
 Review the source first, then copy the command you intend to run:
 
 ```bash
-gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
-gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
+gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs
+gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs
 ```
 
 The `.agents` directory is hidden, so both commands require `--allow-hidden-dirs`.
@@ -338,7 +338,7 @@ bun run typecheck
 
 Implementation decisions live in [`docs/adr/`](docs/adr/), and the domain language is
 defined in [`CONTEXT.md`](CONTEXT.md). Bug reports and contributions are welcome in
-the [GitHub repository](https://github.com/miguelgarglez/personal-video-digest).
+the [GitHub repository](https://github.com/miguelgarglez/video-digest).
 
 ## License
 

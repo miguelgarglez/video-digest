@@ -49,12 +49,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/miguelgarglez/personal-video-digest.git"
+    "url": "git+https://github.com/miguelgarglez/video-digest.git"
   },
   "bugs": {
-    "url": "https://github.com/miguelgarglez/personal-video-digest/issues"
+    "url": "https://github.com/miguelgarglez/video-digest/issues"
   },
-  "homepage": "https://github.com/miguelgarglez/personal-video-digest#readme",
+  "homepage": "https://github.com/miguelgarglez/video-digest#readme",
   "scripts": {
     "test": "bun test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",

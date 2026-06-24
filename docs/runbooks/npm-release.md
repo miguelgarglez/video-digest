@@ -12,7 +12,7 @@ Recommended CLI form:
 
 ```bash
 npm trust github video-digest \
-  --repo miguelgarglez/personal-video-digest \
+  --repo miguelgarglez/video-digest \
   --file npm-publish.yml \
   --environment npm-production \
   --allow-publish
@@ -27,7 +27,7 @@ Equivalent npmjs.com fields:
 | --- | --- |
 | Provider | GitHub Actions |
 | Organization or user | `miguelgarglez` |
-| Repository | `personal-video-digest` |
+| Repository | `video-digest` |
 | Workflow filename | `npm-publish.yml` |
 | Environment name | `npm-production` |
 | Allowed action | `npm publish` |

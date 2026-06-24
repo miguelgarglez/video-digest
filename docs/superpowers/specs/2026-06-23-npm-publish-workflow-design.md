@@ -28,7 +28,7 @@ compatible Node/npm runtime, and publishes with `npm publish --access public`.
 
 The npm package should configure a Trusted Publisher for:
 
-- owner/repository: `miguelgarglez/personal-video-digest`;
+- owner/repository: `miguelgarglez/video-digest`;
 - workflow filename: `npm-publish.yml`;
 - optional GitHub environment: `npm-production`;
 - allowed action: `npm publish`.

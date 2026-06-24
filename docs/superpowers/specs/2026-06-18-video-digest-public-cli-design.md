@@ -287,8 +287,8 @@ modifies an agent host.
 Documentation shows a review-first flow using GitHub CLI and a manual fallback:
 
 ```text
-gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
-gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs
+gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs
+gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs
 ```
 
 The flag is required because the canonical skill lives under the hidden `.agents`

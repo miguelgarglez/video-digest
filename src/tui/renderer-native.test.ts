@@ -41,7 +41,7 @@ describe("native OpenTUI adapter", () => {
     const model = readyModel({ screen: "agent-skill" });
     const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
     const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
-    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+    const source = "https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
 
     try {
       tui.render(model);
@@ -64,7 +64,7 @@ describe("native OpenTUI adapter", () => {
     const model = readyModel({ screen: "agent-skill" });
     const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
     const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
-    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+    const source = "https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
 
     try {
       tui.render(model);
@@ -85,7 +85,7 @@ describe("native OpenTUI adapter", () => {
     const model = readyModel({ screen: "agent-skill" });
     const facade = await createOpenTuiFacadeFromRenderer(setup.renderer, { env: { NO_COLOR: "1" } });
     const tui = createTuiRenderer({ dispatch: async () => undefined, facade, getModel: () => model });
-    const source = "https://github.com/miguelgarglez/personal-video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
+    const source = "https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md";
 
     try {
       tui.render(model);

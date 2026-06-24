@@ -185,8 +185,8 @@ git commit -m "docs(skill): teach agent CLI usage"
 ```ts
 test("agent skill screen is review-first", () => {
   const view = buildScreenView({ ...baseModel, screen: "agent-skill" });
-  expect(view.body).toContain("gh skill preview miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs");
-  expect(view.body).toContain("gh skill install miguelgarglez/personal-video-digest video-digest --allow-hidden-dirs");
+  expect(view.body).toContain("gh skill preview miguelgarglez/video-digest video-digest --allow-hidden-dirs");
+  expect(view.body).toContain("gh skill install miguelgarglez/video-digest video-digest --allow-hidden-dirs");
   expect(view.options).not.toContain("Install automatically");
 });
 ```
