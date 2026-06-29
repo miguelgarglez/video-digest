@@ -357,7 +357,7 @@ async function validateDoctorShimInvocations(markers: ShimInvocationMarkers): Pr
     argv: [
       "find-generic-password",
       "-a",
-      "digest-provider",
+      "provider:opencode:api-key",
       "-s",
       "video-digest",
       "-w",
