@@ -29,7 +29,8 @@ import {
   type FetchTranscriptOnlyInput,
   type FetchTranscriptOnlyResult,
 } from "../ingestion/transcript-only";
-import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
+import { ResponsesSummarizer } from "../summarizer/responses-summarizer";
+import { getProviderProfile } from "../summarizer/providers";
 import { SummarizerError, type Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { TranscriptSourceError } from "../transcript/transcript-source";
@@ -294,7 +295,14 @@ export async function runCli(
     }
 
     const summarizerFactory = dependencies.summarizerFactory
-      ?? ((apiKey: string | null) => new OpenCodeSummarizer({ apiKey: apiKey ?? "" }));
+      ?? ((apiKey: string | null) => {
+        const profile = getProviderProfile("opencode");
+        return new ResponsesSummarizer({
+          apiKey: apiKey ?? "",
+          model: profile.defaultModel,
+          profile,
+        });
+      });
     const progress = json ? null : createProgressRenderer(io, {
       intervalMs: dependencies.spinnerIntervalMs,
     });

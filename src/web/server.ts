@@ -1,5 +1,6 @@
 import { IngestionRepository } from "../storage/ingestion-repository";
-import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
+import { ResponsesSummarizer } from "../summarizer/responses-summarizer";
+import { getProviderProfile } from "../summarizer/providers";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { handleRequest } from "./handler";
 import { recoverInterruptedIngestions } from "./startup";
@@ -11,7 +12,12 @@ const dbPath = process.env.VIDEO_DIGEST_DB_PATH ?? "data/ingestions.sqlite";
 
 const repository = new IngestionRepository({ dbPath });
 const recoveredCount = recoverInterruptedIngestions(repository);
-const summarizer = new OpenCodeSummarizer();
+const profile = getProviderProfile("opencode");
+const summarizer = new ResponsesSummarizer({
+  apiKey: process.env.OPENCODE_API_KEY ?? "",
+  model: profile.defaultModel,
+  profile,
+});
 const transcriptSource = new PythonYoutubeTranscriptSource();
 
 const server = Bun.serve({

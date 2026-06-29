@@ -32,7 +32,8 @@ import {
   type FetchTranscriptOnlyResult,
 } from "../ingestion/transcript-only";
 import { withRecoveredOutputLibrary } from "../output/output-writer";
-import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
+import { ResponsesSummarizer } from "../summarizer/responses-summarizer";
+import { getProviderProfile } from "../summarizer/providers";
 import type { Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import type { TranscriptSource } from "../transcript/transcript-source";
@@ -161,7 +162,10 @@ export async function createDefaultTuiSession(
           },
           outputDir,
           signal: options.signal,
-          summarizer: (dependencies.summarizerFactory ?? ((apiKey) => new OpenCodeSummarizer({ apiKey })))(credential.value),
+          summarizer: (dependencies.summarizerFactory ?? ((apiKey) => {
+            const profile = getProviderProfile("opencode");
+            return new ResponsesSummarizer({ apiKey, model: profile.defaultModel, profile });
+          }))(credential.value),
           transcriptSource: transcriptSourceFactory(),
           video: parsed,
         });
