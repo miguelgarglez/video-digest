@@ -172,6 +172,46 @@ describe("default TUI ports", () => {
     expect(JSON.stringify(result)).not.toContain("/untrusted/");
   });
 
+  test("uses the same persisted provider selection for credential lookup and ingestion", async () => {
+    const lookups: string[] = [];
+    const factories: unknown[] = [];
+    const canonical = entry("/library");
+    const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
+      appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+      configStore: {
+        load: async () => ({ artifactLibrary: "/library", digest: { defaultProvider: "anthropic", models: { anthropic: "claude-custom" } }, schemaVersion: "config.v1" }),
+        save: async () => undefined,
+      },
+      credentialStore: {
+        deleteApiKey: async () => undefined,
+        getApiKey: async (provider) => { lookups.push(provider); return provider === "anthropic" ? "anthropic-key" : null; },
+        setApiKey: async () => undefined,
+      },
+      env: {},
+      ingest: async () => ({
+        cleanText: "Useful words.\n",
+        exitCode: 0,
+        generation: { provider: "anthropic", requestId: null, requestedModel: "claude-custom", responseModel: null, usage: null },
+        paths: { digestPath: "/d", emailPreviewPath: null, metadataPath: "/m", transcriptJsonPath: "/j", transcriptMarkdownPath: "/md", transcriptTextPath: "/t" },
+        status: "completed",
+        transcriptQuality: quality,
+      }),
+      metadataSourceFactory: () => ({ fetch: async () => ({ channel: null, title: null }) }),
+      resolveCreatedEntry: async () => canonical,
+      runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => undefined },
+      summarizerFactory: (selection, apiKey) => {
+        factories.push({ apiKey, model: selection.model.effective, provider: selection.provider.effective });
+        return { generateDigest: async () => { throw new Error("not called"); } };
+      },
+      withRecoveredLibrary: async (_root, operation) => operation(),
+    });
+
+    expect(session.model.config.digest).toEqual({ model: "claude-custom", provider: "anthropic" });
+    await session.ports.create.ingest(video.canonicalUrl, { onProgress: () => undefined, signal: new AbortController().signal });
+    expect(factories).toEqual([{ apiKey: "anthropic-key", model: "claude-custom", provider: "anthropic" }]);
+    expect(lookups.filter((provider) => provider === "anthropic").length).toBeGreaterThan(0);
+  });
+
   test("resolves, revalidates, and reads a Library target under one recovery lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "video-digest-tui-library-"));
     await writeTranscriptOnlyOutputs({ outputDir: root, transcript, transcriptQuality: quality, video });

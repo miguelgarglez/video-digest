@@ -1,6 +1,7 @@
 import { parseYouTubeVideoUrl } from "../video/youtube-url";
 import type { DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
+import { getProviderProfile } from "../summarizer/providers";
 import {
   type CreationMode,
   type Effect,
@@ -49,9 +50,10 @@ export function update(model: Model, event: Event): Transition {
     case "save-credential": {
       if (model.screen !== "credential-required") return unchanged(model);
       const value = event.value.trim();
-      if (value.length === 0) return transition({ ...model, message: "Enter an OpenCode API key." });
+      if (value.length === 0) return transition({ ...model, message: `Enter a ${getProviderProfile(model.config.digest.provider).displayName} API key.` });
       return startRequest(model, "save-credential", (requestId) => ({
         requestId,
+        provider: model.config.digest.provider,
         type: "save-credential",
         value,
       }));
@@ -62,7 +64,8 @@ export function update(model: Model, event: Event): Transition {
       }
       return transition(clearPending({
         ...model,
-        credentialConfigured: true,
+        credentialConfigured: event.provider === undefined || event.provider === model.config.digest.provider,
+        credentials: { ...model.credentials, [event.provider ?? model.config.digest.provider]: true },
         message: null,
         screen: model.gateOrigin === "settings" ? "settings" : "enter-url",
       }));
@@ -191,6 +194,39 @@ export function update(model: Model, event: Event): Transition {
       return model.screen === "settings"
         ? transition({ ...model, gateOrigin: "settings", message: null, screen: "credential-required" })
         : unchanged(model);
+    case "open-provider-settings":
+      return model.screen === "settings" ? transition({ ...model, message: null, screen: "provider-settings" }) : unchanged(model);
+    case "select-provider":
+      return model.screen === "provider-settings"
+        ? startRequest(model, "save-provider", (requestId) => ({ provider: event.provider, requestId, type: "save-provider" }))
+        : unchanged(model);
+    case "provider-saved":
+      return matchesPending(model, "save-provider", event.requestId)
+        ? transition(clearPending({
+            ...model,
+            config: { ...model.config, digest: { model: getProviderProfile(event.provider).defaultModel, provider: event.provider } },
+            message: null,
+            screen: "settings",
+          }))
+        : unchanged(model);
+    case "provider-save-failed":
+      return matchesPending(model, "save-provider", event.requestId)
+        ? transition(clearPending({ ...model, message: event.message })) : unchanged(model);
+    case "open-model-settings":
+      return model.screen === "settings" ? transition({ ...model, message: null, screen: "model-settings" }) : unchanged(model);
+    case "save-model": {
+      const value = event.model.trim();
+      if (model.screen !== "model-settings") return unchanged(model);
+      if (!value) return transition({ ...model, message: "Enter a model name." });
+      return startRequest(model, "save-model", (requestId) => ({ model: value, provider: model.config.digest.provider, requestId, type: "save-model" }));
+    }
+    case "model-saved":
+      return matchesPending(model, "save-model", event.requestId)
+        ? transition(clearPending({ ...model, config: { ...model.config, digest: { ...model.config.digest, model: event.model } }, message: null, screen: "settings" }))
+        : unchanged(model);
+    case "model-save-failed":
+      return matchesPending(model, "save-model", event.requestId)
+        ? transition(clearPending({ ...model, message: event.message })) : unchanged(model);
     case "open-doctor": {
       if (model.screen !== "home" && model.screen !== "settings") return unchanged(model);
       const doctorModel = {
@@ -280,7 +316,7 @@ function beginCreation(model: Model, creationMode: CreationMode): Transition {
 
 function continueCreation(model: Model): Model {
   if (model.runtimeReadiness.status !== "ready") return { ...model, screen: "runtime-required" };
-  if (model.creationMode === "digest" && !model.credentialConfigured) {
+  if (model.creationMode === "digest" && !model.credentials[model.config.digest.provider]) {
     return { ...model, screen: "credential-required" };
   }
   return { ...model, screen: "enter-url" };
@@ -376,6 +412,8 @@ function pendingPolicy(kind: PendingKind): PendingPolicy {
     case "save-library":
     case "prepare-runtime":
     case "save-credential":
+    case "save-provider":
+    case "save-model":
       return "persistent-blocking";
     case "ingest":
     case "transcript":
@@ -471,6 +509,9 @@ function navigateBack(model: Model): Transition {
     case "library":
     case "settings":
       return transition(goHome(model));
+    case "provider-settings":
+    case "model-settings":
+      return transition(clearPending({ ...model, message: null, screen: "settings" }));
     case "runtime-required":
     case "credential-required":
       return model.gateOrigin === "settings"

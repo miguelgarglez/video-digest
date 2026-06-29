@@ -177,7 +177,7 @@ describe("TUI controller", () => {
 
     expect(JSON.stringify(events)).not.toContain(secret);
     expect(JSON.stringify(controller.getModel())).not.toContain(secret);
-    expect(controller.getModel().message).toBe("Could not save the OpenCode API key. Try again.");
+    expect(controller.getModel().message).toBe("Could not save the provider API key. Try again.");
   });
 
   test("maps asynchronous scrollback failures to a stable safe message", async () => {

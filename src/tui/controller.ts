@@ -147,7 +147,25 @@ export function createTuiController(
         await prepareRuntime(effect.requestId);
         return;
       case "save-credential":
-        await saveCredential(effect.requestId, effect.value);
+        await saveCredential(effect.requestId, effect.provider, effect.value);
+        return;
+      case "save-provider":
+        try {
+          if (!ports.config.saveProvider) throw new Error("unsupported");
+          await ports.config.saveProvider(effect.provider);
+          await emit({ provider: effect.provider, requestId: effect.requestId, type: "provider-saved" });
+        } catch {
+          await emit({ message: "Could not save the Digest Provider.", requestId: effect.requestId, type: "provider-save-failed" });
+        }
+        return;
+      case "save-model":
+        try {
+          if (!ports.config.saveModel) throw new Error("unsupported");
+          await ports.config.saveModel(effect.provider, effect.model);
+          await emit({ model: effect.model, requestId: effect.requestId, type: "model-saved" });
+        } catch {
+          await emit({ message: "Could not save the Digest model.", requestId: effect.requestId, type: "model-save-failed" });
+        }
         return;
       case "ingest":
       case "transcript": {
@@ -253,13 +271,15 @@ export function createTuiController(
     }
   }
 
-  async function saveCredential(requestId: RequestId, value: string): Promise<void> {
+  async function saveCredential(requestId: RequestId, provider: import("../summarizer/providers").DigestProviderId, value: string): Promise<void> {
     try {
-      await ports.credential.saveOpenCodeApiKey(value);
-      await emit({ requestId, type: "credential-saved" });
+      if (ports.credential.saveApiKey) await ports.credential.saveApiKey(provider, value);
+      else if (provider === "opencode" && ports.credential.saveOpenCodeApiKey) await ports.credential.saveOpenCodeApiKey(value);
+      else throw new Error("unsupported");
+      await emit({ provider, requestId, type: "credential-saved" });
     } catch {
       await emit({
-        message: "Could not save the OpenCode API key. Try again.",
+        message: "Could not save the provider API key. Try again.",
         requestId,
         type: "credential-failed",
       });

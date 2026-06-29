@@ -25,7 +25,7 @@ const transcriptResult: ResultData = {
 };
 
 function readyModel(overrides: Partial<Model> = {}): Model {
-  return {
+  const model = {
     ...initialModel({
       artifactLibrary: "/library",
       credentialConfigured: true,
@@ -33,9 +33,19 @@ function readyModel(overrides: Partial<Model> = {}): Model {
     }),
     ...overrides,
   };
+  return overrides.credentialConfigured === undefined ? model : {
+    ...model,
+    credentials: { ...model.credentials, [model.config.digest.provider]: overrides.credentialConfigured },
+  };
 }
 
 describe("initialModel", () => {
+  test("tracks effective Digest selection and provider-isolated credentials", () => {
+    const model = initialModel({ artifactLibrary: "/library", credentials: { opencode: true } });
+    expect(model.config.digest).toEqual({ model: "gpt-5.4-mini", provider: "opencode" });
+    expect(model.credentials).toEqual({ anthropic: false, gemini: false, opencode: true, openai: false, xai: false });
+  });
+
   test("starts first-run onboarding when no library is configured", () => {
     expect(initialModel({ artifactLibrary: null })).toMatchObject({
       librarySelectionOrigin: "onboarding",
@@ -48,6 +58,30 @@ describe("initialModel", () => {
       config: { artifactLibrary: "/library" },
       screen: "home",
     });
+  });
+});
+
+describe("provider and model settings", () => {
+  test("persists selection effects before updating visible state", () => {
+    const providerScreen = update(readyModel({ screen: "settings" }), { type: "open-provider-settings" }).model;
+    const savingProvider = update(providerScreen, { provider: "anthropic", type: "select-provider" });
+    expect(savingProvider.effects).toEqual([{ provider: "anthropic", requestId: 1, type: "save-provider" }]);
+    const savedProvider = update(savingProvider.model, { provider: "anthropic", requestId: 1, type: "provider-saved" }).model;
+    expect(savedProvider.config.digest).toEqual({ model: "claude-sonnet-4-6", provider: "anthropic" });
+
+    const modelScreen = update(savedProvider, { type: "open-model-settings" }).model;
+    const savingModel = update(modelScreen, { model: "claude-custom", type: "save-model" });
+    expect(savingModel.effects).toEqual([{ model: "claude-custom", provider: "anthropic", requestId: 2, type: "save-model" }]);
+    expect(update(savingModel.model, { model: "claude-custom", requestId: 2, type: "model-saved" }).model.config.digest.model)
+      .toBe("claude-custom");
+  });
+
+  test("gates Digest on the selected provider credential only", () => {
+    const model = readyModel({
+      config: { artifactLibrary: "/library", defaultArtifactLibrary: "/library", digest: { model: "claude-sonnet-4-6", provider: "anthropic" } },
+      credentials: { anthropic: false, gemini: false, opencode: true, openai: false, xai: false },
+    });
+    expect(update(model, { type: "choose-digest" }).model.screen).toBe("credential-required");
   });
 });
 
@@ -101,7 +135,7 @@ describe("progressive creation gates", () => {
 
     const credentialModel = readyModel({ credentialConfigured: false, screen: "credential-required" });
     const transition = update(credentialModel, { type: "save-credential", value: "secret" });
-    expect(transition.effects).toEqual([{ requestId: 1, type: "save-credential", value: "secret" }]);
+    expect(transition.effects).toEqual([{ provider: "opencode", requestId: 1, type: "save-credential", value: "secret" }]);
     expect(transition.model.pending).toEqual({ kind: "save-credential", requestId: 1 });
   });
 });
@@ -518,7 +552,7 @@ describe("untrusted event payloads", () => {
     const model = readyModel({ credentialConfigured: false, screen: "credential-required" });
     const started = update(model, { type: "save-credential", value: "  top-secret  " });
 
-    expect(started.effects).toEqual([{ requestId: 1, type: "save-credential", value: "top-secret" }]);
+    expect(started.effects).toEqual([{ provider: "opencode", requestId: 1, type: "save-credential", value: "top-secret" }]);
     expect(JSON.stringify(started.model)).not.toContain("top-secret");
     expect(update(started.model, { type: "save-credential", value: "another-secret" }).effects).toEqual([]);
   });

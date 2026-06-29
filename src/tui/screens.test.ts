@@ -26,13 +26,17 @@ const transcriptResult: ResultData = {
 };
 
 function readyModel(overrides: Partial<Model> = {}): Model {
-  return {
+  const model = {
     ...initialModel({
       artifactLibrary: "/library",
       credentialConfigured: true,
       runtimeReadiness: { status: "ready" },
     }),
     ...overrides,
+  };
+  return overrides.credentialConfigured === undefined ? model : {
+    ...model,
+    credentials: { ...model.credentials, [model.config.digest.provider]: overrides.credentialConfigured },
   };
 }
 
@@ -89,8 +93,8 @@ describe("buildScreenView", () => {
       screen: "credential-required",
     }))).toMatchObject({
       focus: "input",
-      input: expect.objectContaining({ label: "OpenCode API key", secret: true }),
-      title: "OpenCode credential required",
+      input: expect.objectContaining({ label: "OpenCode Zen API key", secret: true }),
+      title: "OpenCode Zen credential required",
     });
 
     expect(buildScreenView(readyModel({ creationMode: "digest", screen: "enter-url" }))).toMatchObject({
@@ -217,8 +221,10 @@ describe("buildScreenView", () => {
   test("settings, doctor, and Agent Skill pages keep copy centralized and review-first", () => {
     expect(buildScreenView(readyModel({ screen: "settings" })).options).toEqual([
       "Change Artifact Library",
+      "Change Digest Provider",
+      "Change Digest Model",
       "Set Up Transcript Runtime",
-      "Configure OpenCode Credential",
+      "Configure OpenCode Zen Credential",
       "Agent Skill",
     ]);
 
@@ -261,6 +267,18 @@ describe("buildScreenView", () => {
     expect(minimumWidth.body).toContain(preview);
     expect(minimumWidth.body).toContain(install);
     expect(minimumWidth.body).toContain(source);
+  });
+
+  test("shows provider choices, selected model, and provider-aware credential copy", () => {
+    const settings = buildScreenView(readyModel({ screen: "settings" }));
+    expect(settings.body).toContain("Digest Provider: OpenCode Zen");
+    expect(settings.body).toContain("Digest model: gpt-5.4-mini");
+
+    expect(buildScreenView(readyModel({ screen: "provider-settings" })).options).toEqual([
+      "OpenCode Zen", "OpenAI", "Anthropic", "Google Gemini", "xAI",
+    ]);
+    expect(buildScreenView(readyModel({ screen: "model-settings" })).input?.value).toBe("gpt-5.4-mini");
+    expect(buildScreenView(readyModel({ screen: "credential-required" })).title).toContain("OpenCode Zen");
   });
 
   test("uses a clear fallback below the supported terminal size", () => {

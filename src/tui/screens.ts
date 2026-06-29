@@ -1,5 +1,6 @@
 import type { DoctorCheck } from "../cli/doctor";
 import type { LibraryEntrySnapshot, Model, Screen } from "./model";
+import { getProviderProfile, listProviderProfiles, type DigestProviderId } from "../summarizer/providers";
 
 export const MIN_TERMINAL_SIZE = Object.freeze({ height: 18, width: 60 });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -53,6 +54,9 @@ export type ScreenAction =
   | { type: "change-library" }
   | { type: "open-runtime-setup" }
   | { type: "open-credential-setup" }
+  | { type: "open-provider-settings" }
+  | { type: "open-model-settings" }
+  | { type: "select-provider"; provider: DigestProviderId }
   | { type: "open-agent-skill" }
   | { type: "copy-text"; text: string };
 
@@ -177,10 +181,11 @@ function viewForScreen(model: Model): MutableView {
         title: "Transcript runtime required",
       };
     case "credential-required":
+      const profile = getProviderProfile(model.config.digest.provider);
       return {
-        body: ["Digest creation needs an OpenCode API key. It is stored in macOS Keychain."],
-        input: { label: "OpenCode API key", placeholder: "Paste API key", secret: true, value: "" },
-        title: "OpenCode credential required",
+        body: [`Digest creation needs a ${profile.displayName} API key. It is stored in macOS Keychain.`],
+        input: { label: `${profile.displayName} API key`, placeholder: "Paste API key", secret: true, value: "" },
+        title: `${profile.displayName} credential required`,
       };
     case "progress":
       return {
@@ -215,18 +220,41 @@ function viewForScreen(model: Model): MutableView {
       return {
         actions: [
           { type: "change-library" },
+          { type: "open-provider-settings" },
+          { type: "open-model-settings" },
           { type: "open-runtime-setup" },
           { type: "open-credential-setup" },
           { type: "open-agent-skill" },
         ],
-        body: [`Artifact Library: ${model.config.artifactLibrary ?? "Not configured"}`],
+        body: [
+          `Artifact Library: ${model.config.artifactLibrary ?? "Not configured"}`,
+          `Digest Provider: ${getProviderProfile(model.config.digest.provider).displayName}`,
+          `Digest model: ${model.config.digest.model}`,
+        ],
         options: [
           "Change Artifact Library",
+          "Change Digest Provider",
+          "Change Digest Model",
           "Set Up Transcript Runtime",
-          "Configure OpenCode Credential",
+          `Configure ${getProviderProfile(model.config.digest.provider).displayName} Credential`,
           "Agent Skill",
         ],
         title: "Setup & Settings",
+      };
+    case "provider-settings": {
+      const profiles = listProviderProfiles();
+      return {
+        actions: profiles.map(({ id }) => ({ provider: id, type: "select-provider" as const })),
+        body: ["Select the default Digest Provider."],
+        options: profiles.map(({ displayName }) => displayName),
+        title: "Digest Provider",
+      };
+    }
+    case "model-settings":
+      return {
+        body: [`Provider: ${getProviderProfile(model.config.digest.provider).displayName}`],
+        input: { label: "Model", placeholder: "Provider model ID", secret: false, value: model.config.digest.model },
+        title: "Digest Model",
       };
     case "doctor":
       return doctorView(model);
