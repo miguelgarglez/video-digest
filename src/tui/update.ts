@@ -64,8 +64,8 @@ export function update(model: Model, event: Event): Transition {
       }
       return transition(clearPending({
         ...model,
-        credentialConfigured: event.provider === undefined || event.provider === model.config.digest.provider,
-        credentials: { ...model.credentials, [event.provider ?? model.config.digest.provider]: true },
+        credentialConfigured: event.provider === model.config.digest.provider,
+        credentials: { ...model.credentials, [event.provider]: true },
         message: null,
         screen: model.gateOrigin === "settings" ? "settings" : "enter-url",
       }));

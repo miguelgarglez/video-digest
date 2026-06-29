@@ -81,7 +81,6 @@ export type ReaderData = Readonly<{
 
 export type Model = Readonly<{
   config: TuiConfig;
-  /** @deprecated Use credentials[config.digest.provider]. */
   credentialConfigured: boolean;
   credentials: CredentialStatus;
   creationMode: CreationMode | null;
@@ -162,7 +161,7 @@ export type Event =
   | { type: "runtime-ready"; requestId: RequestId }
   | { type: "runtime-failed"; message: string; readiness: Exclude<RuntimeReadiness, { status: "ready" }>; requestId: RequestId }
   | { type: "save-credential"; value: string }
-  | { type: "credential-saved"; provider?: DigestProviderId; requestId: RequestId }
+  | { type: "credential-saved"; provider: DigestProviderId; requestId: RequestId }
   | { type: "credential-failed"; message: string; requestId: RequestId }
   | { type: "submit-url"; url: string }
   | { type: "operation-progress"; message: string; requestId: RequestId }

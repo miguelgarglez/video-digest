@@ -41,12 +41,12 @@ function deferred<T>() {
 
 function ports(overrides: Record<string, unknown> = {}): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async (path: string) => path },
+    config: { saveArtifactLibrary: async (path: string) => path, saveModel: async () => {}, saveProvider: async () => {} },
     create: {
       ingest: async () => ({ ...transcriptResult, kind: "digest" }),
       transcript: async () => transcriptResult,
     },
-    credential: { saveOpenCodeApiKey: async () => undefined },
+    credential: { deleteApiKey: async () => {}, saveApiKey: async () => undefined },
     doctor: { run: async () => ({ checks: [], ok: true }) },
     library: {
       list: async () => [entry],

@@ -45,12 +45,12 @@ function deferred<T>() {
 
 function fakePorts(overrides: Partial<TuiPorts> = {}): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async (path) => path },
+    config: { saveArtifactLibrary: async (path) => path, saveModel: async () => {}, saveProvider: async () => {} },
     create: {
       ingest: async () => ({ ...result, kind: "digest" }),
       transcript: async () => result,
     },
-    credential: { saveOpenCodeApiKey: async () => undefined },
+    credential: { deleteApiKey: async () => {}, saveApiKey: async () => undefined },
     doctor: { run: async () => ({ checks: [], ok: true }) },
     library: {
       list: async () => [entry],
@@ -81,7 +81,7 @@ describe("TUI controller", () => {
     const saved: string[] = [];
     const events: Event[] = [];
     const controller = createTuiController(initialModel({ artifactLibrary: null }), fakePorts({
-      config: { saveArtifactLibrary: async (path) => { saved.push(path); return "/normalized/library"; } },
+      config: { saveArtifactLibrary: async (path) => { saved.push(path); return "/normalized/library"; }, saveModel: async () => {}, saveProvider: async () => {} },
     }), { onEvent: (event) => events.push(event) });
 
     await controller.dispatch({ type: "save-library", path: "/tmp/library" });
@@ -170,7 +170,7 @@ describe("TUI controller", () => {
       credentialConfigured: false,
       screen: "credential-required",
     }), fakePorts({
-      credential: { saveOpenCodeApiKey: async () => { throw new Error(`failed ${secret}`); } },
+      credential: { deleteApiKey: async () => {}, saveApiKey: async () => { throw new Error(`failed ${secret}`); } },
     }), { onEvent: (event) => events.push(event) });
 
     await controller.dispatch({ type: "save-credential", value: secret });

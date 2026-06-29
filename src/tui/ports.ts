@@ -39,15 +39,13 @@ export type TuiLibraryPort = {
 export type TuiPorts = {
   config: {
     saveArtifactLibrary(path: string): Promise<string>;
-    saveModel?(provider: DigestProviderId, model: string): Promise<void>;
-    saveProvider?(provider: DigestProviderId): Promise<void>;
+    saveModel(provider: DigestProviderId, model: string): Promise<void>;
+    saveProvider(provider: DigestProviderId): Promise<void>;
   };
   create: TuiCreatePort;
   credential: {
-    deleteApiKey?(provider: DigestProviderId): Promise<void>;
-    saveApiKey?(provider: DigestProviderId, value: string): Promise<void>;
-    /** @deprecated Provider-neutral implementations use saveApiKey. */
-    saveOpenCodeApiKey?(value: string): Promise<void>;
+    deleteApiKey(provider: DigestProviderId): Promise<void>;
+    saveApiKey(provider: DigestProviderId, value: string): Promise<void>;
   };
   doctor: {
     run(): Promise<DoctorReport>;

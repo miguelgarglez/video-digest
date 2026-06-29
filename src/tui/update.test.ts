@@ -482,7 +482,7 @@ describe("asynchronous effect correlation", () => {
         model: readyModel({ runtimeReadiness: { remediation: "setup", status: "missing" }, screen: "runtime-required" }),
       },
       {
-        completion: { requestId: staleRequestId, type: "credential-saved" } as const,
+        completion: { provider: "opencode", requestId: staleRequestId, type: "credential-saved" } as const,
         event: { type: "save-credential", value: "secret" } as const,
         model: readyModel({ credentialConfigured: false, screen: "credential-required" }),
       },
@@ -601,7 +601,7 @@ describe("pending state integrity", () => {
     expect(update(saving, { type: "go-home" })).toEqual({ effects: [], model: saving });
     expect(JSON.stringify(saving)).not.toContain("top-secret");
 
-    const completed = update(saving, { requestId: 1, type: "credential-saved" }).model;
+    const completed = update(saving, { provider: "opencode", requestId: 1, type: "credential-saved" }).model;
     expect(completed).toMatchObject({ credentialConfigured: true, pending: null, screen: "enter-url" });
     expect(JSON.stringify(completed)).not.toContain("top-secret");
   });

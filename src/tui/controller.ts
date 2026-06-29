@@ -151,7 +151,6 @@ export function createTuiController(
         return;
       case "save-provider":
         try {
-          if (!ports.config.saveProvider) throw new Error("unsupported");
           await ports.config.saveProvider(effect.provider);
           await emit({ provider: effect.provider, requestId: effect.requestId, type: "provider-saved" });
         } catch {
@@ -160,7 +159,6 @@ export function createTuiController(
         return;
       case "save-model":
         try {
-          if (!ports.config.saveModel) throw new Error("unsupported");
           await ports.config.saveModel(effect.provider, effect.model);
           await emit({ model: effect.model, requestId: effect.requestId, type: "model-saved" });
         } catch {
@@ -273,9 +271,7 @@ export function createTuiController(
 
   async function saveCredential(requestId: RequestId, provider: import("../summarizer/providers").DigestProviderId, value: string): Promise<void> {
     try {
-      if (ports.credential.saveApiKey) await ports.credential.saveApiKey(provider, value);
-      else if (provider === "opencode" && ports.credential.saveOpenCodeApiKey) await ports.credential.saveOpenCodeApiKey(value);
-      else throw new Error("unsupported");
+      await ports.credential.saveApiKey(provider, value);
       await emit({ provider, requestId, type: "credential-saved" });
     } catch {
       await emit({

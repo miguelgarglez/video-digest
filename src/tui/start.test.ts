@@ -14,12 +14,12 @@ function model(): Model {
 
 function ports(quit: () => void | Promise<void>): TuiPorts {
   return {
-    config: { saveArtifactLibrary: async (path) => path },
+    config: { saveArtifactLibrary: async (path) => path, saveModel: async () => {}, saveProvider: async () => {} },
     create: {
       ingest: async () => { throw new Error("unused"); },
       transcript: async () => { throw new Error("unused"); },
     },
-    credential: { saveOpenCodeApiKey: async () => undefined },
+    credential: { deleteApiKey: async () => {}, saveApiKey: async () => undefined },
     doctor: { run: async () => ({ checks: [], ok: true }) },
     library: {
       list: async () => [],

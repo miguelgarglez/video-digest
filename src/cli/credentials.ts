@@ -105,14 +105,6 @@ export async function resolveProviderApiKey(input: {
     : { source: "missing", value: null };
 }
 
-/** @deprecated Removed with the provider-neutral CLI contract in 1.0. */
-export async function resolveOpenCodeApiKey(input: {
-  env: Record<string, string | undefined>;
-  store: CredentialStore;
-}): Promise<CredentialSource> {
-  return resolveProviderApiKey({ ...input, provider: "opencode" });
-}
-
 function accountFor(provider: DigestProviderId): string {
   return `provider:${provider}:api-key`;
 }
