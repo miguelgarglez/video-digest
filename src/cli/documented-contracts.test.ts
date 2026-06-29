@@ -231,7 +231,7 @@ describe("public CLI documentation contracts", () => {
     expect(docs).toContain("Parsing, runtime-readiness, and failures without");
   });
 
-  test("documents the experimental compatibility and cross-links every contract page", async () => {
+  test("documents major-version compatibility and cross-links every contract page", async () => {
     const [jsonDocs, exitDocs, compatibilityDocs] = await Promise.all([
       readFile(JSON_CONTRACTS, "utf8"),
       readFile(EXIT_CODES, "utf8"),
@@ -244,7 +244,7 @@ describe("public CLI documentation contracts", () => {
     expect(compatibilityDocs).toContain("`uv`");
     expect(compatibilityDocs).toContain("does not install or modify system Python");
     expect(compatibilityDocs).toContain("increment the affected `schemaVersion`");
-    expect(compatibilityDocs).toContain("0.x");
+    expect(compatibilityDocs).toContain("Breaking commands, defaults, or machine-readable formats require a major release");
     expect(jsonDocs).toContain("[Exit codes](./exit-codes.md)");
     expect(exitDocs).toContain("[JSON contracts](./json-contracts.md)");
     expect(compatibilityDocs).toContain("[JSON contracts](./json-contracts.md)");

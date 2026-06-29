@@ -37,16 +37,16 @@ Digest does not keep processing history.
 
 ## Status and support
 
-Video Digest `0.1.0` is public, experimental, English-only software licensed under
+Video Digest is public, English-only software licensed under
 MIT. The supported platform is macOS on Apple Silicon. macOS Intel, Linux, and Windows
 are not supported in this release.
 
-The npm package is published as `video-digest@0.1.0`. Repository CI is configured on
+The current package metadata is `video-digest@0.2.0`; the provider-neutral breaking
+change will be released as the next major through Release Please. Repository CI is configured on
 the supported Apple Silicon platform to verify the tests, types, exact tarball
 contents, and an isolated installation of the packed CLI.
 
-Compatibility may change before `1.0.0`. Human-facing behavior can evolve during
-`0.x`; machine-facing changes are versioned and documented in the
+Machine-facing changes are versioned and documented in the
 [compatibility policy](docs/cli/compatibility.md).
 
 ## Prerequisites
@@ -237,9 +237,9 @@ video-digest list --json
 
 Automation must validate each command's own schema rather than assuming common fields:
 
-- `doctor` returns `doctor-report.v0` with top-level `ok` and a `checks` array;
-- `ingest` and `transcript` return `cli-result.v0`, where completed results contain
-  `status` and artifact `paths`;
+- `doctor` returns `doctor-report.v1` with top-level `ok` and a `checks` array;
+- `ingest` and `transcript` return `cli-result.v1`; completed Digest results also
+  contain generation provenance;
 - `list` returns `library-list.v0` with an `items` array and no `status`; and
 - `open` returns `open-result.v0` with Library Entry fields and `openPath` on success.
 
@@ -248,7 +248,7 @@ and never parse human output. The exact success and failure shapes are defined i
 [JSON contracts](docs/cli/json-contracts.md), with numeric meanings in the
 [exit-code reference](docs/cli/exit-codes.md).
 
-The `0.1.0` release also contains a portable, independently installed
+The npm package also contains a portable, independently installed
 [Video Digest agent skill](https://github.com/miguelgarglez/video-digest/blob/main/.agents/skills/video-digest/SKILL.md).
 Review the source first, then copy the command you intend to run:
 

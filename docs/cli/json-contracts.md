@@ -1,7 +1,7 @@
 # JSON contracts
 
 Video Digest exposes versioned JSON for scripts and agents through `--json`. This
-page describes the stdout contract implemented by `video-digest 0.1.0`.
+page describes the provider-neutral contract implemented by the next major release.
 
 See also [Exit codes](./exit-codes.md) and
 [compatibility and versioning](./compatibility.md).

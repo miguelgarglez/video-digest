@@ -1,6 +1,6 @@
 # Compatibility and versioning
 
-Video Digest `0.1.0` is an experimental npm-distributed CLI. Its supported platform
+Video Digest is an npm-distributed CLI. Its supported platform
 is macOS on Apple Silicon (`darwin`/`arm64`). macOS on Intel, Linux, and Windows are
 outside the supported compatibility contract.
 
@@ -26,16 +26,16 @@ The supported shell environment must be able to execute `bun`, and setup must be
 able to execute `uv` (or the path supplied through `UV_BIN`). Clipboard, opening,
 and Finder actions use the macOS `pbcopy` and `open` commands.
 
-## Experimental `0.x` policy
+## Major-version policy
 
-Before `1.0.0`, commands, human copy, defaults, and data formats may evolve between
-minor releases. A release that makes a breaking machine-readable change must
+Breaking commands, defaults, or machine-readable formats require a major release. A
+release that makes a breaking machine-readable change must
 increment the affected `schemaVersion` and update the public contract examples and
 tests. Consumers must reject unknown schema versions instead of guessing their
 shape.
 
 Additive changes that do not invalidate existing fields may remain within a schema
-version during `0.x`; consumers should ignore fields they do not use. Removing or
+version; consumers should ignore fields they do not use. Removing or
 renaming a field, changing its type or nullability, changing status semantics, or
 changing the meaning of an error code requires a schema-version increment.
 

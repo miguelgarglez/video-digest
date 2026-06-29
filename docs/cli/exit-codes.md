@@ -13,7 +13,7 @@ both the process status and the versioned object on stdout. See
 | 1 | Invocation, configuration, environment, provider, setup, filesystem, system-action, diagnostic, or unexpected failure. A `doctor` report with any failed check exits `1`. |
 | 2 | No usable Transcript was available: the provider reported `transcript-unavailable`, or `ingest` classified the Transcript as `unusable-transcript`. |
 
-No other process exit status is part of the `0.1.0` public contract.
+No other process exit status is part of the public contract.
 
 ## Command-family behavior
 
