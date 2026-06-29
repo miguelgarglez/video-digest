@@ -28,7 +28,7 @@ Read `openPath` or another returned artifact path through a filesystem read tool
 
 There is no output-location unset command. Change it with the save-output-location argv pattern after user authorization.
 
-Credential changes are private, user-only interactions. Ask the user to run `video-digest config set opencode-api-key` or `video-digest config unset opencode-api-key` in their own terminal. The agent must not invoke these commands, request the value, or observe the interaction.
+Credential changes are private, user-only interactions. Ask the user to run `video-digest config set api-key --provider opencode` (substituting their selected provider) or the corresponding `unset` in their own terminal. The agent must not invoke it, request the value, or observe the interaction.
 
 ## Results and failures
 

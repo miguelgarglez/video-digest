@@ -49,7 +49,7 @@ test("centralizes the complete Doctor ID and capability contract", async () => {
     "uv",
     "python-sidecar",
     "python-runtime",
-    "opencode-api-key",
+    "digest-provider",
     "output-dir",
   ]);
   expect(PUBLIC_DOCTOR_CHECK_CAPABILITY).toEqual({
@@ -57,7 +57,7 @@ test("centralizes the complete Doctor ID and capability contract", async () => {
     uv: "transcript",
     "python-sidecar": "transcript",
     "python-runtime": "transcript",
-    "opencode-api-key": "digest",
+    "digest-provider": "digest",
     "output-dir": "transcript",
   });
 
@@ -66,7 +66,7 @@ test("centralizes the complete Doctor ID and capability contract", async () => {
     canWriteOutputDir: async () => true,
     env: {},
     fileExists: async () => true,
-    getStoredOpenCodeApiKey: async () => null,
+    getStoredApiKey: async () => null,
     runtimeReadiness: async () => ({ status: "ready" }),
     uvAvailable: async () => true,
   });

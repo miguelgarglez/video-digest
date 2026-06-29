@@ -368,7 +368,7 @@ describe("runCli", () => {
     expect(providerCalls).toBe(0);
     expect(JSON.parse(logs[0]!)).toMatchObject({
       error: { code: "runtime-not-ready", message: expect.stringContaining("Run video-digest setup.") },
-      schemaVersion: "cli-result.v0",
+      schemaVersion: "cli-result.v1",
       status: "failed",
     });
   });
@@ -391,6 +391,26 @@ describe("runCli", () => {
     });
   });
 
+  test("persists provider and provider-scoped model without dropping config", async () => {
+    let saved: AppConfig | null = {
+      artifactLibrary: "/saved-library",
+      digest: { defaultProvider: "opencode", models: { opencode: "existing-model" } },
+      schemaVersion: "config.v1",
+    };
+    const configStore = {
+      load: async () => saved,
+      save: async (config: AppConfig) => { saved = config; },
+    };
+    await runCli(["config", "set", "provider", "anthropic"], { error: () => {}, log: () => {} }, { configStore });
+    await runCli(["config", "set", "model", "claude-custom", "--provider", "anthropic"], { error: () => {}, log: () => {} }, { configStore });
+
+    expect(saved).toEqual({
+      artifactLibrary: "/saved-library",
+      digest: { defaultProvider: "anthropic", models: { anthropic: "claude-custom", opencode: "existing-model" } },
+      schemaVersion: "config.v1",
+    });
+  });
+
   test("reports effective artifact library in human and JSON config output without secrets", async () => {
     const human: string[] = [];
     const json: string[] = [];
@@ -406,7 +426,7 @@ describe("runCli", () => {
     expect(human.join("\n")).toContain("Saved Artifact Library: /saved");
     expect(JSON.parse(json[0]!)).toMatchObject({
       artifactLibrary: { configured: "/saved", effective: "/env", source: "env" },
-      opencodeApiKey: { configured: true, source: "keychain" },
+      credential: { configured: true, provider: "opencode", source: "keychain" },
     });
     expect(`${human.join("\n")} ${json.join("\n")}`).not.toContain("never-print-this");
   });
@@ -530,7 +550,7 @@ describe("runCli", () => {
           });
           return completedIngestion();
         },
-        summarizerFactory: (apiKey) => ({
+        summarizerFactory: (_selection, apiKey) => ({
           generateDigest: async () => {
             seenApiKeys.push(apiKey ?? "");
             return { draft: digestDraftFixture(), generation: testGeneration() };
@@ -566,6 +586,31 @@ describe("runCli", () => {
     expect(logs).toContain("Ingested video 1ZgUcrR0K7I");
   });
 
+  test("resolves only the selected provider credential and passes the effective model", async () => {
+    const credentialLookups: string[] = [];
+    const selections: Array<{ apiKey: string; model: string; provider: string }> = [];
+    const exitCode = await runCli(
+      ["ingest", "https://youtu.be/1ZgUcrR0K7I", "--provider", "openai", "--model", "gpt-custom"],
+      { error: () => {}, log: () => {} },
+      {
+        credentialStore: {
+          deleteApiKey: async () => {},
+          getApiKey: async (provider) => { credentialLookups.push(provider); return "openai-key"; },
+          setApiKey: async () => {},
+        },
+        ingestVideo: async () => completedIngestion(),
+        summarizerFactory: (selection, apiKey) => {
+          selections.push({ apiKey, model: selection.model.effective, provider: selection.provider.effective });
+          return { generateDigest: async () => ({ draft: digestDraftFixture(), generation: testGeneration() }) };
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(credentialLookups).toEqual(["openai"]);
+    expect(selections).toEqual([{ apiKey: "openai-key", model: "gpt-custom", provider: "openai" }]);
+  });
+
   test("prints one json object for successful ingest json mode", async () => {
     const logs: string[] = [];
     const writes: string[] = [];
@@ -597,7 +642,8 @@ describe("runCli", () => {
         transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
         transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
       },
-      schemaVersion: "cli-result.v0",
+      generation: testGeneration(),
+      schemaVersion: "cli-result.v1",
       status: "completed",
       transcriptQuality: "usable",
       videoId: "1ZgUcrR0K7I",
@@ -631,7 +677,9 @@ describe("runCli", () => {
         code: "transcript-unavailable",
         message: "No transcript is available for this video.\nProvider reason: Subtitles are disabled\nDigest generation was skipped. Try another video or a future transcript fallback.",
       },
-      schemaVersion: "cli-result.v0",
+      model: "gpt-5.4-mini",
+      provider: "opencode",
+      schemaVersion: "cli-result.v1",
       status: "failed",
       videoId: "hrIdEuwtODc",
     });
@@ -656,7 +704,7 @@ describe("runCli", () => {
         code: "invalid-url",
         message: "Unsupported YouTube URL: https://example.com",
       },
-      schemaVersion: "cli-result.v0",
+      schemaVersion: "cli-result.v1",
       status: "failed",
     });
   });
@@ -692,7 +740,7 @@ describe("runCli", () => {
     expect(exitCode).toBe(2);
     expect(JSON.parse(logs[0]!)).toEqual({
       metadataPath: "outputs/metadata/1ZgUcrR0K7I.json",
-      schemaVersion: "cli-result.v0",
+      schemaVersion: "cli-result.v1",
       status: "unusable-transcript",
       transcriptQuality: "unusable",
       videoId: "1ZgUcrR0K7I",
@@ -723,7 +771,9 @@ describe("runCli", () => {
         code: "unexpected-error",
         message: "Provider exploded",
       },
-      schemaVersion: "cli-result.v0",
+      model: "gpt-5.4-mini",
+      provider: "opencode",
+      schemaVersion: "cli-result.v1",
       status: "failed",
       videoId: "1ZgUcrR0K7I",
     });
@@ -746,7 +796,7 @@ describe("runCli", () => {
     );
 
     expect(exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("Digest generation requires OPENCODE_API_KEY.");
+    expect(errors.join("\n")).toContain("Digest generation requires OPENCODE_API_KEY for OpenCode Zen.");
     expect(errors.join("\n")).toContain("video-digest transcript https://www.youtube.com/watch?v=1ZgUcrR0K7I");
   });
 
@@ -770,9 +820,11 @@ describe("runCli", () => {
     expect(JSON.parse(logs[0]!)).toEqual({
       error: {
         code: "missing-api-key",
-        message: "Digest generation requires OPENCODE_API_KEY.\nTo fetch only the transcript, run:\n  video-digest transcript https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+        message: "Digest generation requires OPENCODE_API_KEY for OpenCode Zen.\nTo fetch only the transcript, run:\n  video-digest transcript https://www.youtube.com/watch?v=1ZgUcrR0K7I",
       },
-      schemaVersion: "cli-result.v0",
+      model: "gpt-5.4-mini",
+      provider: "opencode",
+      schemaVersion: "cli-result.v1",
       status: "failed",
       videoId: "1ZgUcrR0K7I",
     });
@@ -835,7 +887,7 @@ describe("runCli", () => {
         transcriptMarkdownPath: "outputs/transcripts/1ZgUcrR0K7I.md",
         transcriptTextPath: "outputs/transcripts/1ZgUcrR0K7I.txt",
       },
-      schemaVersion: "cli-result.v0",
+      schemaVersion: "cli-result.v1",
       status: "completed",
       transcriptQuality: "usable",
       videoId: "1ZgUcrR0K7I",
@@ -858,7 +910,7 @@ describe("runCli", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(logs.join("\n")).toContain("OpenCode API key: configured via Keychain");
+    expect(logs.join("\n")).toContain("OpenCode Zen API key: configured via Keychain");
     expect(logs.join("\n")).not.toContain("secret-key");
   });
 
@@ -884,11 +936,16 @@ describe("runCli", () => {
         effective: "/test-home/Documents/Video Digest",
         source: "default",
       },
-      opencodeApiKey: {
+      credential: {
         configured: true,
+        provider: "opencode",
         source: "keychain",
       },
-      schemaVersion: "config-status.v0",
+      digest: {
+        model: { effective: "gpt-5.4-mini", source: "default" },
+        provider: { effective: "opencode", source: "default" },
+      },
+      schemaVersion: "config-status.v1",
     });
   });
 
@@ -898,7 +955,7 @@ describe("runCli", () => {
     const stored: string[] = [];
 
     const exitCode = await runCli(
-      ["config", "set", "opencode-api-key"],
+      ["config", "set", "api-key", "--provider", "opencode"],
       {
         error: () => {},
         log: (message) => logs.push(message),
@@ -913,9 +970,9 @@ describe("runCli", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(prompts).toEqual(["OpenCode API key: "]);
+    expect(prompts).toEqual(["OpenCode Zen API key: "]);
     expect(stored).toEqual(["secret-key"]);
-    expect(logs.join("\n")).toContain("OpenCode API key stored in macOS Keychain.");
+    expect(logs.join("\n")).toContain("OpenCode Zen API key stored in macOS Keychain.");
     expect(logs.join("\n")).not.toContain("secret-key");
   });
 
@@ -924,7 +981,7 @@ describe("runCli", () => {
     let deleted = false;
 
     const exitCode = await runCli(
-      ["config", "unset", "opencode-api-key"],
+      ["config", "unset", "api-key", "--provider", "opencode"],
       {
         error: () => {},
         log: (message) => logs.push(message),
@@ -936,7 +993,7 @@ describe("runCli", () => {
 
     expect(exitCode).toBe(0);
     expect(deleted).toBe(true);
-    expect(logs).toEqual(["OpenCode API key removed from macOS Keychain."]);
+    expect(logs).toEqual(["OpenCode Zen API key removed from macOS Keychain."]);
   });
 
   test("runs doctor with human and json output", async () => {
@@ -1000,7 +1057,7 @@ describe("runCli", () => {
         },
       ],
       ok: true,
-      schemaVersion: "doctor-report.v0",
+      schemaVersion: "doctor-report.v1",
     });
   });
 
@@ -1200,7 +1257,7 @@ describe("runCli", () => {
       expect(exitCode).toBe(1);
       expect(JSON.parse(logs[0]!)).toMatchObject({
         error: { code: "unexpected-error" },
-        schemaVersion: "cli-result.v0",
+        schemaVersion: "cli-result.v1",
         status: "failed",
       });
     },

@@ -10,7 +10,7 @@ import {
 } from "./artifacts";
 import {
   MacOSKeychainCredentialStore,
-  resolveOpenCodeApiKey,
+  resolveProviderApiKey,
   type CredentialStore,
 } from "./credentials";
 import { defaultDoctor, type DoctorReport } from "./doctor";
@@ -29,8 +29,9 @@ import {
   type FetchTranscriptOnlyInput,
   type FetchTranscriptOnlyResult,
 } from "../ingestion/transcript-only";
-import { ResponsesSummarizer } from "../summarizer/responses-summarizer";
 import { getProviderProfile } from "../summarizer/providers";
+import { createProviderSummarizer } from "../summarizer/provider-summarizer";
+import { resolveDigestSelection, type ResolvedDigestSelection } from "./digest-config";
 import { SummarizerError, type Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { TranscriptSourceError } from "../transcript/transcript-source";
@@ -87,7 +88,7 @@ export type CliDependencies = {
   runtimeManager?: RuntimeManager;
   spinnerIntervalMs?: number;
   startTui?: () => Promise<PublicTuiExitCode>;
-  summarizerFactory?: (apiKey: string | null) => Summarizer;
+  summarizerFactory?: (selection: ResolvedDigestSelection, apiKey: string) => Summarizer;
 };
 
 export type RuntimeManager = {
@@ -100,6 +101,7 @@ export async function runCli(
   io: CliIO = defaultCliIO,
   dependencies: CliDependencies = {},
 ): Promise<PublicCliExitCode> {
+  let activeSelection: ResolvedDigestSelection | undefined;
   try {
     if (args.length === 0) {
       if (io.inputIsTTY !== true || io.outputIsTTY !== true) {
@@ -165,9 +167,10 @@ export async function runCli(
     }
 
     if (result.value.command === "doctor") {
+      const selection = resolveDigestSelection({ config, env });
       const report = dependencies.doctor
         ? await dependencies.doctor(artifactLibrary.path)
-        : await defaultDoctor(credentialStore, artifactLibrary.path);
+        : await defaultDoctor(credentialStore, artifactLibrary.path, selection, env);
       if (result.value.json) {
         io.log(JSON.stringify({ schemaVersion: PUBLIC_CLI_SCHEMA.doctorReport, ...report }));
       } else {
@@ -267,14 +270,22 @@ export async function runCli(
     const readinessExitCode = await requireReadyRuntime(runtimeManager, json, io);
     if (readinessExitCode !== null) return readinessExitCode;
     const ingest = dependencies.ingestVideo ?? ingestVideo;
-    const credential = await resolveOpenCodeApiKey({
+    const selection = resolveDigestSelection({
+      cliModel: result.value.model,
+      cliProvider: result.value.provider,
+      config,
       env,
+    });
+    activeSelection = selection;
+    const credential = await resolveProviderApiKey({
+      env,
+      provider: selection.provider.effective,
       store: credentialStore,
     });
     let apiKey = credential.value;
 
     if (!apiKey && !json && io.prompt) {
-      const configured = await promptForOpenCodeApiKey(io, credentialStore);
+      const configured = await promptForProviderApiKey(io, credentialStore, selection.provider.effective);
 
       if (configured.mode === "configured") {
         apiKey = configured.apiKey;
@@ -289,20 +300,13 @@ export async function runCli(
           video,
         });
       } else {
-        io.error("Digest generation cancelled because OPENCODE_API_KEY is not configured.");
+        io.error(`Digest generation cancelled because ${getProviderProfile(selection.provider.effective).credentialEnv} is not configured.`);
         return 1;
       }
     }
 
     const summarizerFactory = dependencies.summarizerFactory
-      ?? ((apiKey: string | null) => {
-        const profile = getProviderProfile("opencode");
-        return new ResponsesSummarizer({
-          apiKey: apiKey ?? "",
-          model: profile.defaultModel,
-          profile,
-        });
-      });
+      ?? createProviderSummarizer;
     const progress = json ? null : createProgressRenderer(io, {
       intervalMs: dependencies.spinnerIntervalMs,
     });
@@ -312,7 +316,7 @@ export async function runCli(
       metadataSource: dependencies.metadataSource ?? new YouTubeOEmbedMetadataSource(),
       onProgress: progress?.handle,
       outputDir: artifactLibrary.path,
-      summarizer: summarizerFactory(apiKey),
+      summarizer: summarizerFactory(selection, apiKey ?? ""),
       transcriptSource: new PythonYoutubeTranscriptSource(),
       video,
     }).finally(() => progress?.stop());
@@ -336,6 +340,10 @@ export async function runCli(
           code: cliError.code,
           message: cliError.message,
         },
+        ...(activeSelection ? {
+          model: activeSelection.model.effective,
+          provider: activeSelection.provider.effective,
+        } : {}),
         schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
         status: "failed",
         videoId: parsedVideo?.videoId,
@@ -375,6 +383,7 @@ function formatCliError(
   }
 
   if (error instanceof SummarizerError && error.code === "missing-api-key") {
+    const profile = getProviderProfile(error.provider);
     const transcriptCommand = video
       ? `video-digest transcript ${video.canonicalUrl}`
       : "video-digest transcript <youtube-url>";
@@ -382,7 +391,7 @@ function formatCliError(
       code: PUBLIC_CLI_ERROR_CODE.missingApiKey,
       exitCode: 1,
       message: [
-        "Digest generation requires OPENCODE_API_KEY.",
+        `Digest generation requires ${profile.credentialEnv} for ${profile.displayName}.`,
         "To fetch only the transcript, run:",
         `  ${transcriptCommand}`,
       ].join("\n"),
@@ -391,9 +400,7 @@ function formatCliError(
 
   if (error instanceof SummarizerError) {
     return {
-      code: error.code === "invalid-provider-response"
-        ? PUBLIC_CLI_ERROR_CODE.invalidProviderResponse
-        : PUBLIC_CLI_ERROR_CODE.providerFailed,
+      code: error.code,
       exitCode: 1,
       message: `Digest provider failed: ${error.message}`,
     };
@@ -433,9 +440,9 @@ const HELP_TEXT = [
   "Video Digest",
   "",
   "Usage:",
-  "  video-digest ingest <youtube-url> [--email-preview] [--json] [--output-dir <path>]",
+  "  video-digest ingest <youtube-url> [--provider <provider>] [--model <model>] [--email-preview] [--json] [--output-dir <path>]",
   "  video-digest transcript <youtube-url> [--json] [--output-dir <path>]",
-  "  video-digest config <get|set|unset> [opencode-api-key] [--json]",
+  "  video-digest config <get|set|unset> <provider|model|api-key|output-dir> [--provider <provider>] [--json]",
   "  video-digest config set output-dir <path> [--json]",
   "  video-digest doctor [--json]",
   "  video-digest setup [--yes] [--json]",
@@ -455,21 +462,23 @@ const HELP_TEXT = [
   "  --json           Write one machine-readable JSON object.",
   "  --yes            Confirm setup without an interactive prompt.",
   "  --output-dir     Override the Artifact Library for this command.",
+  "  --provider       Select opencode, openai, anthropic, gemini, or xai.",
+  "  --model          Override the selected provider model for this ingest.",
   "  --help, -h       Show this help message.",
   "",
   "Interactive mode:",
   "  Run without arguments in a terminal to open the guided interface.",
   "",
   "Environment:",
-  "  OPENCODE_API_KEY      Required for digest generation with ingest.",
-  "  OPENCODE_MODEL        Defaults to gpt-5.4-nano via .env.example.",
+  "  OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, XAI_API_KEY",
+  "  VIDEO_DIGEST_PROVIDER and VIDEO_DIGEST_MODEL select the effective Digest model.",
   "  VIDEO_DIGEST_OUTPUT_DIR  Overrides the configured Artifact Library.",
   "",
   "Transcript mode:",
-  "  video-digest transcript <youtube-url> does not require OPENCODE_API_KEY.",
+  "  video-digest transcript <youtube-url> does not require a model provider API key.",
   "",
   "Configuration:",
-  "  video-digest config set opencode-api-key stores the key in macOS Keychain.",
+  "  video-digest config set api-key --provider <provider> stores an isolated key in macOS Keychain.",
 ].join("\n");
 
 const TRANSCRIPT_HELP_TEXT = [
@@ -493,15 +502,17 @@ const COMMAND_HELP_TEXT: Record<string, string> = {
     "",
     "Usage:",
     "  video-digest config get [--json]",
-    "  video-digest config set opencode-api-key",
-    "  video-digest config unset opencode-api-key [--json]",
+    "  video-digest config set provider <provider> [--json]",
+    "  video-digest config set model <model> [--provider <provider>] [--json]",
+    "  video-digest config set api-key --provider <provider>",
+    "  video-digest config unset api-key --provider <provider> [--json]",
     "  video-digest config set output-dir <path> [--json]",
   ].join("\n"),
   doctor: "Usage: video-digest doctor [--json]",
   ingest: [
     "Usage: video-digest ingest <youtube-url> [options]",
     "",
-    "Options: --email-preview, --json, --output-dir <path>",
+    "Options: --provider <provider>, --model <model>, --email-preview, --json, --output-dir <path>",
   ].join("\n"),
   list: "Usage: video-digest list [--json] [--output-dir <path>]",
   open: "Usage: video-digest open <latest|video-id> [--json] [--output-dir <path>]",
@@ -537,9 +548,16 @@ async function runConfigCommand(
   appConfig: AppConfig | null,
 ): Promise<PublicCliExitCode> {
   const configuredArtifactLibrary = appConfig?.artifactLibrary ?? null;
+  const baseConfig: AppConfig = appConfig ?? {
+    artifactLibrary: artifactLibrary.path,
+    digest: { defaultProvider: "opencode", models: {} },
+    schemaVersion: "config.v1",
+  };
   if (command.subcommand === "get") {
-    const credential = await resolveOpenCodeApiKey({
+    const selection = resolveDigestSelection({ config: appConfig, env });
+    const credential = await resolveProviderApiKey({
       env,
+      provider: selection.provider.effective,
       store: credentialStore,
     });
     const configured = credential.source !== "missing";
@@ -552,16 +570,21 @@ async function runConfigCommand(
           effective: artifactLibrary.path,
           source: artifactLibrary.source,
         },
-        opencodeApiKey: {
+        digest: {
+          model: selection.model,
+          provider: selection.provider,
+        },
+        credential: {
           configured,
+          provider: selection.provider.effective,
           source: credential.source,
         },
         schemaVersion: PUBLIC_CLI_SCHEMA.configStatus,
       }));
     } else {
-      io.log(configured
-        ? `OpenCode API key: configured via ${sourceLabel}`
-        : "OpenCode API key: not configured");
+      const profile = getProviderProfile(selection.provider.effective);
+      io.log(`${profile.displayName} API key: ${configured ? `configured via ${sourceLabel}` : "not configured"}`);
+      io.log(`Digest model: ${selection.model.effective} (${selection.model.source})`);
       io.log(`Artifact Library: ${formatTerminalPath(artifactLibrary.path, io)} (${artifactLibrary.source})`);
       if (configuredArtifactLibrary !== null && configuredArtifactLibrary !== artifactLibrary.path) {
         io.log(`Saved Artifact Library: ${formatTerminalPath(configuredArtifactLibrary, io)}`);
@@ -574,7 +597,7 @@ async function runConfigCommand(
     if (command.key === "output-dir") {
       const config: AppConfig = {
         artifactLibrary: command.value!,
-        digest: appConfig?.digest ?? { defaultProvider: "opencode", models: {} },
+        digest: baseConfig.digest,
         schemaVersion: "config.v1",
       };
       await configStore.save(config);
@@ -589,11 +612,28 @@ async function runConfigCommand(
       }
       return 0;
     }
+    if (command.key === "provider") {
+      const config: AppConfig = { ...baseConfig, digest: { ...baseConfig.digest, defaultProvider: command.value as AppConfig["digest"]["defaultProvider"] } };
+      await configStore.save(config);
+      if (command.json) io.log(JSON.stringify({ provider: config.digest.defaultProvider, schemaVersion: PUBLIC_CLI_SCHEMA.configResult, status: "saved" }));
+      else io.log(`Default Digest Provider saved: ${getProviderProfile(config.digest.defaultProvider).displayName}`);
+      return 0;
+    }
+    if (command.key === "model") {
+      const provider = command.provider ?? baseConfig.digest.defaultProvider;
+      const config: AppConfig = { ...baseConfig, digest: { ...baseConfig.digest, models: { ...baseConfig.digest.models, [provider]: command.value! } } };
+      await configStore.save(config);
+      if (command.json) io.log(JSON.stringify({ model: command.value, provider, schemaVersion: PUBLIC_CLI_SCHEMA.configResult, status: "saved" }));
+      else io.log(`${getProviderProfile(provider).displayName} model saved: ${command.value}`);
+      return 0;
+    }
+    const provider = command.provider ?? baseConfig.digest.defaultProvider;
+    const profile = getProviderProfile(provider);
     if (command.json) {
       io.log(JSON.stringify({
         error: {
           code: PUBLIC_CLI_ERROR_CODE.interactiveRequired,
-          message: "config set opencode-api-key requires an interactive prompt.",
+          message: "config set api-key requires an interactive prompt.",
         },
         schemaVersion: PUBLIC_CLI_SCHEMA.configResult,
         status: "failed",
@@ -602,32 +642,43 @@ async function runConfigCommand(
     }
 
     if (!io.prompt) {
-      io.error("config set opencode-api-key requires an interactive terminal.");
+      io.error("config set api-key requires an interactive terminal.");
       return 1;
     }
 
-    const apiKey = (await io.prompt("OpenCode API key: ")).trim();
+    const apiKey = (await io.prompt(`${profile.displayName} API key: `)).trim();
     if (!apiKey) {
-      io.error("OpenCode API key cannot be empty.");
+      io.error(`${profile.displayName} API key cannot be empty.`);
       return 1;
     }
 
-    await credentialStore.setApiKey("opencode", apiKey);
-    io.log("OpenCode API key stored in macOS Keychain.");
+    await credentialStore.setApiKey(provider, apiKey);
+    io.log(`${profile.displayName} API key stored in macOS Keychain.`);
     return 0;
   }
 
-  await credentialStore.deleteApiKey("opencode");
+  if (command.key === "model") {
+    const provider = command.provider ?? baseConfig.digest.defaultProvider;
+    const models = { ...baseConfig.digest.models };
+    delete models[provider];
+    await configStore.save({ ...baseConfig, digest: { ...baseConfig.digest, models } });
+    if (command.json) io.log(JSON.stringify({ model: null, provider, schemaVersion: PUBLIC_CLI_SCHEMA.configResult, status: "deleted" }));
+    else io.log(`${getProviderProfile(provider).displayName} model override removed.`);
+    return 0;
+  }
+  const provider = command.provider ?? baseConfig.digest.defaultProvider;
+  await credentialStore.deleteApiKey(provider);
   if (command.json) {
     io.log(JSON.stringify({
-      opencodeApiKey: {
+      credential: {
         configured: false,
+        provider,
       },
       schemaVersion: PUBLIC_CLI_SCHEMA.configResult,
       status: "deleted",
     }));
   } else {
-    io.log("OpenCode API key removed from macOS Keychain.");
+    io.log(`${getProviderProfile(provider).displayName} API key removed from macOS Keychain.`);
   }
   return 0;
 }
@@ -750,34 +801,33 @@ function writeExact(io: CliIO, text: string): void {
   io.log(text.endsWith("\n") ? text.slice(0, -1) : text);
 }
 
-async function promptForOpenCodeApiKey(
+async function promptForProviderApiKey(
   io: CliIO,
   credentialStore: CredentialStore,
+  provider: ResolvedDigestSelection["provider"]["effective"],
 ): Promise<
   | { apiKey: string; mode: "configured" }
   | { mode: "cancelled" }
   | { mode: "transcript-only" }
 > {
-  io.log("Digest generation needs an OpenCode API key.");
-  io.log("");
-  io.log("Get an OpenCode API key:");
-  io.log("https://opencode.ai/zen");
+  const profile = getProviderProfile(provider);
+  io.log(`Digest generation needs a ${profile.displayName} API key.`);
   io.log("");
 
   const shouldPaste = !isNegative(await io.prompt!("Paste API key now? [Y/n]: "));
 
   if (shouldPaste) {
-    const apiKey = (await io.prompt!("OpenCode API key: ")).trim();
+    const apiKey = (await io.prompt!(`${profile.displayName} API key: `)).trim();
 
     if (!apiKey) {
-      io.error("OpenCode API key cannot be empty.");
+      io.error(`${profile.displayName} API key cannot be empty.`);
       return { mode: "cancelled" };
     }
 
     const shouldSave = !isNegative(await io.prompt!("Save this key in macOS Keychain for future runs? [Y/n]: "));
     if (shouldSave) {
-      await credentialStore.setApiKey("opencode", apiKey);
-      io.log("OpenCode API key stored in macOS Keychain.");
+      await credentialStore.setApiKey(provider, apiKey);
+      io.log(`${profile.displayName} API key stored in macOS Keychain.`);
     }
 
     return {
@@ -829,6 +879,7 @@ function printIngestionJson(
 
   io.log(JSON.stringify({
     canonicalUrl,
+    generation: result.generation,
     paths: result.paths,
     schemaVersion: PUBLIC_CLI_SCHEMA.cliResult,
     status: result.status,

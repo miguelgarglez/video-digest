@@ -32,7 +32,7 @@ exit status `1`; consumers should not branch on the human-readable message.
 
 ### Invocation
 
-These parsing errors use `cli-result.v0`, except an invocation beginning with
+These parsing errors use `cli-result.v1`, except an invocation beginning with
 `setup`, which uses `setup-result.v0`.
 
 | Error code | Meaning |
@@ -51,7 +51,7 @@ All invocation errors exit `1`.
 
 | Error code | Schema | Meaning |
 | --- | --- | --- |
-| `runtime-not-ready` | `cli-result.v0` | Transcript work requires explicit `video-digest setup`. |
+| `runtime-not-ready` | `cli-result.v1` | Transcript work requires explicit `video-digest setup`. |
 | `consent-required` | `setup-result.v0` | JSON or non-interactive setup omitted `--yes`. |
 | `already-running` | `setup-result.v0` | Another live setup or recovery owns the setup lock. |
 | `recovery-required` | `setup-result.v0` | Setup cannot safely recover or prove ownership automatically. |
@@ -67,16 +67,22 @@ These errors exit `1`. Normal commands never run setup implicitly.
 | `missing-api-key` | 1 | Digest generation has no OpenCode credential. Transcript-only operation remains available. |
 | `provider-failed` | 1 | The Transcript or Digest provider failed. |
 | `invalid-provider-response` | 1 | A provider response could not be validated. |
+| `authentication-failed` | 1 | The selected provider rejected its credential. |
+| `context-limit-exceeded` | 1 | The request exceeds the selected model context. |
+| `invalid-model` | 1 | The configured model is unavailable or invalid. |
+| `provider-unavailable` | 1 | The selected provider is temporarily unavailable. |
+| `quota-exceeded` | 1 | The selected provider account has exhausted quota. |
+| `rate-limited` | 1 | The selected provider temporarily rate-limited the request. |
 | `unexpected-error` | 1 | An unclassified operation failed. |
 
-The `unusable-transcript` value is a `cli-result.v0` result `status`, not an
+The `unusable-transcript` value is a `cli-result.v1` result `status`, not an
 `error.code`; it exits `2` after writing failure metadata.
 
 ### Configuration and Library
 
 | Error code | Schema | Meaning |
 | --- | --- | --- |
-| `interactive-required` | `config-result.v0` | The requested credential operation requires a human prompt. |
+| `interactive-required` | `config-result.v1` | The requested credential operation requires a human prompt. |
 | `library-entry-not-found` | `open-result.v0` | The requested Video has no Library Entry. |
 | `library-entry-not-openable` | `open-result.v0` | The entry has no readable Digest or Transcript Markdown. |
 

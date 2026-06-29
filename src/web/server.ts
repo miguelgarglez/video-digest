@@ -1,6 +1,7 @@
 import { IngestionRepository } from "../storage/ingestion-repository";
-import { ResponsesSummarizer } from "../summarizer/responses-summarizer";
-import { getProviderProfile } from "../summarizer/providers";
+import { createProviderSummarizer } from "../summarizer/provider-summarizer";
+import { resolveDigestSelection } from "../cli/digest-config";
+import { resolveProviderApiKey } from "../cli/credentials";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import { handleRequest } from "./handler";
 import { recoverInterruptedIngestions } from "./startup";
@@ -12,12 +13,14 @@ const dbPath = process.env.VIDEO_DIGEST_DB_PATH ?? "data/ingestions.sqlite";
 
 const repository = new IngestionRepository({ dbPath });
 const recoveredCount = recoverInterruptedIngestions(repository);
-const profile = getProviderProfile("opencode");
-const summarizer = new ResponsesSummarizer({
-  apiKey: process.env.OPENCODE_API_KEY ?? "",
-  model: profile.defaultModel,
-  profile,
+const selection = resolveDigestSelection({ config: null, env: process.env });
+const credential = await resolveProviderApiKey({
+  env: process.env,
+  provider: selection.provider.effective,
+  store: { deleteApiKey: async () => {}, getApiKey: async () => null, setApiKey: async () => {} },
 });
+if (!credential.value) throw new Error("The selected Digest Provider credential is not configured.");
+const summarizer = createProviderSummarizer(selection, credential.value);
 const transcriptSource = new PythonYoutubeTranscriptSource();
 
 const server = Bun.serve({
