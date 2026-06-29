@@ -12,6 +12,7 @@ import {
 } from "../video/video-metadata-source";
 import type { IngestionProgressEvent } from "./ingest-video";
 import { renderTranscriptText } from "../output/transcript-renderer";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 export type FetchTranscriptOnlyInput = {
   metadataSource?: VideoMetadataSource;
@@ -20,6 +21,7 @@ export type FetchTranscriptOnlyInput = {
   signal?: AbortSignal;
   transcriptSource: TranscriptSource;
   video: YouTubeVideo;
+  videoDigestVersion?: string;
 };
 
 export type FetchTranscriptOnlyResult = {
@@ -50,6 +52,7 @@ export async function fetchTranscriptOnly(
     transcript,
     transcriptQuality,
     video: input.video,
+    videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
   });
 
   emitProgress(input, "completed");

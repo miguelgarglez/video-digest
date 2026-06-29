@@ -66,6 +66,7 @@ const expectedPackedFiles = [
   "package/src/summarizer/providers.ts",
   "package/src/summarizer/responses-summarizer.ts",
   "package/src/summarizer/provider-summarizer.ts",
+  "package/src/version.ts",
   "package/src/summarizer/summarizer.ts",
   "package/src/transcript/python-youtube-transcript-source.ts",
   "package/src/transcript/transcript-quality.ts",

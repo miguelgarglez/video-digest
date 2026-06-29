@@ -468,6 +468,7 @@ describe("runCli", () => {
         ingestVideo: async ({ emailPreview, video }) => ({
           cleanText: "Hello from the transcript.\n",
           exitCode: 0,
+          generation: testGeneration(),
           paths: {
             digestPath: "outputs/digests/1ZgUcrR0K7I.md",
             emailPreviewPath: emailPreview ? "outputs/emails/1ZgUcrR0K7I.md" : null,
@@ -532,7 +533,7 @@ describe("runCli", () => {
         summarizerFactory: (apiKey) => ({
           generateDigest: async () => {
             seenApiKeys.push(apiKey ?? "");
-            return digestDraftFixture();
+            return { draft: digestDraftFixture(), generation: testGeneration() };
           },
         }),
       },
@@ -1383,6 +1384,7 @@ describe("runCli", () => {
           return {
             cleanText: "Hello from the transcript.\n",
             exitCode: 0,
+            generation: testGeneration(),
             paths: {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
               emailPreviewPath: null,
@@ -1437,6 +1439,7 @@ describe("runCli", () => {
           return {
             cleanText: "Hello from the transcript.\n",
             exitCode: 0,
+            generation: testGeneration(),
             paths: {
               digestPath: "outputs/digests/1ZgUcrR0K7I.md",
               emailPreviewPath: null,
@@ -1596,6 +1599,7 @@ function completedIngestion(): IngestVideoResult {
   return {
     cleanText: "Hello from the transcript.\n",
     exitCode: 0,
+    generation: testGeneration(),
     paths: {
       digestPath: "outputs/digests/1ZgUcrR0K7I.md",
       emailPreviewPath: null,
@@ -1615,6 +1619,16 @@ function completedIngestion(): IngestVideoResult {
       totalTextLength: 3600,
       warnings: [],
     },
+  };
+}
+
+function testGeneration() {
+  return {
+    provider: "opencode" as const,
+    requestId: null,
+    requestedModel: "gpt-5.4-mini",
+    responseModel: null,
+    usage: null,
   };
 }
 
@@ -1716,7 +1730,8 @@ async function createOutputDirWithDigest(videoId: string): Promise<string> {
   await writeFile(
     metadataPath,
     JSON.stringify({
-      metadataSchemaVersion: "metadata.v0",
+      generation: testGeneration(),
+      metadataSchemaVersion: "metadata.v1",
       processedAt: "2026-06-18T12:00:00.000Z",
       digest: {
         digestTitle: "Generated Digest Title",
@@ -1728,6 +1743,7 @@ async function createOutputDirWithDigest(videoId: string): Promise<string> {
         videoId,
         videoTitle: "Generated Video Title",
       },
+      videoDigestVersion: "0.2.0",
     }),
     { flag: "w" },
   );
@@ -1744,7 +1760,9 @@ async function createOutputDirWithTranscript(videoId: string): Promise<string> {
   await writeFile(join(outputDir, "transcripts", `${videoId}.json`), "{}\n");
   await writeFile(join(outputDir, "transcripts", `${videoId}.txt`), "Transcript\n");
   await writeFile(join(outputDir, "metadata", `${videoId}.json`), JSON.stringify({
-    metadataSchemaVersion: "metadata.v0",
+    digest: null,
+    generation: null,
+    metadataSchemaVersion: "metadata.v1",
     mode: "transcript-only",
     processedAt: "2026-06-18T12:00:00.000Z",
     transcriptQuality: {},
@@ -1755,6 +1773,7 @@ async function createOutputDirWithTranscript(videoId: string): Promise<string> {
       videoId,
       videoTitle: null,
     },
+    videoDigestVersion: "0.2.0",
   }));
   return outputDir;
 }

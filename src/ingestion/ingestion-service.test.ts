@@ -169,7 +169,9 @@ async function completedResult(outputDir: string): Promise<IngestVideoResult> {
     metadataPath,
     `${JSON.stringify({
       digest: { digestTitle: "Useful Digest" },
-      metadataSchemaVersion: "metadata.v0",
+      generation: testGeneration(),
+      metadataSchemaVersion: "metadata.v1",
+      videoDigestVersion: "0.2.0",
     })}\n`,
     { flag: "w" },
   );
@@ -177,6 +179,7 @@ async function completedResult(outputDir: string): Promise<IngestVideoResult> {
   return {
     cleanText: "Hello from the transcript.\n",
     exitCode: 0,
+    generation: testGeneration(),
     paths: {
       digestPath: join(outputDir, "digests", "1ZgUcrR0K7I.md"),
       emailPreviewPath: null,
@@ -211,16 +214,29 @@ function fakeSummarizer(): Summarizer {
   return {
     async generateDigest() {
       return {
-        actionableIdeas: ["Apply it."],
-        conceptsToInvestigate: ["Concept"],
-        connections: ["Connection"],
-        digestTitle: "Useful Digest",
-        keyIdeas: ["Key idea"],
-        relevantTimestamps: [{ note: "Important point", timestamp: "0:00" }],
-        tldr: ["Short summary"],
-        verdict: "watch_fragments",
+        draft: {
+          actionableIdeas: ["Apply it."],
+          conceptsToInvestigate: ["Concept"],
+          connections: ["Connection"],
+          digestTitle: "Useful Digest",
+          keyIdeas: ["Key idea"],
+          relevantTimestamps: [{ note: "Important point", timestamp: "0:00" }],
+          tldr: ["Short summary"],
+          verdict: "watch_fragments" as const,
+        },
+        generation: testGeneration(),
       };
     },
+  };
+}
+
+function testGeneration() {
+  return {
+    provider: "opencode" as const,
+    requestId: null,
+    requestedModel: "gpt-5.4-mini",
+    responseModel: null,
+    usage: null,
   };
 }
 

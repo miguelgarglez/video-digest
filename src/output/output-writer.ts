@@ -6,19 +6,23 @@ import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
 import type { VideoMetadata } from "../video/video-metadata-source";
+import type { GenerationProvenance } from "../summarizer/summarizer";
 import { renderTranscriptMarkdown, renderTranscriptText } from "./transcript-renderer";
 import { withProcessLock } from "../storage/process-lock";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 const TRANSACTION_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type IngestionOutputInput = {
   digest: Digest;
   emailPreview: boolean;
+  generation?: GenerationProvenance;
   metadata?: VideoMetadata;
   outputDir: string;
   transcript: Transcript;
   transcriptQuality: TranscriptQuality;
   video: YouTubeVideo;
+  videoDigestVersion?: string;
 };
 
 export type IngestionOutputPaths = {
@@ -37,6 +41,7 @@ export type TranscriptOnlyOutputInput = {
   transcript: Transcript;
   transcriptQuality: TranscriptQuality;
   video: YouTubeVideo;
+  videoDigestVersion?: string;
 };
 
 export type TranscriptOnlyOutputPaths = {
@@ -96,6 +101,7 @@ export type FailedIngestionMetadataInput = {
   metadata?: VideoMetadata;
   transcriptQuality: TranscriptQuality;
   video: YouTubeVideo;
+  videoDigestVersion?: string;
 };
 
 export async function writeIngestionOutputs(
@@ -215,11 +221,14 @@ async function writeFailedIngestionMetadataLocked(
       {
         contents: `${JSON.stringify(
           {
+            digest: null,
             error: input.error,
-            metadataSchemaVersion: "metadata.v0",
+            generation: null,
+            metadataSchemaVersion: "metadata.v1",
             processedAt: new Date().toISOString(),
             transcriptQuality: input.transcriptQuality,
             video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
+            videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
           },
           null,
           2,
@@ -242,11 +251,14 @@ async function writeFailedIngestionMetadataLocked(
 
 function buildTranscriptOnlyMetadata(input: TranscriptOnlyOutputInput) {
   return {
-    metadataSchemaVersion: "metadata.v0",
+    digest: null,
+    generation: null,
+    metadataSchemaVersion: "metadata.v1",
     mode: "transcript-only",
     processedAt: new Date().toISOString(),
     transcriptQuality: input.transcriptQuality,
     video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
+    videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
   };
 }
 
@@ -750,10 +762,12 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 function buildMetadata(input: IngestionOutputInput) {
   return {
     digest: input.digest,
-    metadataSchemaVersion: "metadata.v0",
+    generation: input.generation ?? null,
+    metadataSchemaVersion: "metadata.v1",
     processedAt: new Date().toISOString(),
     transcriptQuality: input.transcriptQuality,
     video: buildVideoMetadata(input.video, input.transcriptQuality, input.metadata),
+    videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
   };
 }
 

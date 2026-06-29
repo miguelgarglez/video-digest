@@ -22,6 +22,7 @@ describe("writeIngestionOutputs", () => {
     const result = await writeIngestionOutputs({
       digest,
       emailPreview: true,
+      generation,
       outputDir,
       transcript,
       transcriptQuality: warningQuality,
@@ -66,6 +67,8 @@ describe("writeIngestionOutputs", () => {
       digest: {
         schemaVersion: "digest.v0",
       },
+      generation,
+      metadataSchemaVersion: "metadata.v1",
       transcriptQuality: {
         status: "warning",
         warnings: ["low-segment-count"],
@@ -76,6 +79,7 @@ describe("writeIngestionOutputs", () => {
         videoId: "1ZgUcrR0K7I",
         videoTitle: null,
       },
+      videoDigestVersion: "0.2.0",
     });
     expect(JSON.stringify(metadataJson)).not.toContain("test-secret");
 
@@ -785,7 +789,9 @@ describe("writeTranscriptOnlyOutputs", () => {
 
     const metadataJson = JSON.parse(await readFile(result.metadataPath, "utf8"));
     expect(metadataJson).toMatchObject({
-      metadataSchemaVersion: "metadata.v0",
+      digest: null,
+      generation: null,
+      metadataSchemaVersion: "metadata.v1",
       mode: "transcript-only",
       transcriptQuality: {
         status: "usable",
@@ -793,6 +799,7 @@ describe("writeTranscriptOnlyOutputs", () => {
       video: {
         videoId: "1ZgUcrR0K7I",
       },
+      videoDigestVersion: "0.2.0",
     });
     await expect(readFile(join(outputDir, "digests", "1ZgUcrR0K7I.md"), "utf8")).rejects.toThrow();
   });
@@ -901,6 +908,14 @@ const usableQuality: TranscriptQuality = {
   ...warningQuality,
   status: "usable",
   warnings: [],
+};
+
+const generation = {
+  provider: "anthropic" as const,
+  requestId: "msg_123",
+  requestedModel: "claude-sonnet-4-6",
+  responseModel: "claude-sonnet-4-6",
+  usage: { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
 };
 
 const digest = createDigest({

@@ -276,7 +276,9 @@ function metadata(
   input: { channel?: string | null; processedAt: string; title?: string | null },
 ) {
   return {
-    metadataSchemaVersion: "metadata.v0",
+    digest: null,
+    generation: null,
+    metadataSchemaVersion: "metadata.v1",
     mode: "transcript-only",
     processedAt: input.processedAt,
     transcriptQuality: {},
@@ -287,6 +289,7 @@ function metadata(
       videoId,
       videoTitle: input.title ?? null,
     },
+    videoDigestVersion: "0.2.0",
   };
 }
 

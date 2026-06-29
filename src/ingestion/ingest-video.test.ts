@@ -23,7 +23,7 @@ describe("ingestVideo", () => {
       outputDir,
       signal: abort.signal,
       summarizer: {
-        async generateDigest() { summarizerCalls += 1; return fakeDigestDraft(); },
+        async generateDigest() { summarizerCalls += 1; return fakeSummarizationResult(); },
       },
       transcriptSource: fakeTranscriptSource(usableTranscript()),
       video,
@@ -49,6 +49,10 @@ describe("ingestVideo", () => {
     expect(result.exitCode).toBe(0);
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
+      expect(result.generation).toMatchObject({
+        provider: "anthropic",
+        requestedModel: "claude-sonnet-4-6",
+      });
       expect(result.paths.emailPreviewPath).toBe(join(outputDir, "emails", "1ZgUcrR0K7I.md"));
       expect(await readFile(result.paths.digestPath, "utf8")).toContain("# Useful Digest");
       expect(result.cleanText).toBe(await readFile(result.paths.transcriptTextPath, "utf8"));
@@ -90,7 +94,7 @@ describe("ingestVideo", () => {
       summarizer: {
         async generateDigest() {
           summarizerCalls += 1;
-          return fakeDigestDraft();
+          return fakeSummarizationResult();
         },
       },
       transcriptSource: fakeTranscriptSource({
@@ -108,12 +112,16 @@ describe("ingestVideo", () => {
     if (result.status === "unusable-transcript") {
       const metadata = JSON.parse(await readFile(result.metadataPath, "utf8"));
       expect(metadata).toMatchObject({
+        digest: null,
         error: {
           code: "unusable-transcript",
         },
         transcriptQuality: {
           status: "unusable",
         },
+        generation: null,
+        metadataSchemaVersion: "metadata.v1",
+        videoDigestVersion: "0.2.0",
       });
     }
   });
@@ -140,7 +148,10 @@ describe("ingestVideo", () => {
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
       expect(JSON.parse(await readFile(result.paths.metadataPath, "utf8"))).toMatchObject({
+        generation: fakeSummarizationResult().generation,
+        metadataSchemaVersion: "metadata.v1",
         video: { channel: "A channel", videoTitle: "A title" },
+        videoDigestVersion: "0.2.0",
       });
       expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("# A title");
     }
@@ -212,7 +223,20 @@ function fakeTranscriptSource(transcript: Transcript): TranscriptSource {
 function fakeSummarizer(): Summarizer {
   return {
     async generateDigest() {
-      return fakeDigestDraft();
+      return fakeSummarizationResult();
+    },
+  };
+}
+
+function fakeSummarizationResult() {
+  return {
+    draft: fakeDigestDraft(),
+    generation: {
+      provider: "anthropic" as const,
+      requestId: "msg_123",
+      requestedModel: "claude-sonnet-4-6",
+      responseModel: "claude-sonnet-4-6",
+      usage: { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
     },
   };
 }

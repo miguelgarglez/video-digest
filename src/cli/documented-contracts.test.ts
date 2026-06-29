@@ -297,6 +297,13 @@ function completedIngestion(): IngestVideoResult {
   return {
     cleanText: "Useful content.\n",
     exitCode: 0,
+    generation: {
+      provider: "opencode",
+      requestId: null,
+      requestedModel: "gpt-5.4-mini",
+      responseModel: null,
+      usage: null,
+    },
     paths: {
       digestPath: `/artifact-library/digests/${VIDEO_ID}.md`,
       emailPreviewPath: null,
@@ -392,7 +399,14 @@ async function createLibraryFixture(): Promise<string> {
   await writeFile(join(root, "transcripts", `${VIDEO_ID}.md`), "# Transcript\n");
   await writeFile(join(root, "transcripts", `${VIDEO_ID}.txt`), "Example text.\n");
   await writeFile(join(root, "metadata", `${VIDEO_ID}.json`), JSON.stringify({
-    metadataSchemaVersion: "metadata.v0",
+    generation: {
+      provider: "opencode",
+      requestId: null,
+      requestedModel: "gpt-5.4-mini",
+      responseModel: null,
+      usage: null,
+    },
+    metadataSchemaVersion: "metadata.v1",
     mode: "ingest",
     processedAt: "2026-06-18T12:00:00.000Z",
     video: {
@@ -402,6 +416,7 @@ async function createLibraryFixture(): Promise<string> {
       videoId: VIDEO_ID,
       videoTitle: "Example Video",
     },
+    videoDigestVersion: "0.2.0",
   }));
   return root;
 }

@@ -13,7 +13,7 @@ export type SummarizerInput = {
 };
 
 export type Summarizer = {
-  generateDigest(input: SummarizerInput): Promise<DigestDraft | SummarizationResult>;
+  generateDigest(input: SummarizerInput): Promise<SummarizationResult>;
 };
 
 export type GenerationUsage = Readonly<{
