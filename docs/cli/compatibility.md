@@ -46,6 +46,6 @@ Changes to their meaning are breaking even if a JSON payload is unchanged.
 
 There is no telemetry and no automatic update check. Network requests happen only
 for an explicit Video operation (public YouTube metadata or Transcript retrieval,
-and OpenCode Digest generation) or consented runtime preparation. Package
+and selected-provider Digest generation) or consented runtime preparation. Package
 installation itself must not prepare Python, run a postinstall setup, or modify
 agent configuration.

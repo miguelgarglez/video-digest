@@ -33,6 +33,7 @@ const expectedPackedFiles = [
   "package/docs/cli/compatibility.md",
   "package/docs/cli/exit-codes.md",
   "package/docs/cli/json-contracts.md",
+  "package/docs/cli/providers.md",
   "package/.agents/skills/video-digest/SKILL.md",
   "package/.agents/skills/video-digest/agents/openai.yaml",
   "package/.agents/skills/video-digest/references/contracts.md",

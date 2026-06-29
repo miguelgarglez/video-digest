@@ -32,7 +32,7 @@ A concise account of the video's argument and its practical implications.
 ```
 
 Transcript-only processing creates the metadata and Transcript files without calling
-OpenCode. Reprocessing a video atomically replaces its current Library Entry; Video
+a model provider. Reprocessing a video atomically replaces its current Library Entry; Video
 Digest does not keep processing history.
 
 ## Status and support
@@ -127,14 +127,16 @@ video-digest setup --yes
 Setup uses the shipped `uv.lock` and replaces the managed runtime only after a
 successful build. Normal commands never install or update Python dependencies.
 
-Digest generation also needs an OpenCode API key. Store it securely with an
+Digest generation supports OpenCode Zen, OpenAI, Anthropic, Google Gemini, and xAI.
+Choose your provider and store its key securely with an
 interactive prompt:
 
 ```sh
-video-digest config set opencode-api-key
+video-digest config set provider opencode
+video-digest config set api-key --provider opencode
 ```
 
-The key is stored in macOS Keychain under the `video-digest` service. It is not written
+The key is isolated by provider in macOS Keychain under the `video-digest` service. It is not written
 to the application configuration or printed by the CLI. You can then create a first
 Digest:
 
@@ -157,7 +159,7 @@ video-digest ingest '<youtube-url>'
 # Also create a Markdown email preview.
 video-digest ingest '<youtube-url>' --email-preview
 
-# Retrieve the Transcript without requiring OpenCode.
+# Retrieve the Transcript without requiring a model provider.
 video-digest transcript '<youtube-url>'
 
 # Inspect and prepare local readiness.
@@ -175,6 +177,9 @@ video-digest open 1ZgUcrR0K7I
 ```
 
 Use `video-digest <command> --help` for command-specific syntax.
+
+See [Digest Providers and BYOK](docs/cli/providers.md) for provider/model precedence,
+environment variables, conformance levels, provenance, and the 1.0 migration.
 
 Transcript presentation flags always write the Library Entry first:
 
@@ -264,20 +269,19 @@ Video Digest includes no telemetry and performs no automatic update checks. Netw
 access happens only for an operation you request:
 
 - YouTube oEmbed metadata and Transcript retrieval while processing a video;
-- Digest generation through OpenCode; or
+- Digest generation through the explicitly selected supported provider; or
 - consented runtime preparation through `uv`.
 
 Public metadata lookup is best-effort and needs no YouTube API key. A failed lookup
-does not block processing. OpenCode credentials resolve from `OPENCODE_API_KEY` when
-explicitly set in the environment, then from macOS Keychain. Credential values are
+does not block processing. Provider credentials resolve from their standard environment
+variable when explicitly set, then from an isolated macOS Keychain entry. Credential values are
 intentionally excluded from configuration files and the documented JSON contracts;
-`config get` reports only whether and where a credential is configured. OpenCode HTTP
-failures expose the HTTP status while redacting the remote response body.
+`config get` reports only whether and where a credential is configured. Provider HTTP
+failures are classified without reflecting the remote response body.
 
-Advanced environments can override the OpenCode endpoint with `OPENCODE_BASE_URL` and
-the model with `OPENCODE_MODEL`. `VIDEO_DIGEST_OUTPUT_DIR` temporarily selects the
-Artifact Library. These variables and the optional `OPENCODE_API_KEY` are the supported
-CLI environment settings shown in [`.env.example`](.env.example).
+Advanced environments can select a provider and model with `VIDEO_DIGEST_PROVIDER`
+and `VIDEO_DIGEST_MODEL`. `VIDEO_DIGEST_OUTPUT_DIR` temporarily selects the Artifact
+Library. Standard provider key variables are shown in [`.env.example`](.env.example).
 
 `--json` is non-interactive: it never prompts, opens an application, copies to the
 clipboard, animates, or performs setup.
@@ -304,7 +308,7 @@ Common remediations:
 - **`uv` is missing:** install `uv`, ensure it is available on `PATH`, then rerun
   `doctor`. Video Digest does not install prerequisites silently.
 - **Digest credential is missing:** run
-  `video-digest config set opencode-api-key`, or use `transcript` when no Digest is
+  `video-digest config set api-key --provider <provider>`, or use `transcript` when no Digest is
   needed.
 - **Artifact Library is not writable:** choose another absolute path with
   `video-digest config set output-dir <path>` or use `--output-dir` temporarily.

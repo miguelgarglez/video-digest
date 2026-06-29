@@ -64,7 +64,7 @@ These errors exit `1`. Normal commands never run setup implicitly.
 | Error code | Exit status | Meaning |
 | --- | --- | --- |
 | `transcript-unavailable` | 2 | The Transcript provider reports that no Transcript is available. |
-| `missing-api-key` | 1 | Digest generation has no OpenCode credential. Transcript-only operation remains available. |
+| `missing-api-key` | 1 | Digest generation has no credential for the selected provider. Transcript-only operation remains available. |
 | `provider-failed` | 1 | The Transcript or Digest provider failed. |
 | `invalid-provider-response` | 1 | A provider response could not be validated. |
 | `authentication-failed` | 1 | The selected provider rejected its credential. |

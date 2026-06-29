@@ -167,7 +167,7 @@ preference or `null`; `effective` reflects environment/config/default precedence
 `source` is one of `env`, `config`, or `default`.
 `--output-dir` is not accepted by `config`; it is a one-command override only for
 `ingest`, `transcript`, `list`, and `open`.
-`opencodeApiKey.source` is one of `env`, `keychain`, or `missing`; credential values
+`credential.source` is one of `env`, `keychain`, or `missing`; credential values
 are never returned.
 
 <!-- contract:config-get-success -->
@@ -208,7 +208,7 @@ are never returned.
 }
 ```
 
-`config unset digest-provider` returns `status: "deleted"` and never returns the
+`config unset api-key --provider opencode` returns `status: "deleted"` and never returns the
 deleted credential:
 
 <!-- contract:config-unset-success -->

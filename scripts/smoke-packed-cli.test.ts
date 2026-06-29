@@ -58,9 +58,9 @@ const doctorReport = {
     },
     {
       capability: "digest",
-      id: "opencode-api-key",
-      message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
-      remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
+      id: "digest-provider",
+      message: "OpenCode Zen (gpt-5.4-mini) credential is missing; digest generation is unavailable",
+      remediation: "Set OPENCODE_API_KEY or save the OpenCode Zen API key. Transcript mode works without it.",
       status: "warn",
     },
     {
@@ -72,16 +72,16 @@ const doctorReport = {
     },
   ],
   ok: false,
-  schemaVersion: "doctor-report.v0",
+  schemaVersion: "doctor-report.v1",
 } as const;
 
 const expectedHelp = [
   "Video Digest",
   "",
   "Usage:",
-  "  video-digest ingest <youtube-url> [--email-preview] [--json] [--output-dir <path>]",
+  "  video-digest ingest <youtube-url> [--provider <provider>] [--model <model>] [--email-preview] [--json] [--output-dir <path>]",
   "  video-digest transcript <youtube-url> [--json] [--output-dir <path>]",
-  "  video-digest config <get|set|unset> [opencode-api-key] [--json]",
+  "  video-digest config <get|set|unset> <provider|model|api-key|output-dir> [--provider <provider>] [--json]",
   "  video-digest config set output-dir <path> [--json]",
   "  video-digest doctor [--json]",
   "  video-digest setup [--yes] [--json]",
@@ -101,21 +101,23 @@ const expectedHelp = [
   "  --json           Write one machine-readable JSON object.",
   "  --yes            Confirm setup without an interactive prompt.",
   "  --output-dir     Override the Artifact Library for this command.",
+  "  --provider       Select opencode, openai, anthropic, gemini, or xai.",
+  "  --model          Override the selected provider model for this ingest.",
   "  --help, -h       Show this help message.",
   "",
   "Interactive mode:",
   "  Run without arguments in a terminal to open the guided interface.",
   "",
   "Environment:",
-  "  OPENCODE_API_KEY      Required for digest generation with ingest.",
-  "  OPENCODE_MODEL        Defaults to gpt-5.4-nano via .env.example.",
+  "  OPENCODE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, XAI_API_KEY",
+  "  VIDEO_DIGEST_PROVIDER and VIDEO_DIGEST_MODEL select the effective Digest model.",
   "  VIDEO_DIGEST_OUTPUT_DIR  Overrides the configured Artifact Library.",
   "",
   "Transcript mode:",
-  "  video-digest transcript <youtube-url> does not require OPENCODE_API_KEY.",
+  "  video-digest transcript <youtube-url> does not require a model provider API key.",
   "",
   "Configuration:",
-  "  video-digest config set opencode-api-key stores the key in macOS Keychain.",
+  "  video-digest config set api-key --provider <provider> stores an isolated key in macOS Keychain.",
   "",
 ].join("\n");
 
@@ -163,7 +165,7 @@ async function materializeFakeDoctorShimMarkers(invocation: CommandInvocation): 
       argv: [
         "find-generic-password",
         "-a",
-        "opencode-api-key",
+        "digest-provider",
         "-s",
         "video-digest",
         "-w",
@@ -220,7 +222,7 @@ describe("doctor smoke contract", () => {
     expect(() => validateDoctorReport({ ...doctorReport, extra: true })).toThrow(
       "doctor returned an invalid JSON contract",
     );
-    expect(() => validateDoctorReport({ ...doctorReport, schemaVersion: "doctor-report.v1" })).toThrow(
+    expect(() => validateDoctorReport({ ...doctorReport, schemaVersion: "doctor-report.v0" })).toThrow(
       "doctor returned an invalid JSON contract",
     );
     expect(() => validateDoctorReport({ ...doctorReport, checks: doctorReport.checks.slice(1) })).toThrow(
