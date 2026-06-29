@@ -109,6 +109,7 @@ const validPackedFiles = [
   "package/src/storage/ingestion-repository.ts",
   "package/src/storage/process-lock.ts",
   "package/src/summarizer/digest-request.ts",
+  "package/src/summarizer/chat-completions-summarizer.ts",
   "package/src/summarizer/http.ts",
   "package/src/summarizer/providers.ts",
   "package/src/summarizer/responses-summarizer.ts",
