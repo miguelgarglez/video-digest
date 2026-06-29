@@ -85,13 +85,14 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   }
 
   emitProgress(input, "generating-digest");
-  const draft = await input.summarizer.generateDigest({
+  const generated = await input.summarizer.generateDigest({
     signal: input.signal,
     transcript,
     transcriptQuality,
     video: input.video,
   });
   input.signal?.throwIfAborted();
+  const draft = "draft" in generated ? generated.draft : generated;
   const digest = createDigest(draft);
 
   emitProgress(input, "writing-outputs");

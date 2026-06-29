@@ -383,7 +383,9 @@ function formatCliError(
 
   if (error instanceof SummarizerError) {
     return {
-      code: error.code,
+      code: error.code === "invalid-provider-response"
+        ? PUBLIC_CLI_ERROR_CODE.invalidProviderResponse
+        : PUBLIC_CLI_ERROR_CODE.providerFailed,
       exitCode: 1,
       message: `Digest provider failed: ${error.message}`,
     };
