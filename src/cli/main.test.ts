@@ -1769,8 +1769,8 @@ function fakeCredentialStore(options: {
   storedKey?: string | null;
 }): CredentialStore {
   return {
-    deleteOpenCodeApiKey: options.deleteKey ?? (async () => {}),
-    getOpenCodeApiKey: async () => options.storedKey ?? null,
-    setOpenCodeApiKey: options.setKey ?? (async () => {}),
+    deleteApiKey: options.deleteKey ?? (async () => {}),
+    getApiKey: async () => options.storedKey ?? null,
+    setApiKey: async (_provider, value) => options.setKey?.(value),
   };
 }

@@ -1,7 +1,9 @@
+import { getProviderProfile, type DigestProviderId } from "../summarizer/providers";
+
 export type CredentialStore = {
-  deleteOpenCodeApiKey(): Promise<void>;
-  getOpenCodeApiKey(): Promise<string | null>;
-  setOpenCodeApiKey(value: string): Promise<void>;
+  deleteApiKey(provider: DigestProviderId): Promise<void>;
+  getApiKey(provider: DigestProviderId): Promise<string | null>;
+  setApiKey(provider: DigestProviderId, value: string): Promise<void>;
 };
 
 export type CredentialSource =
@@ -22,29 +24,25 @@ export type SecurityCommandResult = {
 
 export type SecurityCommandRunner = (args: string[]) => Promise<SecurityCommandResult>;
 
-const KEYCHAIN_ACCOUNT = "opencode-api-key";
 const KEYCHAIN_SERVICE = "video-digest";
 
 export class MacOSKeychainCredentialStore implements CredentialStore {
-  private readonly account: string;
   private readonly runSecurity: SecurityCommandRunner;
   private readonly service: string;
 
   constructor(options: {
-    account?: string;
     runSecurity?: SecurityCommandRunner;
     service?: string;
   } = {}) {
-    this.account = options.account ?? KEYCHAIN_ACCOUNT;
     this.runSecurity = options.runSecurity ?? runSecurityCommand;
     this.service = options.service ?? KEYCHAIN_SERVICE;
   }
 
-  async getOpenCodeApiKey(): Promise<string | null> {
+  async getApiKey(provider: DigestProviderId): Promise<string | null> {
     const result = await this.runSecurity([
       "find-generic-password",
       "-a",
-      this.account,
+      accountFor(provider),
       "-s",
       this.service,
       "-w",
@@ -58,11 +56,11 @@ export class MacOSKeychainCredentialStore implements CredentialStore {
     return value.length > 0 ? value : null;
   }
 
-  async setOpenCodeApiKey(value: string): Promise<void> {
+  async setApiKey(provider: DigestProviderId, value: string): Promise<void> {
     const result = await this.runSecurity([
       "add-generic-password",
       "-a",
-      this.account,
+      accountFor(provider),
       "-s",
       this.service,
       "-w",
@@ -71,51 +69,52 @@ export class MacOSKeychainCredentialStore implements CredentialStore {
     ]);
 
     if (result.exitCode !== 0) {
-      throw new Error(result.stderr.trim() || "Could not store OpenCode API key in Keychain");
+      throw new Error("Could not store provider API key in Keychain");
     }
   }
 
-  async deleteOpenCodeApiKey(): Promise<void> {
+  async deleteApiKey(provider: DigestProviderId): Promise<void> {
     const result = await this.runSecurity([
       "delete-generic-password",
       "-a",
-      this.account,
+      accountFor(provider),
       "-s",
       this.service,
     ]);
 
     if (result.exitCode !== 0 && !result.stderr.includes("could not be found")) {
-      throw new Error(result.stderr.trim() || "Could not delete OpenCode API key from Keychain");
+      throw new Error("Could not delete provider API key from Keychain");
     }
   }
 }
 
+export async function resolveProviderApiKey(input: {
+  env: Record<string, string | undefined>;
+  provider: DigestProviderId;
+  store: CredentialStore;
+}): Promise<CredentialSource> {
+  const envValue = input.env[getProviderProfile(input.provider).credentialEnv]?.trim();
+
+  if (envValue) {
+    return { source: "env", value: envValue };
+  }
+
+  const storedValue = await input.store.getApiKey(input.provider);
+  return storedValue
+    ? { source: "keychain", value: storedValue }
+    : { source: "missing", value: null };
+}
+
+/** @deprecated Removed with the provider-neutral CLI contract in 1.0. */
 export async function resolveOpenCodeApiKey(input: {
   env: Record<string, string | undefined>;
   store: CredentialStore;
 }): Promise<CredentialSource> {
-  const envValue = input.env.OPENCODE_API_KEY?.trim();
+  return resolveProviderApiKey({ ...input, provider: "opencode" });
+}
 
-  if (envValue) {
-    return {
-      source: "env",
-      value: envValue,
-    };
-  }
-
-  const storedValue = await input.store.getOpenCodeApiKey();
-
-  if (storedValue) {
-    return {
-      source: "keychain",
-      value: storedValue,
-    };
-  }
-
-  return {
-    source: "missing",
-    value: null,
-  };
+function accountFor(provider: DigestProviderId): string {
+  return `provider:${provider}:api-key`;
 }
 
 async function runSecurityCommand(args: string[]): Promise<SecurityCommandResult> {

@@ -190,7 +190,7 @@ export async function createDefaultTuiSession(
       },
     },
     credential: {
-      saveOpenCodeApiKey: (value) => credentialStore.setOpenCodeApiKey(value),
+      saveOpenCodeApiKey: (value) => credentialStore.setApiKey("opencode", value),
     },
     doctor: {
       run: () => dependencies.doctor?.(getOutputDir()) ?? defaultDoctor(credentialStore, getOutputDir()),

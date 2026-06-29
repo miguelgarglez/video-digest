@@ -602,12 +602,12 @@ async function runConfigCommand(
       return 1;
     }
 
-    await credentialStore.setOpenCodeApiKey(apiKey);
+    await credentialStore.setApiKey("opencode", apiKey);
     io.log("OpenCode API key stored in macOS Keychain.");
     return 0;
   }
 
-  await credentialStore.deleteOpenCodeApiKey();
+  await credentialStore.deleteApiKey("opencode");
   if (command.json) {
     io.log(JSON.stringify({
       opencodeApiKey: {
@@ -766,7 +766,7 @@ async function promptForOpenCodeApiKey(
 
     const shouldSave = !isNegative(await io.prompt!("Save this key in macOS Keychain for future runs? [Y/n]: "));
     if (shouldSave) {
-      await credentialStore.setOpenCodeApiKey(apiKey);
+      await credentialStore.setApiKey("opencode", apiKey);
       io.log("OpenCode API key stored in macOS Keychain.");
     }
 

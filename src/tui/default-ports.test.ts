@@ -82,9 +82,9 @@ describe("default TUI ports", () => {
         save: async (value) => { saved = value; },
       },
       credentialStore: {
-        deleteOpenCodeApiKey: async () => undefined,
-        getOpenCodeApiKey: async () => null,
-        setOpenCodeApiKey: async () => undefined,
+        deleteApiKey: async () => undefined,
+        getApiKey: async () => null,
+        setApiKey: async () => undefined,
       },
       env: {},
       homeDir: "/Users/isolated",
@@ -130,9 +130,9 @@ describe("default TUI ports", () => {
         save: async () => undefined,
       },
       credentialStore: {
-        deleteOpenCodeApiKey: async () => undefined,
-        getOpenCodeApiKey: async () => null,
-        setOpenCodeApiKey: async () => undefined,
+        deleteApiKey: async () => undefined,
+        getApiKey: async () => null,
+        setApiKey: async () => undefined,
       },
       env: {},
       metadataSourceFactory: () => {

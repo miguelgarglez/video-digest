@@ -52,7 +52,7 @@ export async function defaultDoctor(
     canWriteOutputDir: async (path) => isOutputDirectoryWritable(path),
     env: process.env,
     fileExists: async (path) => fileExists(path),
-    getStoredOpenCodeApiKey: async () => credentialStore.getOpenCodeApiKey(),
+    getStoredOpenCodeApiKey: async () => credentialStore.getApiKey("opencode"),
     outputDir,
     runtimeReadiness: async () => inspectRuntime(appPaths.runtimeDir, lockContents),
     sidecarPath: resources.sidecarScript,

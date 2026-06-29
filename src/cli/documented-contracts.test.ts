@@ -261,9 +261,9 @@ function baseDependencies(): CliDependencies {
     },
     configStore: { load: async () => null, save: async () => {} },
     credentialStore: {
-      deleteOpenCodeApiKey: async () => {},
-      getOpenCodeApiKey: async () => null,
-      setOpenCodeApiKey: async () => {},
+      deleteApiKey: async () => {},
+      getApiKey: async () => null,
+      setApiKey: async () => {},
     },
     env: {},
     runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => {} },
