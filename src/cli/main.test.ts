@@ -384,7 +384,11 @@ describe("runCli", () => {
       },
     );
     expect(exitCode).toBe(0);
-    expect(saved).toEqual({ artifactLibrary: "/chosen/library", schemaVersion: "config.v0" });
+    expect(saved).toEqual({
+      artifactLibrary: "/chosen/library",
+      digest: { defaultProvider: "opencode", models: {} },
+      schemaVersion: "config.v1",
+    });
   });
 
   test("reports effective artifact library in human and JSON config output without secrets", async () => {
@@ -392,7 +396,7 @@ describe("runCli", () => {
     const json: string[] = [];
     const dependencies = {
       appPaths: { configPath: "/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
-      configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" as const }), save: async () => {} },
+      configStore: { load: async () => ({ artifactLibrary: "/saved", digest: { defaultProvider: "opencode" as const, models: {} }, schemaVersion: "config.v1" as const }), save: async () => {} },
       credentialStore: fakeCredentialStore({ storedKey: "never-print-this" }),
       env: { VIDEO_DIGEST_OUTPUT_DIR: "/env" },
     };
@@ -414,7 +418,7 @@ describe("runCli", () => {
       { error: () => {}, log: () => {} },
       {
         appPaths: { configPath: "/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
-        configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" }), save: async () => {} },
+        configStore: { load: async () => ({ artifactLibrary: "/saved", digest: { defaultProvider: "opencode", models: {} }, schemaVersion: "config.v1" }), save: async () => {} },
         env: { VIDEO_DIGEST_OUTPUT_DIR: "/env" },
         ingestVideo: async (input) => { seen = input.outputDir; return completedIngestion(); },
       },
@@ -1002,7 +1006,7 @@ describe("runCli", () => {
   test("passes the resolved effective Artifact Library to doctor", async () => {
     let checkedPath = "";
     await runCli(["doctor"], { error: () => {}, log: () => {} }, {
-      configStore: { load: async () => ({ artifactLibrary: "/saved", schemaVersion: "config.v0" }), save: async () => {} },
+      configStore: { load: async () => ({ artifactLibrary: "/saved", digest: { defaultProvider: "opencode", models: {} }, schemaVersion: "config.v1" }), save: async () => {} },
       env: { VIDEO_DIGEST_OUTPUT_DIR: "/effective-env" },
       doctor: async (path) => { checkedPath = path; return { checks: [], ok: true }; },
     });

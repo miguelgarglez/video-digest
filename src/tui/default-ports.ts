@@ -99,9 +99,9 @@ export async function createDefaultTuiSession(
   const systemActions = dependencies.systemActions ?? createMacOSSystemActions();
   const transcriptSourceFactory = dependencies.transcriptSourceFactory ?? (() => new PythonYoutubeTranscriptSource());
   const metadataSourceFactory = dependencies.metadataSourceFactory ?? (() => new YouTubeOEmbedMetadataSource());
-  const config = await configStore.load();
-  let savedArtifactLibrary = config
-    ? normalizeArtifactLibraryPath(config.artifactLibrary, homeDir)
+  let savedConfig = await configStore.load();
+  let savedArtifactLibrary = savedConfig
+    ? normalizeArtifactLibraryPath(savedConfig.artifactLibrary, homeDir)
     : null;
 
   const getOutputDir = (): string => resolveArtifactLibrary({
@@ -133,9 +133,14 @@ export async function createDefaultTuiSession(
     config: {
       saveArtifactLibrary: async (path) => {
         const artifactLibrary = normalizeArtifactLibraryPath(path, homeDir);
-        const next = { artifactLibrary, schemaVersion: "config.v0" } as const;
+        const next: AppConfig = {
+          artifactLibrary,
+          digest: savedConfig?.digest ?? { defaultProvider: "opencode", models: {} },
+          schemaVersion: "config.v1",
+        };
         await configStore.save(next);
         // Mutate the effective resolver only after persistence succeeds.
+        savedConfig = next;
         savedArtifactLibrary = next.artifactLibrary;
         return next.artifactLibrary;
       },

@@ -33,14 +33,18 @@ describe("FileConfigStore", () => {
     const store = new FileConfigStore(path);
     const config: AppConfig = {
       artifactLibrary: "/Users/example/Documents/Video Digest",
-      schemaVersion: "config.v0",
+      digest: {
+        defaultProvider: "anthropic",
+        models: { anthropic: "claude-sonnet-4-6" },
+      },
+      schemaVersion: "config.v1",
     };
 
     await store.save(config);
 
     await expect(store.load()).resolves.toEqual(config);
     expect(await readFile(path, "utf8")).toBe(
-      '{\n  "artifactLibrary": "/Users/example/Documents/Video Digest",\n  "schemaVersion": "config.v0"\n}\n',
+      '{\n  "artifactLibrary": "/Users/example/Documents/Video Digest",\n  "digest": {\n    "defaultProvider": "anthropic",\n    "models": {\n      "anthropic": "claude-sonnet-4-6"\n    }\n  },\n  "schemaVersion": "config.v1"\n}\n',
     );
     expect((await stat(join(path, ".."))).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
@@ -54,7 +58,8 @@ describe("FileConfigStore", () => {
 
     await new FileConfigStore(path).save({
       artifactLibrary: "/tmp/library",
-      schemaVersion: "config.v0",
+      digest: { defaultProvider: "opencode", models: {} },
+      schemaVersion: "config.v1",
     });
 
     expect((await stat(parent)).mode & 0o777).toBe(0o700);
@@ -68,9 +73,12 @@ describe("FileConfigStore", () => {
   });
 
   test.each([
-    ["unsupported schema", { artifactLibrary: "/tmp/library", schemaVersion: "config.v1" }],
-    ["missing property", { schemaVersion: "config.v0" }],
-    ["extra property", { artifactLibrary: "/tmp/library", schemaVersion: "config.v0", theme: "dark" }],
+    ["unsupported schema", { artifactLibrary: "/tmp/library", schemaVersion: "config.v0" }],
+    ["missing property", { artifactLibrary: "/tmp/library", schemaVersion: "config.v1" }],
+    ["unknown provider", { artifactLibrary: "/tmp/library", digest: { defaultProvider: "openrouter", models: {} }, schemaVersion: "config.v1" }],
+    ["empty model", { artifactLibrary: "/tmp/library", digest: { defaultProvider: "openai", models: { openai: " " } }, schemaVersion: "config.v1" }],
+    ["unknown model provider", { artifactLibrary: "/tmp/library", digest: { defaultProvider: "openai", models: { openrouter: "model" } }, schemaVersion: "config.v1" }],
+    ["extra property", { artifactLibrary: "/tmp/library", digest: { defaultProvider: "opencode", models: {} }, schemaVersion: "config.v1", theme: "dark" }],
   ])("rejects an invalid config shape: %s", async (_name, value) => {
     const path = await makeConfigPath();
     await writeConfigFixture(path, `${JSON.stringify(value)}\n`);
@@ -83,7 +91,8 @@ describe("FileConfigStore", () => {
     const store = new FileConfigStore(path);
     const configWithSecret = {
       artifactLibrary: "/tmp/library",
-      schemaVersion: "config.v0",
+      digest: { defaultProvider: "opencode", models: {} },
+      schemaVersion: "config.v1",
       openCodeApiKey: "super-secret",
     } as unknown as AppConfig;
 

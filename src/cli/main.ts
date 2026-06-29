@@ -160,7 +160,7 @@ export async function runCli(
     const credentialStore = dependencies.credentialStore ?? new MacOSKeychainCredentialStore();
 
     if (result.value.command === "config") {
-      return await runConfigCommand(result.value, io, credentialStore, configStore, env, artifactLibrary, config?.artifactLibrary ?? null);
+      return await runConfigCommand(result.value, io, credentialStore, configStore, env, artifactLibrary, config);
     }
 
     if (result.value.command === "doctor") {
@@ -524,8 +524,9 @@ async function runConfigCommand(
   configStore: Pick<FileConfigStore, "load" | "save">,
   env: Record<string, string | undefined>,
   artifactLibrary: ArtifactLibraryResolution,
-  configuredArtifactLibrary: string | null,
+  appConfig: AppConfig | null,
 ): Promise<PublicCliExitCode> {
+  const configuredArtifactLibrary = appConfig?.artifactLibrary ?? null;
   if (command.subcommand === "get") {
     const credential = await resolveOpenCodeApiKey({
       env,
@@ -563,7 +564,8 @@ async function runConfigCommand(
     if (command.key === "output-dir") {
       const config: AppConfig = {
         artifactLibrary: command.value!,
-        schemaVersion: "config.v0",
+        digest: appConfig?.digest ?? { defaultProvider: "opencode", models: {} },
+        schemaVersion: "config.v1",
       };
       await configStore.save(config);
       if (command.json) {

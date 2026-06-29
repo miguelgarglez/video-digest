@@ -111,7 +111,11 @@ describe("default TUI ports", () => {
 
     expect(await session.ports.config.saveArtifactLibrary("~/Library")).toBe("/Users/isolated/Library");
     await session.ports.library.list();
-    expect(saved).toEqual({ artifactLibrary: "/Users/isolated/Library", schemaVersion: "config.v0" });
+    expect(saved).toEqual({
+      artifactLibrary: "/Users/isolated/Library",
+      digest: { defaultProvider: "opencode", models: {} },
+      schemaVersion: "config.v1",
+    });
     expect(roots).toEqual(["/Users/isolated/Library"]);
   });
 
@@ -122,7 +126,7 @@ describe("default TUI ports", () => {
     const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
       appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
       configStore: {
-        load: async () => ({ artifactLibrary: "/library", schemaVersion: "config.v0" }),
+        load: async () => ({ artifactLibrary: "/library", digest: { defaultProvider: "opencode", models: {} }, schemaVersion: "config.v1" }),
         save: async () => undefined,
       },
       credentialStore: {
