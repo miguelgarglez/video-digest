@@ -23,6 +23,22 @@ async function listFiles(root: string, relativeDirectory = ""): Promise<string[]
 }
 
 describe("package metadata", () => {
+  test("keeps active public documentation release-version agnostic", async () => {
+    const publicDocumentation = [
+      "README.md",
+      ...(await listFiles("docs/cli")).map((path) => join("docs/cli", path)),
+      ...(await listFiles(".agents/skills/video-digest")).map((path) =>
+        join(".agents/skills/video-digest", path),
+      ),
+    ];
+
+    for (const path of publicDocumentation) {
+      const contents = await readFile(path, "utf8");
+      expect(contents).not.toMatch(/\b\d+\.\d+\.\d+\b/);
+      expect(contents).not.toMatch(/\b(?:release|migration|version)(?:\s+to)?\s+v?\d+\.\d+\b/i);
+    }
+  });
+
   test("declares the public package contract", async () => {
     const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
       name?: string;

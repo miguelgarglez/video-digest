@@ -54,7 +54,7 @@ content, headers, request IDs, and usage. OpenCode maintainers can additionally 
 all three protocol adapters with `--zen-protocol responses`, `anthropic-messages`, or
 `chat-completions`.
 
-## Breaking migration to 1.0
+## Breaking provider migration
 
 Use the provider-neutral `config set api-key --provider opencode` command. Legacy
 configuration, metadata, and affected machine contracts are intentionally not read.

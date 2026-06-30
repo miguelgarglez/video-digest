@@ -15,6 +15,7 @@ import type { LibraryFileOperations } from "./artifacts";
 import { writeTranscriptOnlyOutputs } from "../output/output-writer";
 import { SystemActionError } from "./system-actions";
 import type { PublicCliExitCode } from "./public-contract";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 async function runCli(args: string[], io: CliIO, dependencies: CliDependencies = {}): Promise<PublicCliExitCode> {
   return runCliProduction(args, io, {
@@ -30,12 +31,6 @@ async function runCli(args: string[], io: CliIO, dependencies: CliDependencies =
     },
     ...dependencies,
   });
-}
-
-async function packageVersion(): Promise<string> {
-  const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version?: string };
-  if (typeof packageJson.version !== "string") throw new Error("package.json version is missing");
-  return packageJson.version;
 }
 
 describe("runCli", () => {
@@ -196,7 +191,7 @@ describe("runCli", () => {
       configStore: { load: async () => { throw new Error("must not load"); }, save: async () => {} },
     });
     expect(exitCode).toBe(0);
-    expect(logs).toEqual([`video-digest ${await packageVersion()}`]);
+    expect(logs).toEqual([`video-digest ${VIDEO_DIGEST_VERSION}`]);
   });
 
   test("prints command-scoped transcript help", async () => {
@@ -1800,7 +1795,7 @@ async function createOutputDirWithDigest(videoId: string): Promise<string> {
         videoId,
         videoTitle: "Generated Video Title",
       },
-      videoDigestVersion: "0.2.0",
+      videoDigestVersion: VIDEO_DIGEST_VERSION,
     }),
     { flag: "w" },
   );
@@ -1830,7 +1825,7 @@ async function createOutputDirWithTranscript(videoId: string): Promise<string> {
       videoId,
       videoTitle: null,
     },
-    videoDigestVersion: "0.2.0",
+    videoDigestVersion: VIDEO_DIGEST_VERSION,
   }));
   return outputDir;
 }

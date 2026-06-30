@@ -8,6 +8,7 @@ import type { Summarizer } from "../summarizer/summarizer";
 import { TranscriptSourceError, type Transcript, type TranscriptSource } from "../transcript/transcript-source";
 import type { YouTubeVideo } from "../video/youtube-url";
 import type { IngestVideoResult } from "./ingest-video";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 describe("runIngestionFromUrl", () => {
   let tempDir = "";
@@ -171,7 +172,7 @@ async function completedResult(outputDir: string): Promise<IngestVideoResult> {
       digest: { digestTitle: "Useful Digest" },
       generation: testGeneration(),
       metadataSchemaVersion: "metadata.v1",
-      videoDigestVersion: "0.2.0",
+      videoDigestVersion: VIDEO_DIGEST_VERSION,
     })}\n`,
     { flag: "w" },
   );

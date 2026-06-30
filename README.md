@@ -41,10 +41,9 @@ Video Digest is public, English-only software licensed under
 MIT. The supported platform is macOS on Apple Silicon. macOS Intel, Linux, and Windows
 are not supported in this release.
 
-The current package metadata is `video-digest@0.2.0`; the provider-neutral breaking
-change will be released as the next major through Release Please. Repository CI is configured on
-the supported Apple Silicon platform to verify the tests, types, exact tarball
-contents, and an isolated installation of the packed CLI.
+Repository CI verifies the tests, types, exact tarball contents, and an isolated
+installation of the packed CLI on the supported Apple Silicon platform. Release
+Please owns package-version changes and release notes.
 
 Machine-facing changes are versioned and documented in the
 [compatibility policy](docs/cli/compatibility.md).
@@ -179,7 +178,7 @@ video-digest open 1ZgUcrR0K7I
 Use `video-digest <command> --help` for command-specific syntax.
 
 See [Digest Providers and BYOK](docs/cli/providers.md) for provider/model precedence,
-environment variables, conformance levels, provenance, and the 1.0 migration.
+environment variables, conformance levels, provenance, and migration guidance.
 
 Transcript presentation flags always write the Library Entry first:
 

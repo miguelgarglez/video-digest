@@ -16,6 +16,7 @@ import {
   PUBLIC_DOCTOR_CHECK_IDS,
   type PublicCliExitCode,
 } from "./public-contract";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 const JSON_CONTRACTS = "docs/cli/json-contracts.md";
 const EXIT_CODES = "docs/cli/exit-codes.md";
@@ -416,7 +417,7 @@ async function createLibraryFixture(): Promise<string> {
       videoId: VIDEO_ID,
       videoTitle: "Example Video",
     },
-    videoDigestVersion: "0.2.0",
+    videoDigestVersion: VIDEO_DIGEST_VERSION,
   }));
   return root;
 }

@@ -10,6 +10,7 @@ import {
   type LibraryFileOperations,
 } from "./artifacts";
 import { writeTranscriptOnlyOutputs } from "../output/output-writer";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 const VIDEO_ID = "1ZgUcrR0K7I";
 
@@ -289,7 +290,7 @@ function metadata(
       videoId,
       videoTitle: input.title ?? null,
     },
-    videoDigestVersion: "0.2.0",
+    videoDigestVersion: VIDEO_DIGEST_VERSION,
   };
 }
 
