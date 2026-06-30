@@ -6,6 +6,7 @@ import { ingestVideo } from "./ingest-video";
 import type { Summarizer } from "../summarizer/summarizer";
 import type { Transcript, TranscriptSource } from "../transcript/transcript-source";
 import type { YouTubeVideo } from "../video/youtube-url";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 describe("ingestVideo", () => {
   test("stops before summarization and writes when cancellation reaches metadata enrichment", async () => {
@@ -121,7 +122,7 @@ describe("ingestVideo", () => {
         },
         generation: null,
         metadataSchemaVersion: "metadata.v1",
-        videoDigestVersion: "0.2.0",
+        videoDigestVersion: VIDEO_DIGEST_VERSION,
       });
     }
   });
@@ -151,7 +152,7 @@ describe("ingestVideo", () => {
         generation: fakeSummarizationResult().generation,
         metadataSchemaVersion: "metadata.v1",
         video: { channel: "A channel", videoTitle: "A title" },
-        videoDigestVersion: "0.2.0",
+        videoDigestVersion: VIDEO_DIGEST_VERSION,
       });
       expect(await readFile(result.paths.transcriptMarkdownPath, "utf8")).toContain("# A title");
     }
