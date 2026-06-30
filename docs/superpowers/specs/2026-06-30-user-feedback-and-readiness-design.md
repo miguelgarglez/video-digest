@@ -93,9 +93,11 @@ unrecognized path, URL, or secret.
 
 ### Platform facts
 
-Platform facts come from runtime APIs already available to the CLI. No new dependency
-or shell command is needed. The implementation owns a small immutable support-context
-value rather than letting the screen read global process state directly.
+The application version and architecture come from runtime APIs already available to
+the CLI. The macOS product version comes from the native
+`/usr/bin/sw_vers -productVersion` utility because `node:os.release()` reports the
+Darwin kernel version instead. No new dependency is needed. The lookup is injected and
+falls back to `unknown`; rendering does not read process state or execute commands.
 
 ## Architecture
 
