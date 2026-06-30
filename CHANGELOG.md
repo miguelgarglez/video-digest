@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/miguelgarglez/video-digest/compare/v1.0.0...v1.0.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **release:** Prevent version drift ([57796cb](https://github.com/miguelgarglez/video-digest/commit/57796cb65abd79bf8034c0eabe02c471c1b40a3b))
+
 ## [1.0.0](https://github.com/miguelgarglez/video-digest/compare/v0.2.0...v1.0.0) (2026-06-30)
 
 
