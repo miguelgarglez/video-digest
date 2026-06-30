@@ -6,6 +6,7 @@ import { createDigest } from "../digest/digest";
 import type { Transcript } from "../transcript/transcript-source";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import type { YouTubeVideo } from "../video/youtube-url";
+import { VIDEO_DIGEST_VERSION } from "../version";
 import {
   OutputRecoveryError,
   recoverPendingOutputTransactions,
@@ -79,7 +80,7 @@ describe("writeIngestionOutputs", () => {
         videoId: "1ZgUcrR0K7I",
         videoTitle: null,
       },
-      videoDigestVersion: "0.2.0",
+      videoDigestVersion: VIDEO_DIGEST_VERSION,
     });
     expect(JSON.stringify(metadataJson)).not.toContain("test-secret");
 
@@ -799,7 +800,7 @@ describe("writeTranscriptOnlyOutputs", () => {
       video: {
         videoId: "1ZgUcrR0K7I",
       },
-      videoDigestVersion: "0.2.0",
+      videoDigestVersion: VIDEO_DIGEST_VERSION,
     });
     await expect(readFile(join(outputDir, "digests", "1ZgUcrR0K7I.md"), "utf8")).rejects.toThrow();
   });

@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.0](https://github.com/miguelgarglez/video-digest/compare/v0.2.0...v1.0.0) (2026-06-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** config.v0, opencode-api-key commands, metadata.v0, and affected v0 JSON contracts are removed.
+
+### Features
+
+* **cli:** Add provider-neutral BYOK ([31e281f](https://github.com/miguelgarglez/video-digest/commit/31e281f2501a92867c2cdd41dd7159c21a04a232))
+* **config:** Resolve provider and model ([48fe8c1](https://github.com/miguelgarglez/video-digest/commit/48fe8c103e6828b1f435271145501534bb5809a8))
+* **credentials:** Isolate provider API keys ([3d8a29b](https://github.com/miguelgarglez/video-digest/commit/3d8a29b6008760d2909bd73fc33a481b5384a43a))
+* **metadata:** Record generation provenance ([0e37871](https://github.com/miguelgarglez/video-digest/commit/0e378719063fbf75f7420e9467339ca2b6085a18))
+* **providers:** Add Digest Provider registry ([2f9ecda](https://github.com/miguelgarglez/video-digest/commit/2f9ecda74512df6d1bd0d95eb85ee33c99bb2946))
+* **summarizer:** Add Anthropic Messages ([3dfb5e1](https://github.com/miguelgarglez/video-digest/commit/3dfb5e169cd9cb836142a91fc049d6f1fa1aecd2))
+* **summarizer:** Add Chat Completions adapter ([8a9d163](https://github.com/miguelgarglez/video-digest/commit/8a9d1632513cb5d80198805663040ae9193ad7ef))
+* **summarizer:** Add Responses adapter ([205cbe5](https://github.com/miguelgarglez/video-digest/commit/205cbe5927c02e61ed29212cb37cd0317bd52a57))
+* **tui:** Configure Digest Providers ([1ced437](https://github.com/miguelgarglez/video-digest/commit/1ced437ba7a2edb287a4936669768b5d16c59004))
+
+
+### Bug Fixes
+
+* **release:** derive package version in tests ([1b3c853](https://github.com/miguelgarglez/video-digest/commit/1b3c8533ad02051f6e31d828728c238a684ffddd))
+* **smoke:** Expect provider Keychain account ([5986f5b](https://github.com/miguelgarglez/video-digest/commit/5986f5b781e07038d0f2793631993e9b3733040f))
+
 ## [0.2.0](https://github.com/miguelgarglez/video-digest/compare/v0.1.0...v0.2.0) (2026-06-23)
 
 
