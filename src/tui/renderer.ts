@@ -138,6 +138,8 @@ function inputEvent(model: Model, value: string): Event | null {
       return { type: "save-credential", value };
     case "enter-url":
       return { type: "submit-url", url: value };
+    case "model-settings":
+      return { model: value, type: "save-model" };
     default:
       return null;
   }

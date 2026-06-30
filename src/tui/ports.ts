@@ -3,6 +3,7 @@ import type { DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
 import type { SystemActions } from "../cli/system-actions";
 import type { LibraryTarget, ResultData } from "./model";
+import type { DigestProviderId } from "../summarizer/providers";
 
 export type CreateOperationOptions = Readonly<{
   onProgress(message: string): void;
@@ -38,10 +39,13 @@ export type TuiLibraryPort = {
 export type TuiPorts = {
   config: {
     saveArtifactLibrary(path: string): Promise<string>;
+    saveModel(provider: DigestProviderId, model: string): Promise<void>;
+    saveProvider(provider: DigestProviderId): Promise<void>;
   };
   create: TuiCreatePort;
   credential: {
-    saveOpenCodeApiKey(value: string): Promise<void>;
+    deleteApiKey(provider: DigestProviderId): Promise<void>;
+    saveApiKey(provider: DigestProviderId, value: string): Promise<void>;
   };
   doctor: {
     run(): Promise<DoctorReport>;

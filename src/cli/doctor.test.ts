@@ -48,9 +48,9 @@ describe("buildDoctorReport", () => {
       },
       {
         capability: "digest",
-        id: "opencode-api-key",
-        message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
-        remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
+        id: "digest-provider",
+        message: "OpenCode Zen (gpt-5.4-mini) credential is missing; digest generation is unavailable",
+        remediation: "Set OPENCODE_API_KEY or save the OpenCode Zen API key. Transcript mode works without it.",
         status: "warn",
       },
       {
@@ -69,19 +69,41 @@ describe("buildDoctorReport", () => {
       canWriteOutputDir: async () => true,
       env: {},
       fileExists: async (path) => path.includes("fetch_transcript.py"),
-      getStoredOpenCodeApiKey: async () => "stored-key",
+      getStoredApiKey: async () => "stored-key",
       runtimeReadiness: async () => ({ status: "ready" }),
       uvAvailable: async () => true,
     });
 
-    expect(report.checks.find((check) => check.id === "opencode-api-key")).toEqual({
+    expect(report.checks.find((check) => check.id === "digest-provider")).toEqual({
       capability: "digest",
-      id: "opencode-api-key",
-      message: "OPENCODE_API_KEY is configured via Keychain; digest generation is available",
+      id: "digest-provider",
+      message: "OpenCode Zen (gpt-5.4-mini) credential is configured via keychain",
       remediation: null,
       status: "pass",
     });
     expect(JSON.stringify(report)).not.toContain("stored-key");
+  });
+
+  test("reports only the selected provider and model", async () => {
+    const lookedUp: string[] = [];
+    const report = await buildDoctorReport({
+      bunVersion: "1.3.14",
+      canWriteOutputDir: async () => true,
+      env: { ANTHROPIC_API_KEY: "env-secret", OPENAI_API_KEY: "ignored" },
+      fileExists: async () => true,
+      getStoredApiKey: async (provider) => { lookedUp.push(provider); return null; },
+      runtimeReadiness: async () => ({ status: "ready" }),
+      selection: {
+        model: { effective: "claude-custom", source: "flag" },
+        provider: { effective: "anthropic", source: "flag" },
+      },
+      uvAvailable: async () => true,
+    });
+
+    expect(lookedUp).toEqual(["anthropic"]);
+    expect(report.checks.find((check) => check.id === "digest-provider")?.message)
+      .toBe("Anthropic (claude-custom) credential is configured via env");
+    expect(JSON.stringify(report)).not.toContain("env-secret");
   });
 
   test.each(["missing", "obsolete"] as const)("distinguishes a %s managed Python runtime", async (status) => {

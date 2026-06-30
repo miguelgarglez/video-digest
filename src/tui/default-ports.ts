@@ -13,7 +13,7 @@ import { resolveArtifactLibrary } from "../cli/artifact-library";
 import { FileConfigStore, type AppConfig } from "../cli/config-store";
 import {
   MacOSKeychainCredentialStore,
-  resolveOpenCodeApiKey,
+  resolveProviderApiKey,
   type CredentialStore,
 } from "../cli/credentials";
 import { defaultDoctor, type DoctorReport } from "../cli/doctor";
@@ -32,7 +32,9 @@ import {
   type FetchTranscriptOnlyResult,
 } from "../ingestion/transcript-only";
 import { withRecoveredOutputLibrary } from "../output/output-writer";
-import { OpenCodeSummarizer } from "../summarizer/opencode-summarizer";
+import { createProviderSummarizer } from "../summarizer/provider-summarizer";
+import { DIGEST_PROVIDER_IDS, type DigestProviderId } from "../summarizer/providers";
+import { resolveDigestSelection, type ResolvedDigestSelection } from "../cli/digest-config";
 import type { Summarizer } from "../summarizer/summarizer";
 import { PythonYoutubeTranscriptSource } from "../transcript/python-youtube-transcript-source";
 import type { TranscriptSource } from "../transcript/transcript-source";
@@ -67,7 +69,7 @@ export type DefaultTuiDependencies = Readonly<{
   metadataSourceFactory?(): VideoMetadataSource;
   resolveCreatedEntry?(outputDir: string, videoId: string): Promise<LibraryEntry>;
   runtimeManager?: RuntimeManager;
-  summarizerFactory?(apiKey: string): Summarizer;
+  summarizerFactory?(selection: ResolvedDigestSelection, apiKey: string): Summarizer;
   systemActions?: SystemActions;
   transcript?(input: FetchTranscriptOnlyInput): Promise<FetchTranscriptOnlyResult>;
   transcriptSourceFactory?(): TranscriptSource;
@@ -99,9 +101,9 @@ export async function createDefaultTuiSession(
   const systemActions = dependencies.systemActions ?? createMacOSSystemActions();
   const transcriptSourceFactory = dependencies.transcriptSourceFactory ?? (() => new PythonYoutubeTranscriptSource());
   const metadataSourceFactory = dependencies.metadataSourceFactory ?? (() => new YouTubeOEmbedMetadataSource());
-  const config = await configStore.load();
-  let savedArtifactLibrary = config
-    ? normalizeArtifactLibraryPath(config.artifactLibrary, homeDir)
+  let savedConfig = await configStore.load();
+  let savedArtifactLibrary = savedConfig
+    ? normalizeArtifactLibraryPath(savedConfig.artifactLibrary, homeDir)
     : null;
 
   const getOutputDir = (): string => resolveArtifactLibrary({
@@ -110,9 +112,9 @@ export async function createDefaultTuiSession(
     savedArtifactLibrary: savedArtifactLibrary ?? undefined,
   }).path;
 
-  const [runtimeReadiness, credentialConfigured] = await Promise.all([
+  const [runtimeReadiness, credentials] = await Promise.all([
     safeRuntimeReadiness(runtime),
-    safeCredentialConfigured(env, credentialStore),
+    safeCredentials(env, credentialStore),
   ]);
 
   const library = dependencies.libraryFactory?.(getOutputDir) ?? createArtifactLibraryPort({
@@ -133,18 +135,45 @@ export async function createDefaultTuiSession(
     config: {
       saveArtifactLibrary: async (path) => {
         const artifactLibrary = normalizeArtifactLibraryPath(path, homeDir);
-        const next = { artifactLibrary, schemaVersion: "config.v0" } as const;
+        const next: AppConfig = {
+          artifactLibrary,
+          digest: savedConfig?.digest ?? { defaultProvider: "opencode", models: {} },
+          schemaVersion: "config.v1",
+        };
         await configStore.save(next);
         // Mutate the effective resolver only after persistence succeeds.
+        savedConfig = next;
         savedArtifactLibrary = next.artifactLibrary;
         return next.artifactLibrary;
+      },
+      saveProvider: async (provider) => {
+        const next: AppConfig = {
+          artifactLibrary: savedConfig?.artifactLibrary ?? getOutputDir(),
+          digest: { defaultProvider: provider, models: savedConfig?.digest.models ?? {} },
+          schemaVersion: "config.v1",
+        };
+        await configStore.save(next);
+        savedConfig = next;
+      },
+      saveModel: async (provider, model) => {
+        const next: AppConfig = {
+          artifactLibrary: savedConfig?.artifactLibrary ?? getOutputDir(),
+          digest: {
+            defaultProvider: savedConfig?.digest.defaultProvider ?? "opencode",
+            models: { ...(savedConfig?.digest.models ?? {}), [provider]: model },
+          },
+          schemaVersion: "config.v1",
+        };
+        await configStore.save(next);
+        savedConfig = next;
       },
     },
     create: {
       ingest: async (url, options) => {
         options.signal.throwIfAborted();
         const parsed = parseYouTubeVideoUrl(url);
-        const credential = await resolveOpenCodeApiKey({ env, store: credentialStore });
+        const selection = resolveDigestSelection({ config: savedConfig, env });
+        const credential = await resolveProviderApiKey({ env, provider: selection.provider.effective, store: credentialStore });
         if (!credential.value) throw new Error("Digest credential is unavailable.");
         options.signal.throwIfAborted();
         const outputDir = getOutputDir();
@@ -156,7 +185,7 @@ export async function createDefaultTuiSession(
           },
           outputDir,
           signal: options.signal,
-          summarizer: (dependencies.summarizerFactory ?? ((apiKey) => new OpenCodeSummarizer({ apiKey })))(credential.value),
+          summarizer: (dependencies.summarizerFactory ?? createProviderSummarizer)(selection, credential.value),
           transcriptSource: transcriptSourceFactory(),
           video: parsed,
         });
@@ -185,10 +214,16 @@ export async function createDefaultTuiSession(
       },
     },
     credential: {
-      saveOpenCodeApiKey: (value) => credentialStore.setOpenCodeApiKey(value),
+      deleteApiKey: (provider) => credentialStore.deleteApiKey(provider),
+      saveApiKey: (provider, value) => credentialStore.setApiKey(provider, value),
     },
     doctor: {
-      run: () => dependencies.doctor?.(getOutputDir()) ?? defaultDoctor(credentialStore, getOutputDir()),
+      run: () => dependencies.doctor?.(getOutputDir()) ?? defaultDoctor(
+        credentialStore,
+        getOutputDir(),
+        resolveDigestSelection({ config: savedConfig, env }),
+        env,
+      ),
     },
     library,
     lifecycle: { quit: lifecycle.quit },
@@ -204,7 +239,9 @@ export async function createDefaultTuiSession(
     model: initialModel({
       artifactLibrary: savedArtifactLibrary,
       defaultArtifactLibrary: appPaths.defaultArtifactLibrary,
-      credentialConfigured,
+      credentials,
+      digestModel: resolveDigestSelection({ config: savedConfig, env }).model.effective,
+      digestProvider: resolveDigestSelection({ config: savedConfig, env }).provider.effective,
       runtimeReadiness,
     }),
     ports,
@@ -265,15 +302,18 @@ async function safeRuntimeReadiness(runtime: RuntimeManager): Promise<RuntimeRea
   }
 }
 
-async function safeCredentialConfigured(
+async function safeCredentials(
   env: Record<string, string | undefined>,
   store: CredentialStore,
-): Promise<boolean> {
-  try {
-    return (await resolveOpenCodeApiKey({ env, store })).value !== null;
-  } catch {
-    return false;
-  }
+): Promise<Record<DigestProviderId, boolean>> {
+  const entries = await Promise.all(DIGEST_PROVIDER_IDS.map(async (provider) => {
+    try {
+      return [provider, (await resolveProviderApiKey({ env, provider, store })).value !== null] as const;
+    } catch {
+      return [provider, false] as const;
+    }
+  }));
+  return Object.fromEntries(entries) as Record<DigestProviderId, boolean>;
 }
 
 function defaultRuntimeManager(

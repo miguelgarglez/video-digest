@@ -498,7 +498,9 @@ async function lstatIfPresent(path: string, operations: LibraryFileOperations): 
 }
 
 function parseMetadata(value: unknown, expectedVideoId: string): LibraryMetadata | null {
-  if (!isRecord(value) || value.metadataSchemaVersion !== "metadata.v0") return null;
+  if (!isRecord(value) || value.metadataSchemaVersion !== "metadata.v1") return null;
+  if (typeof value.videoDigestVersion !== "string" || value.videoDigestVersion.length === 0) return null;
+  if (value.generation !== null && !isGenerationProvenance(value.generation)) return null;
   if (typeof value.processedAt !== "string" || !isIsoTimestamp(value.processedAt)) return null;
   if (!isRecord(value.video) || value.video.videoId !== expectedVideoId) return null;
   if (value.video.canonicalUrl !== `https://www.youtube.com/watch?v=${expectedVideoId}`) return null;
@@ -507,6 +509,18 @@ function parseMetadata(value: unknown, expectedVideoId: string): LibraryMetadata
   const title = nullableString(value.video.videoTitle);
   if (channel === undefined || title === undefined) return null;
   return { channel, processedAt: value.processedAt, title };
+}
+
+function isGenerationProvenance(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (typeof value.provider !== "string" || typeof value.requestedModel !== "string") return false;
+  if (value.responseModel !== null && typeof value.responseModel !== "string") return false;
+  if (value.requestId !== null && typeof value.requestId !== "string") return false;
+  if (value.usage === null) return true;
+  if (!isRecord(value.usage)) return false;
+  const usage = value.usage;
+  return ["inputTokens", "outputTokens", "totalTokens"].every((key) =>
+    usage[key] === null || typeof usage[key] === "number");
 }
 
 function preferredOpenPath(entry: LibraryEntry): string | null {

@@ -1,5 +1,6 @@
 import { parseYouTubeVideoUrl, type YouTubeVideo } from "../video/youtube-url";
 import type { PublicCliErrorCode } from "./public-contract";
+import { isDigestProviderId, type DigestProviderId } from "../summarizer/providers";
 
 export type CliOptions =
   | {
@@ -13,7 +14,9 @@ export type CliOptions =
       command: "ingest";
       emailPreview: boolean;
       json: boolean;
+      model?: string;
       outputDir?: string;
+      provider?: DigestProviderId;
       video: YouTubeVideo;
     }
   | {
@@ -48,7 +51,8 @@ export type CliOptions =
   | {
       command: "config";
       json: boolean;
-      key?: "opencode-api-key" | "output-dir";
+      key?: "api-key" | "model" | "output-dir" | "provider";
+      provider?: DigestProviderId;
       subcommand: "get" | "set" | "unset";
       value?: string;
     };
@@ -135,7 +139,9 @@ export function parseCliArgs(args: string[]): CliArgsResult {
   if (!parsedOutputDir.ok) {
     return parsedOutputDir;
   }
-  const positional = parsedOutputDir.args.filter((arg) => !arg.startsWith("--"));
+  const parsedDigestOptions = extractDigestOptions(parsedOutputDir.args);
+  if (!parsedDigestOptions.ok) return parsedDigestOptions;
+  const positional = parsedDigestOptions.args.filter((arg) => !arg.startsWith("--"));
   const firstArg = positional[0];
 
   const maximumPositionals = firstArg === "open" ? 2
@@ -251,7 +257,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       };
     }
 
-    if ((subcommand === "set" || subcommand === "unset") && key === "opencode-api-key") {
+    if ((subcommand === "set" || subcommand === "unset") && key === "api-key") {
       if (positional.length > 3) return unexpectedArgument("config", positional[3]!);
       return {
         ok: true,
@@ -259,9 +265,23 @@ export function parseCliArgs(args: string[]): CliArgsResult {
           command: "config",
           json: args.includes("--json"),
           key,
+          provider: parsedDigestOptions.provider,
           subcommand,
         },
       };
+    }
+
+    if (subcommand === "set" && key === "provider" && positional[3]) {
+      if (!isDigestProviderId(positional[3]!)) return failure("unsupported-command", `Unsupported Digest Provider: ${positional[3]}`);
+      if (positional.length > 4) return unexpectedArgument("config", positional[4]!);
+      return { ok: true, value: { command: "config", json: args.includes("--json"), key, subcommand, value: positional[3] } };
+    }
+
+    if ((subcommand === "set" || subcommand === "unset") && key === "model") {
+      const value = positional[3];
+      if (subcommand === "set" && !value) return failure("missing-option-value", "model requires a non-empty value.");
+      if (positional.length > (subcommand === "set" ? 4 : 3)) return unexpectedArgument("config", positional[subcommand === "set" ? 4 : 3]!);
+      return { ok: true, value: { command: "config", json: args.includes("--json"), key, provider: parsedDigestOptions.provider, subcommand, ...(value ? { value } : {}) } };
     }
 
     if (subcommand === "set" && key === "output-dir" && positional[3]) {
@@ -292,7 +312,7 @@ export function parseCliArgs(args: string[]): CliArgsResult {
       ok: false,
       error: {
         code: "unsupported-command",
-        message: "Usage: video-digest config <get|set|unset> [opencode-api-key] [--json]",
+        message: "Usage: video-digest config <get|set|unset> <provider|model|api-key|output-dir> [--provider <provider>] [--json]",
       },
     };
   }
@@ -353,6 +373,8 @@ export function parseCliArgs(args: string[]): CliArgsResult {
         emailPreview: args.includes("--email-preview"),
         json: args.includes("--json"),
         outputDir: parsedOutputDir.outputDir,
+        model: parsedDigestOptions.model,
+        provider: parsedDigestOptions.provider,
         video,
       },
     };
@@ -391,25 +413,50 @@ function allowedOptionsFor(command: string | undefined): Set<string> {
   const common = ["--json"];
   switch (command) {
     case "transcript": return new Set([...common, "--copy", "--open", "--stdout", "--output-dir"]);
-    case "ingest": return new Set([...common, "--email-preview", "--output-dir"]);
+    case "ingest": return new Set([...common, "--email-preview", "--model", "--output-dir", "--provider"]);
     case "list":
     case "open": return new Set([...common, "--output-dir"]);
     case "setup": return new Set([...common, "--yes"]);
     case "doctor":
-    case "config": return new Set(common);
+    case "config": return new Set([...common, "--provider"]);
     default:
-      return new Set([...common, "--copy", "--email-preview", "--open", "--output-dir", "--stdout"]);
+      return new Set([...common, "--copy", "--email-preview", "--model", "--open", "--output-dir", "--provider", "--stdout"]);
   }
 }
 
 function findCommand(args: string[]): string | undefined {
   const optionValueIndexes = new Set<number>();
   args.forEach((arg, index) => {
-    if (arg === "--output-dir") {
+    if (arg === "--output-dir" || arg === "--provider" || arg === "--model") {
       optionValueIndexes.add(index + 1);
     }
   });
   return args.find((arg, index) => !arg.startsWith("--") && !optionValueIndexes.has(index));
+}
+
+function extractDigestOptions(args: string[]):
+  | { args: string[]; model?: string; ok: true; provider?: DigestProviderId }
+  | { error: CliError; ok: false } {
+  const remaining: string[] = [];
+  let model: string | undefined;
+  let provider: DigestProviderId | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index];
+    if (option !== "--provider" && option !== "--model") {
+      remaining.push(option!);
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) return { ok: false, error: { code: "missing-option-value", message: `${option} requires a non-empty value.` } };
+    if (option === "--provider") {
+      if (!isDigestProviderId(value)) return { ok: false, error: { code: "unsupported-command", message: `Unsupported Digest Provider: ${value}` } };
+      provider = value;
+    } else {
+      model = value;
+    }
+    index += 1;
+  }
+  return { args: remaining, model, ok: true, provider };
 }
 
 function extractOutputDir(args: string[]):

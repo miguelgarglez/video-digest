@@ -75,10 +75,10 @@ describe("portable Video Digest agent skill", () => {
       "transcript",
     ]));
     for (const schema of [
-      "cli-result.v0",
-      "config-result.v0",
-      "config-status.v0",
-      "doctor-report.v0",
+      "cli-result.v1",
+      "config-result.v1",
+      "config-status.v1",
+      "doctor-report.v1",
       "library-list.v0",
       "open-result.v0",
       "setup-result.v0",

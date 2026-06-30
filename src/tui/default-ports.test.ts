@@ -82,9 +82,9 @@ describe("default TUI ports", () => {
         save: async (value) => { saved = value; },
       },
       credentialStore: {
-        deleteOpenCodeApiKey: async () => undefined,
-        getOpenCodeApiKey: async () => null,
-        setOpenCodeApiKey: async () => undefined,
+        deleteApiKey: async () => undefined,
+        getApiKey: async () => null,
+        setApiKey: async () => undefined,
       },
       env: {},
       homeDir: "/Users/isolated",
@@ -111,7 +111,11 @@ describe("default TUI ports", () => {
 
     expect(await session.ports.config.saveArtifactLibrary("~/Library")).toBe("/Users/isolated/Library");
     await session.ports.library.list();
-    expect(saved).toEqual({ artifactLibrary: "/Users/isolated/Library", schemaVersion: "config.v0" });
+    expect(saved).toEqual({
+      artifactLibrary: "/Users/isolated/Library",
+      digest: { defaultProvider: "opencode", models: {} },
+      schemaVersion: "config.v1",
+    });
     expect(roots).toEqual(["/Users/isolated/Library"]);
   });
 
@@ -122,13 +126,13 @@ describe("default TUI ports", () => {
     const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
       appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
       configStore: {
-        load: async () => ({ artifactLibrary: "/library", schemaVersion: "config.v0" }),
+        load: async () => ({ artifactLibrary: "/library", digest: { defaultProvider: "opencode", models: {} }, schemaVersion: "config.v1" }),
         save: async () => undefined,
       },
       credentialStore: {
-        deleteOpenCodeApiKey: async () => undefined,
-        getOpenCodeApiKey: async () => null,
-        setOpenCodeApiKey: async () => undefined,
+        deleteApiKey: async () => undefined,
+        getApiKey: async () => null,
+        setApiKey: async () => undefined,
       },
       env: {},
       metadataSourceFactory: () => {
@@ -166,6 +170,46 @@ describe("default TUI ports", () => {
     expect(resolvedUnderLock).toBe(true);
     expect(result).toEqual({ cleanText: "Useful words.\n", entry: canonical, kind: "transcript" });
     expect(JSON.stringify(result)).not.toContain("/untrusted/");
+  });
+
+  test("uses the same persisted provider selection for credential lookup and ingestion", async () => {
+    const lookups: string[] = [];
+    const factories: unknown[] = [];
+    const canonical = entry("/library");
+    const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
+      appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+      configStore: {
+        load: async () => ({ artifactLibrary: "/library", digest: { defaultProvider: "anthropic", models: { anthropic: "claude-custom" } }, schemaVersion: "config.v1" }),
+        save: async () => undefined,
+      },
+      credentialStore: {
+        deleteApiKey: async () => undefined,
+        getApiKey: async (provider) => { lookups.push(provider); return provider === "anthropic" ? "anthropic-key" : null; },
+        setApiKey: async () => undefined,
+      },
+      env: {},
+      ingest: async () => ({
+        cleanText: "Useful words.\n",
+        exitCode: 0,
+        generation: { provider: "anthropic", requestId: null, requestedModel: "claude-custom", responseModel: null, usage: null },
+        paths: { digestPath: "/d", emailPreviewPath: null, metadataPath: "/m", transcriptJsonPath: "/j", transcriptMarkdownPath: "/md", transcriptTextPath: "/t" },
+        status: "completed",
+        transcriptQuality: quality,
+      }),
+      metadataSourceFactory: () => ({ fetch: async () => ({ channel: null, title: null }) }),
+      resolveCreatedEntry: async () => canonical,
+      runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => undefined },
+      summarizerFactory: (selection, apiKey) => {
+        factories.push({ apiKey, model: selection.model.effective, provider: selection.provider.effective });
+        return { generateDigest: async () => { throw new Error("not called"); } };
+      },
+      withRecoveredLibrary: async (_root, operation) => operation(),
+    });
+
+    expect(session.model.config.digest).toEqual({ model: "claude-custom", provider: "anthropic" });
+    await session.ports.create.ingest(video.canonicalUrl, { onProgress: () => undefined, signal: new AbortController().signal });
+    expect(factories).toEqual([{ apiKey: "anthropic-key", model: "claude-custom", provider: "anthropic" }]);
+    expect(lookups.filter((provider) => provider === "anthropic").length).toBeGreaterThan(0);
   });
 
   test("resolves, revalidates, and reads a Library target under one recovery lock", async () => {

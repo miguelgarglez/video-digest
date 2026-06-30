@@ -2,6 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { parseCliArgs } from "./parse-args";
 
 describe("parseCliArgs", () => {
+  test("parses provider and model overrides for ingest", () => {
+    expect(parseCliArgs(["ingest", "https://youtu.be/1ZgUcrR0K7I", "--provider", "openai", "--model", "gpt-custom"]))
+      .toMatchObject({ ok: true, value: { command: "ingest", model: "gpt-custom", provider: "openai" } });
+  });
+
+  test("parses provider-neutral config mutations", () => {
+    expect(parseCliArgs(["config", "set", "provider", "anthropic"]))
+      .toEqual({ ok: true, value: { command: "config", json: false, key: "provider", subcommand: "set", value: "anthropic" } });
+    expect(parseCliArgs(["config", "set", "model", "claude-custom", "--provider", "anthropic"]))
+      .toMatchObject({ ok: true, value: { key: "model", provider: "anthropic", value: "claude-custom" } });
+    expect(parseCliArgs(["config", "set", "api-key", "--provider", "anthropic"]))
+      .toMatchObject({ ok: true, value: { key: "api-key", provider: "anthropic" } });
+    expect(parseCliArgs(["config", "set", "opencode-api-key"]).ok).toBe(false);
+  });
+
+  test.each([
+    [["ingest", "https://youtu.be/1ZgUcrR0K7I", "--provider"]],
+    [["ingest", "https://youtu.be/1ZgUcrR0K7I", "--model"]],
+    [["ingest", "https://youtu.be/1ZgUcrR0K7I", "--provider", "wat"]],
+    [["transcript", "https://youtu.be/1ZgUcrR0K7I", "--model", "x"]],
+    [["config", "set", "api-key", "secret-looking-value", "--provider", "openai"]],
+  ])("rejects invalid provider option shape: %j", (args) => {
+    expect(parseCliArgs(args).ok).toBe(false);
+  });
   test("parses a legacy YouTube URL as an ingest command", () => {
     expect(parseCliArgs(["https://www.youtube.com/watch?v=1ZgUcrR0K7I"])).toEqual({
       ok: true,
@@ -256,21 +280,23 @@ describe("parseCliArgs", () => {
         subcommand: "get",
       },
     });
-    expect(parseCliArgs(["config", "set", "opencode-api-key"])).toEqual({
+    expect(parseCliArgs(["config", "set", "api-key", "--provider", "opencode"])).toEqual({
       ok: true,
       value: {
         command: "config",
         json: false,
-        key: "opencode-api-key",
+        key: "api-key",
+        provider: "opencode",
         subcommand: "set",
       },
     });
-    expect(parseCliArgs(["config", "unset", "opencode-api-key"])).toEqual({
+    expect(parseCliArgs(["config", "unset", "api-key", "--provider", "opencode"])).toEqual({
       ok: true,
       value: {
         command: "config",
         json: false,
-        key: "opencode-api-key",
+        key: "api-key",
+        provider: "opencode",
         subcommand: "unset",
       },
     });

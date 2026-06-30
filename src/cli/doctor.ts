@@ -2,7 +2,9 @@ import { constants } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { MacOSKeychainCredentialStore, type CredentialStore } from "./credentials";
+import { MacOSKeychainCredentialStore, resolveProviderApiKey, type CredentialStore } from "./credentials";
+import type { ResolvedDigestSelection } from "./digest-config";
+import { getProviderProfile } from "../summarizer/providers";
 import { resolveAppPaths } from "./app-paths";
 import { resolvePackageResources } from "./package-resources";
 import { inspectRuntime, resolveUvExecutable, type RuntimeReadiness } from "./runtime-manager";
@@ -33,16 +35,22 @@ export type DoctorProbe = {
   canWriteOutputDir: (outputDir: string) => Promise<boolean>;
   env: Record<string, string | undefined>;
   fileExists: (path: string) => Promise<boolean>;
-  getStoredOpenCodeApiKey?: () => Promise<string | null>;
+  getStoredApiKey?: (provider: ResolvedDigestSelection["provider"]["effective"]) => Promise<string | null>;
   outputDir?: string;
   runtimeReadiness: () => Promise<RuntimeReadiness>;
   sidecarPath?: string;
+  selection?: ResolvedDigestSelection;
   uvAvailable: (uvPath: string) => Promise<boolean>;
 };
 
 export async function defaultDoctor(
   credentialStore: CredentialStore = new MacOSKeychainCredentialStore(),
   outputDir = resolveAppPaths(homedir()).defaultArtifactLibrary,
+  selection: ResolvedDigestSelection = {
+    model: { effective: getProviderProfile("opencode").defaultModel, source: "default" },
+    provider: { effective: "opencode", source: "default" },
+  },
+  env: Record<string, string | undefined> = process.env,
 ): Promise<DoctorReport> {
   const resources = resolvePackageResources(import.meta.url);
   const appPaths = resolveAppPaths(homedir());
@@ -50,12 +58,13 @@ export async function defaultDoctor(
   return buildDoctorReport({
     bunVersion: Bun.version,
     canWriteOutputDir: async (path) => isOutputDirectoryWritable(path),
-    env: process.env,
+    env,
     fileExists: async (path) => fileExists(path),
-    getStoredOpenCodeApiKey: async () => credentialStore.getOpenCodeApiKey(),
+    getStoredApiKey: async (provider) => credentialStore.getApiKey(provider),
     outputDir,
     runtimeReadiness: async () => inspectRuntime(appPaths.runtimeDir, lockContents),
     sidecarPath: resources.sidecarScript,
+    selection,
     uvAvailable: async (uvPath) => uvAvailable(uvPath),
   });
 }
@@ -76,7 +85,7 @@ export async function buildDoctorReport(probe: DoctorProbe): Promise<DoctorRepor
     await uvCheck(probe, uvPath, readiness),
     await sidecarCheck(probe, sidecarPath),
     runtimeCheck(readiness),
-    await opencodeCheck(probe),
+    await digestProviderCheck(probe),
     await outputDirCheck(probe, outputDir),
   ];
 
@@ -145,33 +154,27 @@ async function sidecarCheck(probe: DoctorProbe, sidecarPath: string): Promise<Do
       };
 }
 
-async function opencodeCheck(probe: DoctorProbe): Promise<DoctorCheck> {
-  if (probe.env.OPENCODE_API_KEY) {
-    return {
-      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
-      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
-      message: "OPENCODE_API_KEY is configured via env; digest generation is available",
-      remediation: null,
-      status: "pass",
-    };
-  }
-
-  if (await probe.getStoredOpenCodeApiKey?.()) {
-    return {
-      capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
-      id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
-      message: "OPENCODE_API_KEY is configured via Keychain; digest generation is available",
-      remediation: null,
-      status: "pass",
-    };
-  }
-
+async function digestProviderCheck(probe: DoctorProbe): Promise<DoctorCheck> {
+  const selection = probe.selection ?? {
+    model: { effective: getProviderProfile("opencode").defaultModel, source: "default" as const },
+    provider: { effective: "opencode" as const, source: "default" as const },
+  };
+  const profile = getProviderProfile(selection.provider.effective);
+  const stored = await probe.getStoredApiKey?.(selection.provider.effective) ?? null;
+  const credential = await resolveProviderApiKey({
+    env: probe.env,
+    provider: selection.provider.effective,
+    store: { deleteApiKey: async () => {}, getApiKey: async () => stored, setApiKey: async () => {} },
+  });
+  const configured = credential.source !== "missing";
   return {
-    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey],
-    id: PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
-    message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
-    remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
-    status: "warn",
+    capability: PUBLIC_DOCTOR_CHECK_CAPABILITY[PUBLIC_DOCTOR_CHECK_ID.digestProvider],
+    id: PUBLIC_DOCTOR_CHECK_ID.digestProvider,
+    message: configured
+      ? `${profile.displayName} (${selection.model.effective}) credential is configured via ${credential.source}`
+      : `${profile.displayName} (${selection.model.effective}) credential is missing; digest generation is unavailable`,
+    remediation: configured ? null : `Set ${profile.credentialEnv} or save the ${profile.displayName} API key. Transcript mode works without it.`,
+    status: configured ? "pass" : "warn",
   };
 }
 

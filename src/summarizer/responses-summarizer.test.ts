@@ -1,0 +1,171 @@
+import { describe, expect, test } from "bun:test";
+import { getProviderProfile, type DigestProviderId } from "./providers";
+import { ResponsesSummarizer } from "./responses-summarizer";
+import type { FetchLike } from "./http";
+import type { SummarizerInput } from "./summarizer";
+
+const providerIds: Array<Extract<DigestProviderId, "opencode" | "openai" | "xai">> = [
+  "opencode",
+  "openai",
+  "xai",
+];
+
+describe("ResponsesSummarizer", () => {
+  test.each(providerIds)("sends the shared Responses contract to %s", async (provider) => {
+    const profile = getProviderProfile(provider);
+    let request: { init?: RequestInit; url?: string } = {};
+    const fetch: FetchLike = async (url, init) => {
+      request = { init, url: String(url) };
+      return Response.json({
+        id: "resp_123",
+        model: profile.defaultModel,
+        output_text: JSON.stringify(digestDraft()),
+        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      });
+    };
+    const abort = new AbortController();
+    const summarizer = new ResponsesSummarizer({
+      apiKey: "test-key",
+      fetch,
+      model: profile.defaultModel,
+      profile,
+    });
+
+    const result = await summarizer.generateDigest({ ...input(), signal: abort.signal });
+
+    expect(request.url).toBe(profile.endpoint);
+    expect(request.init?.signal).toBe(abort.signal);
+    expect(request.init?.headers).toEqual({
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(String(request.init?.body))).toMatchObject({
+      input: [{ role: "system" }, { role: "user" }],
+      model: profile.defaultModel,
+      text: {
+        format: { name: "digest_draft", strict: true, type: "json_schema" },
+      },
+    });
+    expect(result).toEqual({
+      draft: digestDraft(),
+      generation: {
+        provider,
+        requestId: "resp_123",
+        requestedModel: profile.defaultModel,
+        responseModel: profile.defaultModel,
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      },
+    });
+  });
+
+  test("extracts nested output text and nullable provenance", async () => {
+    const summarizer = create("openai", async () => Response.json({
+      output: [{ content: [{ text: JSON.stringify(digestDraft()), type: "output_text" }] }],
+    }));
+
+    await expect(summarizer.generateDigest(input())).resolves.toMatchObject({
+      draft: digestDraft(),
+      generation: { requestId: null, responseModel: null, usage: null },
+    });
+  });
+
+  test("fails before fetch when the API key is missing", async () => {
+    let called = false;
+    const summarizer = create("xai", async () => {
+      called = true;
+      return new Response();
+    }, "");
+
+    await expect(summarizer.generateDigest(input())).rejects.toMatchObject({
+      code: "missing-api-key",
+      model: "grok-4.3",
+      provider: "xai",
+    });
+    expect(called).toBe(false);
+  });
+
+  test.each([
+    [401, "authentication-failed"],
+    [402, "quota-exceeded"],
+    [404, "invalid-model"],
+    [413, "context-limit-exceeded"],
+    [429, "rate-limited"],
+    [503, "provider-unavailable"],
+    [400, "provider-failed"],
+  ] as const)("maps HTTP %s to %s without exposing response bodies", async (status, code) => {
+    const secret = "Bearer test-key reflected remotely";
+    const summarizer = create("openai", async () => new Response(secret, { status }));
+    const failure = summarizer.generateDigest(input());
+
+    await expect(failure).rejects.toMatchObject({ code, provider: "openai" });
+    await expect(failure).rejects.not.toThrow(secret);
+  });
+
+  test("maps network failures but preserves cancellation", async () => {
+    const network = create("openai", async () => { throw new Error("socket and secret"); });
+    await expect(network.generateDigest(input())).rejects.toMatchObject({
+      code: "provider-unavailable",
+      message: "OpenAI is unavailable.",
+    });
+
+    const cancelled = create("openai", async () => { throw new DOMException("cancelled", "AbortError"); });
+    await expect(cancelled.generateDigest(input())).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("rejects malformed success payloads safely", async () => {
+    const summarizer = create("opencode", async () => Response.json({ output_text: "{}" }));
+    await expect(summarizer.generateDigest(input())).rejects.toMatchObject({
+      code: "invalid-provider-response",
+      provider: "opencode",
+    });
+  });
+});
+
+function create(
+  provider: Extract<DigestProviderId, "opencode" | "openai" | "xai">,
+  fetch: FetchLike,
+  apiKey = "test-key",
+): ResponsesSummarizer {
+  const profile = getProviderProfile(provider);
+  return new ResponsesSummarizer({ apiKey, fetch, model: profile.defaultModel, profile });
+}
+
+function input(): SummarizerInput {
+  return {
+    transcript: {
+      language: "en",
+      provenance: { isAutoGenerated: null },
+      schemaVersion: "transcript.v0",
+      segments: [{ duration: 5, start: 0, text: "Opening statement" }],
+      source: "youtube-transcript-api",
+      videoId: "1ZgUcrR0K7I",
+    },
+    transcriptQuality: {
+      averageCharsPerMinute: 720,
+      durationSeconds: 5,
+      language: "en",
+      qualitySchemaVersion: "transcript-quality.v0",
+      segmentCount: 1,
+      status: "warning",
+      totalTextLength: 17,
+      warnings: ["low-segment-count"],
+    },
+    video: {
+      canonicalUrl: "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+      videoId: "1ZgUcrR0K7I",
+    },
+  };
+}
+
+function digestDraft() {
+  return {
+    actionableIdeas: ["Act"],
+    conceptsToInvestigate: ["Concept"],
+    connections: ["Connection"],
+    digestTitle: "Title",
+    keyIdeas: ["Idea"],
+    relevantTimestamps: [{ note: "Opening", timestamp: "0:00" }],
+    tldr: ["Summary"],
+    verdict: "watch_fragments" as const,
+  };
+}

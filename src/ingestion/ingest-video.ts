@@ -4,7 +4,7 @@ import {
   writeIngestionOutputs,
   type IngestionOutputPaths,
 } from "../output/output-writer";
-import type { Summarizer } from "../summarizer/summarizer";
+import type { GenerationProvenance, Summarizer } from "../summarizer/summarizer";
 import type { TranscriptQuality } from "../transcript/transcript-quality";
 import { scoreTranscriptQuality } from "../transcript/transcript-quality";
 import type { TranscriptSource } from "../transcript/transcript-source";
@@ -14,6 +14,7 @@ import {
   type VideoMetadataSource,
 } from "../video/video-metadata-source";
 import { renderTranscriptText } from "../output/transcript-renderer";
+import { VIDEO_DIGEST_VERSION } from "../version";
 
 export type IngestVideoInput = {
   emailPreview: boolean;
@@ -24,6 +25,7 @@ export type IngestVideoInput = {
   summarizer: Summarizer;
   transcriptSource: TranscriptSource;
   video: YouTubeVideo;
+  videoDigestVersion?: string;
 };
 
 export type IngestionProgressStage =
@@ -43,6 +45,7 @@ export type IngestVideoResult =
   | {
       cleanText: string;
       exitCode: 0;
+      generation: GenerationProvenance;
       paths: IngestionOutputPaths;
       status: "completed";
       transcriptQuality: TranscriptQuality;
@@ -74,6 +77,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
       metadata,
       transcriptQuality,
       video: input.video,
+      videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
     });
 
     return {
@@ -85,7 +89,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   }
 
   emitProgress(input, "generating-digest");
-  const draft = await input.summarizer.generateDigest({
+  const { draft, generation } = await input.summarizer.generateDigest({
     signal: input.signal,
     transcript,
     transcriptQuality,
@@ -99,11 +103,13 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   const paths = await writeIngestionOutputs({
     digest,
     emailPreview: input.emailPreview,
+    generation,
     metadata,
     outputDir: input.outputDir,
     transcript,
     transcriptQuality,
     video: input.video,
+    videoDigestVersion: input.videoDigestVersion ?? VIDEO_DIGEST_VERSION,
   });
 
   emitProgress(input, "completed");
@@ -111,6 +117,7 @@ export async function ingestVideo(input: IngestVideoInput): Promise<IngestVideoR
   return {
     cleanText,
     exitCode: 0,
+    generation,
     paths,
     status: "completed",
     transcriptQuality,

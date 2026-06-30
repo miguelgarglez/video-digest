@@ -36,6 +36,15 @@
 | **Delivery** | Sending or placing a digest where Miguel will consume it, such as Gmail or a future knowledge base. | Notification, export |
 | **Email Preview** | A Markdown artifact formatted as the body of a future email delivery. | Draft, email |
 
+## Digest generation
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Digest Provider** | The remote service selected to generate a Digest. | Model, backend |
+| **Provider Profile** | Declarative configuration for one Digest Provider, including its protocol, endpoint, credential variable, default model, and capabilities. | Provider config |
+| **Protocol Adapter** | A component that translates a provider-neutral Digest request into a remote API protocol and normalizes its response. | Provider client |
+| **Generation Provenance** | Non-secret metadata identifying the provider, model, request, and reported token usage for a generated Digest. | Generation metadata |
+
 ## Relationships
 
 - A **Source Playlist** contains many **Videos**.
@@ -46,6 +55,7 @@
 - A **Transcript** has one **Transcript Quality** assessment.
 - A **Transcript Artifact** stores a **Transcript** locally but is not a **Knowledge Item**.
 - A **Digest** is generated from one **Video** and usually one **Transcript**.
+- A **Digest** has one **Generation Provenance** when a **Digest Provider** successfully generates it.
 - A **Digest Title** belongs to a **Digest** and may differ from the original **Video** title.
 - **Delivery** sends or places a **Digest** for consumption.
 - An **Email Preview** may be created from a **Digest** before Gmail **Delivery**.

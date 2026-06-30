@@ -111,13 +111,13 @@ describe("public CLI documentation contracts", () => {
         fixture: "config-set-success",
       },
       {
-        args: ["config", "unset", "opencode-api-key", "--json"],
+        args: ["config", "unset", "api-key", "--provider", "opencode", "--json"],
         dependencies: base,
         exitCode: 0,
         fixture: "config-unset-success",
       },
       {
-        args: ["config", "set", "opencode-api-key", "--json"],
+        args: ["config", "set", "api-key", "--provider", "opencode", "--json"],
         dependencies: base,
         exitCode: 1,
         fixture: "config-failure",
@@ -231,7 +231,7 @@ describe("public CLI documentation contracts", () => {
     expect(docs).toContain("Parsing, runtime-readiness, and failures without");
   });
 
-  test("documents the experimental compatibility and cross-links every contract page", async () => {
+  test("documents major-version compatibility and cross-links every contract page", async () => {
     const [jsonDocs, exitDocs, compatibilityDocs] = await Promise.all([
       readFile(JSON_CONTRACTS, "utf8"),
       readFile(EXIT_CODES, "utf8"),
@@ -244,7 +244,7 @@ describe("public CLI documentation contracts", () => {
     expect(compatibilityDocs).toContain("`uv`");
     expect(compatibilityDocs).toContain("does not install or modify system Python");
     expect(compatibilityDocs).toContain("increment the affected `schemaVersion`");
-    expect(compatibilityDocs).toContain("0.x");
+    expect(compatibilityDocs).toContain("Breaking commands, defaults, or machine-readable formats require a major release");
     expect(jsonDocs).toContain("[Exit codes](./exit-codes.md)");
     expect(exitDocs).toContain("[JSON contracts](./json-contracts.md)");
     expect(compatibilityDocs).toContain("[JSON contracts](./json-contracts.md)");
@@ -261,9 +261,9 @@ function baseDependencies(): CliDependencies {
     },
     configStore: { load: async () => null, save: async () => {} },
     credentialStore: {
-      deleteOpenCodeApiKey: async () => {},
-      getOpenCodeApiKey: async () => null,
-      setOpenCodeApiKey: async () => {},
+      deleteApiKey: async () => {},
+      getApiKey: async () => null,
+      setApiKey: async () => {},
     },
     env: {},
     runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => {} },
@@ -297,6 +297,13 @@ function completedIngestion(): IngestVideoResult {
   return {
     cleanText: "Useful content.\n",
     exitCode: 0,
+    generation: {
+      provider: "opencode",
+      requestId: null,
+      requestedModel: "gpt-5.4-mini",
+      responseModel: null,
+      usage: null,
+    },
     paths: {
       digestPath: `/artifact-library/digests/${VIDEO_ID}.md`,
       emailPreviewPath: null,
@@ -360,7 +367,7 @@ function doctorReport(ok: boolean): DoctorReport {
           },
           {
             capability: "digest" as const,
-            id: "opencode-api-key",
+            id: "digest-provider",
             message: "OPENCODE_API_KEY is missing; digest generation is unavailable",
             remediation: "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
             status: "warn" as const,
@@ -392,7 +399,14 @@ async function createLibraryFixture(): Promise<string> {
   await writeFile(join(root, "transcripts", `${VIDEO_ID}.md`), "# Transcript\n");
   await writeFile(join(root, "transcripts", `${VIDEO_ID}.txt`), "Example text.\n");
   await writeFile(join(root, "metadata", `${VIDEO_ID}.json`), JSON.stringify({
-    metadataSchemaVersion: "metadata.v0",
+    generation: {
+      provider: "opencode",
+      requestId: null,
+      requestedModel: "gpt-5.4-mini",
+      responseModel: null,
+      usage: null,
+    },
+    metadataSchemaVersion: "metadata.v1",
     mode: "ingest",
     processedAt: "2026-06-18T12:00:00.000Z",
     video: {
@@ -402,6 +416,7 @@ async function createLibraryFixture(): Promise<string> {
       videoId: VIDEO_ID,
       videoTitle: "Example Video",
     },
+    videoDigestVersion: "0.2.0",
   }));
   return root;
 }
@@ -432,12 +447,12 @@ function validatePublicPayload(payload: unknown): void {
   requireRecord(payload, "payload");
   requireString(payload.schemaVersion, "schemaVersion");
   switch (payload.schemaVersion) {
-    case "cli-result.v0": return validateCliResult(payload);
-    case "doctor-report.v0": return validateDoctorReport(payload);
+    case "cli-result.v1": return validateCliResult(payload);
+    case "doctor-report.v1": return validateDoctorReport(payload);
     case "library-list.v0": return validateLibraryList(payload);
     case "open-result.v0": return validateOpenResult(payload);
-    case "config-status.v0": return validateConfigStatus(payload);
-    case "config-result.v0": return validateConfigResult(payload);
+    case "config-status.v1": return validateConfigStatus(payload);
+    case "config-result.v1": return validateConfigResult(payload);
     case "setup-result.v0": return validateSetupResult(payload);
     default: throw new Error(`Unknown public schema: ${payload.schemaVersion}`);
   }
@@ -445,9 +460,10 @@ function validatePublicPayload(payload: unknown): void {
 
 function validateCliResult(payload: Record<string, unknown>): void {
   if (payload.status === "failed") {
-    exactKeys(payload, payload.videoId === undefined
-      ? ["error", "schemaVersion", "status"]
-      : ["error", "schemaVersion", "status", "videoId"]);
+    const keys = ["error", "schemaVersion", "status"];
+    if (payload.videoId !== undefined) keys.push("videoId");
+    if (payload.provider !== undefined) keys.push("model", "provider");
+    exactKeys(payload, keys);
     validateError(payload.error);
     if (payload.videoId !== undefined) requireString(payload.videoId, "videoId");
     return;
@@ -460,7 +476,9 @@ function validateCliResult(payload: Record<string, unknown>): void {
     return;
   }
   expect(payload.status).toBe("completed");
-  exactKeys(payload, ["canonicalUrl", "paths", "schemaVersion", "status", "transcriptQuality", "videoId"]);
+  const resultKeys = ["canonicalUrl", "paths", "schemaVersion", "status", "transcriptQuality", "videoId"];
+  if (payload.generation !== undefined) resultKeys.push("generation");
+  exactKeys(payload, resultKeys);
   requireString(payload.canonicalUrl, "canonicalUrl");
   requireString(payload.videoId, "videoId");
   requireEnumString(payload.transcriptQuality, ["usable", "warning"], "transcriptQuality");
@@ -531,16 +549,18 @@ function validateLibraryEntry(value: unknown): void {
 }
 
 function validateConfigStatus(payload: Record<string, unknown>): void {
-  exactKeys(payload, ["artifactLibrary", "opencodeApiKey", "schemaVersion"]);
+  exactKeys(payload, ["artifactLibrary", "credential", "digest", "schemaVersion"]);
   requireRecord(payload.artifactLibrary, "artifactLibrary");
   exactKeys(payload.artifactLibrary, ["configured", "effective", "source"]);
   requireNullableString(payload.artifactLibrary.configured, "configured Artifact Library");
   requireString(payload.artifactLibrary.effective, "effective Artifact Library");
   requireEnumString(payload.artifactLibrary.source, ["env", "config", "default"], "Artifact Library source");
-  requireRecord(payload.opencodeApiKey, "opencodeApiKey");
-  exactKeys(payload.opencodeApiKey, ["configured", "source"]);
-  expect(typeof payload.opencodeApiKey.configured).toBe("boolean");
-  requireEnumString(payload.opencodeApiKey.source, ["env", "keychain", "missing"], "credential source");
+  requireRecord(payload.credential, "credential");
+  exactKeys(payload.credential, ["configured", "provider", "source"]);
+  expect(typeof payload.credential.configured).toBe("boolean");
+  requireString(payload.credential.provider, "credential provider");
+  requireEnumString(payload.credential.source, ["env", "keychain", "missing"], "credential source");
+  requireRecord(payload.digest, "digest");
 }
 
 function validateConfigResult(payload: Record<string, unknown>): void {
@@ -552,10 +572,10 @@ function validateConfigResult(payload: Record<string, unknown>): void {
     requireString(payload.artifactLibrary, "artifactLibrary");
   } else {
     expect(payload.status).toBe("deleted");
-    exactKeys(payload, ["opencodeApiKey", "schemaVersion", "status"]);
-    requireRecord(payload.opencodeApiKey, "opencodeApiKey");
-    exactKeys(payload.opencodeApiKey, ["configured"]);
-    expect(payload.opencodeApiKey.configured).toBe(false);
+    exactKeys(payload, ["credential", "schemaVersion", "status"]);
+    requireRecord(payload.credential, "credential");
+    exactKeys(payload.credential, ["configured", "provider"]);
+    expect(payload.credential.configured).toBe(false);
   }
 }
 

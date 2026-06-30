@@ -1,9 +1,9 @@
 /** Public machine-contract values shared by serializers, domain errors, and docs. */
 export const PUBLIC_CLI_SCHEMA = {
-  cliResult: "cli-result.v0",
-  configResult: "config-result.v0",
-  configStatus: "config-status.v0",
-  doctorReport: "doctor-report.v0",
+  cliResult: "cli-result.v1",
+  configResult: "config-result.v1",
+  configStatus: "config-status.v1",
+  doctorReport: "doctor-report.v1",
   libraryList: "library-list.v0",
   openResult: "open-result.v0",
   setupResult: "setup-result.v0",
@@ -18,6 +18,9 @@ export const PUBLIC_CLI_ERROR_CODE = {
   copyFailed: "copy-failed",
   duplicateOption: "duplicate-option",
   interactiveRequired: "interactive-required",
+  authenticationFailed: "authentication-failed",
+  contextLimitExceeded: "context-limit-exceeded",
+  invalidModel: "invalid-model",
   invalidProviderResponse: "invalid-provider-response",
   invalidUrl: "invalid-url",
   libraryEntryNotFound: "library-entry-not-found",
@@ -27,6 +30,9 @@ export const PUBLIC_CLI_ERROR_CODE = {
   missingUrl: "missing-url",
   openFailed: "open-failed",
   providerFailed: "provider-failed",
+  providerUnavailable: "provider-unavailable",
+  quotaExceeded: "quota-exceeded",
+  rateLimited: "rate-limited",
   recoveryRequired: "recovery-required",
   revealFailed: "reveal-failed",
   runtimeNotReady: "runtime-not-ready",
@@ -51,7 +57,7 @@ export type PublicTuiExitCode = Extract<
 
 export const PUBLIC_DOCTOR_CHECK_ID = {
   bun: "bun",
-  opencodeApiKey: "opencode-api-key",
+  digestProvider: "digest-provider",
   outputDir: "output-dir",
   pythonRuntime: "python-runtime",
   pythonSidecar: "python-sidecar",
@@ -63,7 +69,7 @@ export const PUBLIC_DOCTOR_CHECK_IDS = [
   PUBLIC_DOCTOR_CHECK_ID.uv,
   PUBLIC_DOCTOR_CHECK_ID.pythonSidecar,
   PUBLIC_DOCTOR_CHECK_ID.pythonRuntime,
-  PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey,
+  PUBLIC_DOCTOR_CHECK_ID.digestProvider,
   PUBLIC_DOCTOR_CHECK_ID.outputDir,
 ] as const;
 
@@ -75,6 +81,6 @@ export const PUBLIC_DOCTOR_CHECK_CAPABILITY = {
   [PUBLIC_DOCTOR_CHECK_ID.uv]: "transcript",
   [PUBLIC_DOCTOR_CHECK_ID.pythonSidecar]: "transcript",
   [PUBLIC_DOCTOR_CHECK_ID.pythonRuntime]: "transcript",
-  [PUBLIC_DOCTOR_CHECK_ID.opencodeApiKey]: "digest",
+  [PUBLIC_DOCTOR_CHECK_ID.digestProvider]: "digest",
   [PUBLIC_DOCTOR_CHECK_ID.outputDir]: "transcript",
 } as const satisfies Record<PublicDoctorCheckId, PublicDoctorCapability>;

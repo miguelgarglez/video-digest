@@ -1,7 +1,7 @@
 # JSON contracts
 
 Video Digest exposes versioned JSON for scripts and agents through `--json`. This
-page describes the stdout contract implemented by `video-digest 0.1.0`.
+page describes the provider-neutral contract implemented by the next major release.
 
 See also [Exit codes](./exit-codes.md) and
 [compatibility and versioning](./compatibility.md).
@@ -26,12 +26,12 @@ The public stdout schema versions are:
 
 | Schema | Commands |
 | --- | --- |
-| `cli-result.v0` | `ingest`, `transcript`, and command-level failures |
-| `doctor-report.v0` | `doctor` |
+| `cli-result.v1` | `ingest`, `transcript`, and command-level failures |
+| `doctor-report.v1` | `doctor` |
 | `library-list.v0` | `list` |
 | `open-result.v0` | `open` |
-| `config-status.v0` | `config get` |
-| `config-result.v0` | `config set` and `config unset` |
+| `config-status.v1` | `config get` |
+| `config-result.v1` | `config set` and `config unset` |
 | `setup-result.v0` | `setup` |
 
 ## `video-digest ingest <youtube-url> --json`
@@ -44,6 +44,13 @@ metadata path are always present.
 ```json
 {
   "canonicalUrl": "https://www.youtube.com/watch?v=1ZgUcrR0K7I",
+  "generation": {
+    "provider": "opencode",
+    "requestId": null,
+    "requestedModel": "gpt-5.4-mini",
+    "responseModel": null,
+    "usage": null
+  },
   "paths": {
     "digestPath": "/artifact-library/digests/1ZgUcrR0K7I.md",
     "emailPreviewPath": null,
@@ -52,7 +59,7 @@ metadata path are always present.
     "transcriptMarkdownPath": "/artifact-library/transcripts/1ZgUcrR0K7I.md",
     "transcriptTextPath": "/artifact-library/transcripts/1ZgUcrR0K7I.txt"
   },
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "completed",
   "transcriptQuality": "usable",
   "videoId": "1ZgUcrR0K7I"
@@ -69,7 +76,9 @@ schema. For example, unavailable subtitles return exit status `2`:
     "code": "transcript-unavailable",
     "message": "No transcript is available for this video.\nProvider reason: Subtitles are disabled\nDigest generation was skipped. Try another video or a future transcript fallback."
   },
-  "schemaVersion": "cli-result.v0",
+  "model": "gpt-5.4-mini",
+  "provider": "opencode",
+  "schemaVersion": "cli-result.v1",
   "status": "failed",
   "videoId": "1ZgUcrR0K7I"
 }
@@ -82,7 +91,7 @@ object. It returns exit status `2` and this alternate result shape:
 ```json
 {
   "metadataPath": "/artifact-library/metadata/1ZgUcrR0K7I.json",
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "unusable-transcript",
   "transcriptQuality": "unusable",
   "videoId": "1ZgUcrR0K7I"
@@ -104,7 +113,7 @@ and entry metadata before returning their paths.
     "transcriptMarkdownPath": "/artifact-library/transcripts/1ZgUcrR0K7I.md",
     "transcriptTextPath": "/artifact-library/transcripts/1ZgUcrR0K7I.txt"
   },
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "completed",
   "transcriptQuality": "usable",
   "videoId": "1ZgUcrR0K7I"
@@ -120,7 +129,7 @@ The runtime is inspected but never prepared implicitly:
     "code": "runtime-not-ready",
     "message": "Python runtime is missing. Run video-digest setup."
   },
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "failed"
 }
 ```
@@ -153,12 +162,12 @@ Without explicit consent, no setup mutation starts:
 
 ## `video-digest config <operation> --json`
 
-`config get` uses `config-status.v0`. `artifactLibrary.configured` is the saved
+`config get` uses `config-status.v1`. `artifactLibrary.configured` is the saved
 preference or `null`; `effective` reflects environment/config/default precedence.
 `source` is one of `env`, `config`, or `default`.
 `--output-dir` is not accepted by `config`; it is a one-command override only for
 `ingest`, `transcript`, `list`, and `open`.
-`opencodeApiKey.source` is one of `env`, `keychain`, or `missing`; credential values
+`credential.source` is one of `env`, `keychain`, or `missing`; credential values
 are never returned.
 
 <!-- contract:config-get-success -->
@@ -169,11 +178,22 @@ are never returned.
     "effective": "/example-home/Documents/Video Digest",
     "source": "default"
   },
-  "opencodeApiKey": {
+  "credential": {
     "configured": false,
+    "provider": "opencode",
     "source": "missing"
   },
-  "schemaVersion": "config-status.v0"
+  "digest": {
+    "model": {
+      "effective": "gpt-5.4-mini",
+      "source": "default"
+    },
+    "provider": {
+      "effective": "opencode",
+      "source": "default"
+    }
+  },
+  "schemaVersion": "config-status.v1"
 }
 ```
 
@@ -183,21 +203,22 @@ are never returned.
 ```json
 {
   "artifactLibrary": "/artifact-library",
-  "schemaVersion": "config-result.v0",
+  "schemaVersion": "config-result.v1",
   "status": "saved"
 }
 ```
 
-`config unset opencode-api-key` returns `status: "deleted"` and never returns the
+`config unset api-key --provider opencode` returns `status: "deleted"` and never returns the
 deleted credential:
 
 <!-- contract:config-unset-success -->
 ```json
 {
-  "opencodeApiKey": {
-    "configured": false
+  "credential": {
+    "configured": false,
+    "provider": "opencode"
   },
-  "schemaVersion": "config-result.v0",
+  "schemaVersion": "config-result.v1",
   "status": "deleted"
 }
 ```
@@ -210,9 +231,9 @@ mode:
 {
   "error": {
     "code": "interactive-required",
-    "message": "config set opencode-api-key requires an interactive prompt."
+    "message": "config set api-key requires an interactive prompt."
   },
-  "schemaVersion": "config-result.v0",
+  "schemaVersion": "config-result.v1",
   "status": "failed"
 }
 ```
@@ -231,7 +252,7 @@ The exact check IDs are:
 | `uv` | `transcript` | `uv` is available for explicit runtime setup; it may warn when an already-prepared runtime remains usable. |
 | `python-sidecar` | `transcript` | The packaged Transcript sidecar exists. |
 | `python-runtime` | `transcript` | The managed Python runtime matches the shipped lockfile. |
-| `opencode-api-key` | `digest` | Digest credentials are configured; absence is a warning because Transcript mode still works. |
+| `digest-provider` | `digest` | Digest credentials are configured; absence is a warning because Transcript mode still works. |
 | `output-dir` | `transcript` | The effective Artifact Library is writable or can be created. |
 
 `capability` identifies the product capability directly assessed by a check. Digest
@@ -241,7 +262,7 @@ top-level `ok` and all failed checks rather than considering only `digest` rows.
 <!-- contract:doctor-success -->
 ```json
 {
-  "schemaVersion": "doctor-report.v0",
+  "schemaVersion": "doctor-report.v1",
   "checks": [
     {
       "capability": "transcript",
@@ -252,7 +273,7 @@ top-level `ok` and all failed checks rather than considering only `digest` rows.
     },
     {
       "capability": "digest",
-      "id": "opencode-api-key",
+      "id": "digest-provider",
       "message": "OPENCODE_API_KEY is missing; digest generation is unavailable",
       "remediation": "Set OPENCODE_API_KEY to enable video-digest ingest. Transcript mode works without it.",
       "status": "warn"
@@ -262,13 +283,13 @@ top-level `ok` and all failed checks rather than considering only `digest` rows.
 }
 ```
 
-A failed diagnostic remains a `doctor-report.v0` report, not a generic `error`
+A failed diagnostic remains a `doctor-report.v1` report, not a generic `error`
 object, and exits `1`:
 
 <!-- contract:doctor-failure -->
 ```json
 {
-  "schemaVersion": "doctor-report.v0",
+  "schemaVersion": "doctor-report.v1",
   "checks": [
     {
       "capability": "transcript",
@@ -321,7 +342,7 @@ uses the generic command-failure schema:
     "code": "unexpected-error",
     "message": "Artifact Library could not be read."
   },
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "failed"
 }
 ```
@@ -368,7 +389,7 @@ same Library Entry fields as `list` plus `openPath`, and has no `status` field.
 
 When `--json` is present but argument parsing fails, stdout still receives one
 failure object. It uses `setup-result.v0` when the first token is `setup`, and
-`cli-result.v0` otherwise:
+`cli-result.v1` otherwise:
 
 <!-- contract:invocation-failure -->
 ```json
@@ -377,7 +398,7 @@ failure object. It uses `setup-result.v0` when the first token is `setup`, and
     "code": "conflicting-options",
     "message": "--stdout cannot be combined with --json. Remove one of these options."
   },
-  "schemaVersion": "cli-result.v0",
+  "schemaVersion": "cli-result.v1",
   "status": "failed"
 }
 ```

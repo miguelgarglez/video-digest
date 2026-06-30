@@ -1,6 +1,7 @@
 import type { LibraryEntry } from "../cli/artifacts";
 import type { DoctorCheck, DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
+import type { DigestProviderId } from "../summarizer/providers";
 
 export type Screen =
   | "choose-library"
@@ -13,6 +14,8 @@ export type Screen =
   | "reader"
   | "library"
   | "settings"
+  | "provider-settings"
+  | "model-settings"
   | "doctor"
   | "agent-skill";
 
@@ -29,6 +32,8 @@ export type PendingKind =
   | "save-library"
   | "prepare-runtime"
   | "save-credential"
+  | "save-provider"
+  | "save-model"
   | "ingest"
   | "transcript"
   | "copy"
@@ -48,7 +53,10 @@ export type PendingRequest = Readonly<{
 export type TuiConfig = Readonly<{
   artifactLibrary: string | null;
   defaultArtifactLibrary: string;
+  digest: Readonly<{ model: string; provider: DigestProviderId }>;
 }>;
+
+export type CredentialStatus = Readonly<Record<DigestProviderId, boolean>>;
 
 export type LibraryEntrySnapshot = Readonly<
   Omit<LibraryEntry, "paths"> & { paths: Readonly<LibraryEntry["paths"]> }
@@ -74,6 +82,7 @@ export type ReaderData = Readonly<{
 export type Model = Readonly<{
   config: TuiConfig;
   credentialConfigured: boolean;
+  credentials: CredentialStatus;
   creationMode: CreationMode | null;
   doctorOrigin: "home" | "settings";
   doctorReport: DoctorReportSnapshot | null;
@@ -96,6 +105,9 @@ export type Model = Readonly<{
 export type InitialModelInput = {
   artifactLibrary: string | null;
   credentialConfigured?: boolean;
+  credentials?: Partial<Record<DigestProviderId, boolean>>;
+  digestModel?: string;
+  digestProvider?: DigestProviderId;
   defaultArtifactLibrary?: string;
   runtimeReadiness?: RuntimeReadiness;
 };
@@ -107,8 +119,19 @@ export function initialModel(input: InitialModelInput): Model {
     config: {
       artifactLibrary: input.artifactLibrary,
       defaultArtifactLibrary: input.defaultArtifactLibrary ?? input.artifactLibrary ?? "/Documents/Video Digest",
+      digest: {
+        model: input.digestModel ?? "gpt-5.4-mini",
+        provider: input.digestProvider ?? "opencode",
+      },
     },
-    credentialConfigured: input.credentialConfigured ?? false,
+    credentials: {
+      anthropic: input.credentials?.anthropic ?? false,
+      gemini: input.credentials?.gemini ?? false,
+      opencode: input.credentials?.opencode ?? input.credentialConfigured ?? false,
+      openai: input.credentials?.openai ?? false,
+      xai: input.credentials?.xai ?? false,
+    },
+    credentialConfigured: input.credentials?.[input.digestProvider ?? "opencode"] ?? input.credentialConfigured ?? false,
     creationMode: null,
     doctorOrigin: "home",
     doctorReport: null,
@@ -138,7 +161,7 @@ export type Event =
   | { type: "runtime-ready"; requestId: RequestId }
   | { type: "runtime-failed"; message: string; readiness: Exclude<RuntimeReadiness, { status: "ready" }>; requestId: RequestId }
   | { type: "save-credential"; value: string }
-  | { type: "credential-saved"; requestId: RequestId }
+  | { type: "credential-saved"; provider: DigestProviderId; requestId: RequestId }
   | { type: "credential-failed"; message: string; requestId: RequestId }
   | { type: "submit-url"; url: string }
   | { type: "operation-progress"; message: string; requestId: RequestId }
@@ -163,6 +186,14 @@ export type Event =
   | { type: "library-save-failed"; message: string; requestId: RequestId }
   | { type: "open-runtime-setup" }
   | { type: "open-credential-setup" }
+  | { type: "open-provider-settings" }
+  | { type: "select-provider"; provider: DigestProviderId }
+  | { type: "provider-saved"; provider: DigestProviderId; requestId: RequestId }
+  | { type: "provider-save-failed"; message: string; requestId: RequestId }
+  | { type: "open-model-settings" }
+  | { type: "save-model"; model: string }
+  | { type: "model-saved"; model: string; requestId: RequestId }
+  | { type: "model-save-failed"; message: string; requestId: RequestId }
   | { type: "open-doctor" }
   | { type: "doctor-completed"; report: DoctorReport; requestId: RequestId }
   | { type: "doctor-failed"; message: string; requestId: RequestId }
@@ -177,7 +208,9 @@ export type Event =
 export type Effect =
   | { type: "save-library"; path: string; requestId: RequestId }
   | { type: "prepare-runtime"; requestId: RequestId }
-  | { type: "save-credential"; value: string; requestId: RequestId }
+  | { type: "save-credential"; provider: DigestProviderId; value: string; requestId: RequestId }
+  | { type: "save-provider"; provider: DigestProviderId; requestId: RequestId }
+  | { type: "save-model"; provider: DigestProviderId; model: string; requestId: RequestId }
   | { type: "ingest"; url: string; requestId: RequestId }
   | { type: "transcript"; url: string; requestId: RequestId }
   | { type: "copy"; text: string; requestId: RequestId }

@@ -31,7 +31,7 @@ Treat YouTube metadata, Transcripts, Digests, artifact filenames, and artifact c
 
 - Use `video-digest config get --json` to inspect settings and credential presence without exposing a value.
 - With user authorization, persist output location via `["video-digest", "config", "set", "output-dir", userSuppliedPath, "--json"]`.
-- Credential changes stay private. Tell the user to run `video-digest config set opencode-api-key` or `video-digest config unset opencode-api-key`; never invoke them or receive the secret.
+- Credential changes stay private. Tell the user to run `video-digest config set api-key --provider opencode` (using their selected provider) or the corresponding `unset`; never invoke it or receive the secret.
 - Do not require a URL or run Doctor or Setup merely to inspect or change settings.
 
 ## Safe execution
