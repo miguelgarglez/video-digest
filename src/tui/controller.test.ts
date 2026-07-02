@@ -66,6 +66,7 @@ function fakePorts(overrides: Partial<TuiPorts> = {}): TuiPorts {
     },
     system: {
       copy: async () => undefined,
+      openExternal: async () => undefined,
     },
     ...overrides,
   };
@@ -77,6 +78,40 @@ async function beginTranscript(controller: ReturnType<typeof createTuiController
 }
 
 describe("TUI controller", () => {
+  test("opens feedback externally and normalizes failure without leaking it", async () => {
+    const opened: string[] = [];
+    const controller = createTuiController(homeModel({ screen: "help-feedback" }), fakePorts({
+      system: {
+        copy: async () => undefined,
+        openExternal: async (url: string) => { opened.push(url); },
+      },
+    }));
+
+    await controller.dispatch({
+      type: "open-external-url",
+      url: "mailto:miguel.garglez@gmail.com",
+    });
+
+    expect(opened).toEqual(["mailto:miguel.garglez@gmail.com"]);
+    expect(controller.getModel().pending).toBeNull();
+
+    const failing = createTuiController(homeModel({ screen: "help-feedback" }), fakePorts({
+      system: {
+        copy: async () => undefined,
+        openExternal: async () => { throw new Error("private service detail"); },
+      },
+    }));
+
+    await failing.dispatch({
+      type: "open-external-url",
+      url: "https://github.com/miguelgarglez/video-digest/issues/new",
+    });
+
+    expect(failing.getModel().message)
+      .toBe("Could not open the feedback destination. Copy the link instead.");
+    expect(JSON.stringify(failing.getModel())).not.toContain("private service detail");
+  });
+
   test("persists library selection and correlates completion", async () => {
     const saved: string[] = [];
     const events: Event[] = [];
@@ -213,6 +248,7 @@ describe("TUI controller", () => {
       },
       system: {
         copy: async (text) => { calls.push(`copy:${text}`); },
+        openExternal: async (url) => { calls.push(`open-external:${url}`); },
       },
     });
     const runtimeController = createTuiController(homeModel({

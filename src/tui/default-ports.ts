@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { arch, homedir } from "node:os";
 import { isAbsolute, join, normalize, relative } from "node:path";
 import {
   listLibraryEntries,
@@ -41,6 +41,8 @@ import type { TranscriptSource } from "../transcript/transcript-source";
 import { YouTubeOEmbedMetadataSource } from "../video/youtube-oembed-metadata-source";
 import type { VideoMetadataSource } from "../video/video-metadata-source";
 import { parseYouTubeVideoUrl } from "../video/youtube-url";
+import { VIDEO_DIGEST_VERSION } from "../version";
+import { resolveSupportContext } from "./feedback";
 import { initialModel } from "./model";
 import type { TuiLibraryPort, TuiPorts } from "./ports";
 import type { TuiBootstrapResult, TuiLifecycle } from "./start";
@@ -70,6 +72,7 @@ export type DefaultTuiDependencies = Readonly<{
   resolveCreatedEntry?(outputDir: string, videoId: string): Promise<LibraryEntry>;
   runtimeManager?: RuntimeManager;
   summarizerFactory?(selection: ResolvedDigestSelection, apiKey: string): Summarizer;
+  supportContextResolver?: typeof resolveSupportContext;
   systemActions?: SystemActions;
   transcript?(input: FetchTranscriptOnlyInput): Promise<FetchTranscriptOnlyResult>;
   transcriptSourceFactory?(): TranscriptSource;
@@ -112,9 +115,13 @@ export async function createDefaultTuiSession(
     savedArtifactLibrary: savedArtifactLibrary ?? undefined,
   }).path;
 
-  const [runtimeReadiness, credentials] = await Promise.all([
+  const [runtimeReadiness, credentials, supportContext] = await Promise.all([
     safeRuntimeReadiness(runtime),
     safeCredentials(env, credentialStore),
+    (dependencies.supportContextResolver ?? resolveSupportContext)({
+      appVersion: VIDEO_DIGEST_VERSION,
+      architecture: arch(),
+    }),
   ]);
 
   const library = dependencies.libraryFactory?.(getOutputDir) ?? createArtifactLibraryPort({
@@ -232,7 +239,7 @@ export async function createDefaultTuiSession(
       prepare: () => runtime.prepare(),
       readiness: () => runtime.inspect(),
     },
-    system: { copy: systemActions.copy },
+    system: { copy: systemActions.copy, openExternal: systemActions.openExternal },
   };
 
   return {
@@ -243,6 +250,7 @@ export async function createDefaultTuiSession(
       digestModel: resolveDigestSelection({ config: savedConfig, env }).model.effective,
       digestProvider: resolveDigestSelection({ config: savedConfig, env }).provider.effective,
       runtimeReadiness,
+      supportContext,
     }),
     ports,
   };

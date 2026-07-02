@@ -33,7 +33,7 @@ function ports(quit: () => void | Promise<void>): TuiPorts {
       prepare: async () => undefined,
       readiness: async () => ({ status: "ready" }),
     },
-    system: { copy: async () => undefined },
+    system: { copy: async () => undefined, openExternal: async () => undefined },
   };
 }
 

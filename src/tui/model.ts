@@ -2,6 +2,7 @@ import type { LibraryEntry } from "../cli/artifacts";
 import type { DoctorCheck, DoctorReport } from "../cli/doctor";
 import type { RuntimeReadiness } from "../cli/runtime-manager";
 import type { DigestProviderId } from "../summarizer/providers";
+import type { FeedbackOrigin, SupportContext } from "./feedback";
 
 export type Screen =
   | "choose-library"
@@ -17,7 +18,10 @@ export type Screen =
   | "provider-settings"
   | "model-settings"
   | "doctor"
-  | "agent-skill";
+  | "agent-skill"
+  | "help-feedback";
+
+export type HelpReturnScreen = Exclude<Screen, "help-feedback">;
 
 export type CreationMode = "digest" | "transcript";
 export type ReaderOrigin = "result" | "library";
@@ -42,7 +46,8 @@ export type PendingKind =
   | "print"
   | "read"
   | "load-library"
-  | "run-doctor";
+  | "run-doctor"
+  | "open-external";
 export type PendingPolicy = "persistent-blocking" | "cancellable" | "dismissible";
 
 export type PendingRequest = Readonly<{
@@ -88,6 +93,8 @@ export type Model = Readonly<{
   doctorReport: DoctorReportSnapshot | null;
   entries: readonly LibraryEntrySnapshot[];
   gateOrigin: GateOrigin;
+  helpOrigin: FeedbackOrigin;
+  helpReturnScreen: HelpReturnScreen;
   librarySelectionOrigin: LibrarySelectionOrigin;
   message: string | null;
   nextRequestId: RequestId;
@@ -100,6 +107,7 @@ export type Model = Readonly<{
   screen: Screen;
   selectedEntry: LibraryEntrySnapshot | null;
   submittedUrl: string | null;
+  supportContext: SupportContext;
 }>;
 
 export type InitialModelInput = {
@@ -110,6 +118,7 @@ export type InitialModelInput = {
   digestProvider?: DigestProviderId;
   defaultArtifactLibrary?: string;
   runtimeReadiness?: RuntimeReadiness;
+  supportContext?: SupportContext;
 };
 
 export function initialModel(input: InitialModelInput): Model {
@@ -137,6 +146,8 @@ export function initialModel(input: InitialModelInput): Model {
     doctorReport: null,
     entries: [],
     gateOrigin: "creation",
+    helpOrigin: "main-menu",
+    helpReturnScreen: "home",
     librarySelectionOrigin: configured ? "settings" : "onboarding",
     message: null,
     nextRequestId: 1,
@@ -151,6 +162,11 @@ export function initialModel(input: InitialModelInput): Model {
     screen: configured ? "home" : "choose-library",
     selectedEntry: null,
     submittedUrl: null,
+    supportContext: input.supportContext ?? {
+      appVersion: "unknown",
+      architecture: "unknown",
+      macOSVersion: "unknown",
+    },
   };
 }
 
@@ -198,6 +214,8 @@ export type Event =
   | { type: "doctor-completed"; report: DoctorReport; requestId: RequestId }
   | { type: "doctor-failed"; message: string; requestId: RequestId }
   | { type: "open-agent-skill" }
+  | { type: "open-help" }
+  | { type: "open-external-url"; url: string }
   | { type: "copy-text"; text: string }
   | { type: "system-action-completed"; requestId: RequestId }
   | { type: "system-action-failed"; message: string; requestId: RequestId }
@@ -220,6 +238,7 @@ export type Effect =
   | { type: "read"; target: LibraryTarget; requestId: RequestId }
   | { type: "load-library"; requestId: RequestId }
   | { type: "run-doctor"; requestId: RequestId }
+  | { type: "open-external"; requestId: RequestId; url: string }
   | { type: "cancel-operation"; requestId: RequestId }
   | { type: "quit" };
 

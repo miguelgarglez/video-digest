@@ -61,5 +61,5 @@ export type TuiPorts = {
     prepare(): Promise<void>;
     readiness(): Promise<RuntimeReadiness>;
   };
-  system: Pick<SystemActions, "copy">;
+  system: Pick<SystemActions, "copy" | "openExternal">;
 };
