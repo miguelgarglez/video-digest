@@ -250,6 +250,25 @@ export function update(model: Model, event: Event): Transition {
       return model.screen === "settings"
         ? transition({ ...model, message: null, screen: "agent-skill" })
         : unchanged(model);
+    case "open-help": {
+      if (model.pending || model.screen === "help-feedback") return unchanged(model);
+      const failed = model.message !== null;
+      return transition({
+        ...model,
+        helpOrigin: failed ? "failed-workflow" : "main-menu",
+        helpReturnScreen: model.screen,
+        message: null,
+        screen: "help-feedback",
+      });
+    }
+    case "open-external-url":
+      return model.screen === "help-feedback" && event.url.length > 0
+        ? startRequest(model, "open-external", (requestId) => ({
+            requestId,
+            type: "open-external",
+            url: event.url,
+          }))
+        : unchanged(model);
     case "copy-text":
       return event.text.length > 0
         ? startRequest(model, "copy", (requestId) => ({ requestId, text: event.text, type: "copy" }))
@@ -393,8 +412,8 @@ function matchesSystemAction(model: Model, requestId: RequestId): boolean {
   return model.pending?.requestId === requestId && isSystemActionKind(model.pending.kind);
 }
 
-function isSystemActionKind(kind: PendingKind): kind is "copy" | "open" | "reveal" | "print" {
-  return kind === "copy" || kind === "open" || kind === "reveal" || kind === "print";
+function isSystemActionKind(kind: PendingKind): kind is "copy" | "open" | "open-external" | "reveal" | "print" {
+  return kind === "copy" || kind === "open" || kind === "open-external" || kind === "reveal" || kind === "print";
 }
 
 function resultMatchesOperation(kind: PendingKind, resultKind: CreationMode): boolean {
@@ -423,6 +442,7 @@ function pendingPolicy(kind: PendingKind): PendingPolicy {
     case "run-doctor":
     case "copy":
     case "open":
+    case "open-external":
     case "reveal":
     case "print":
       return "dismissible";
@@ -532,6 +552,8 @@ function navigateBack(model: Model): Transition {
       return transition(clearPending({ ...model, message: null, screen: model.doctorOrigin }));
     case "agent-skill":
       return transition(clearPending({ ...model, message: null, screen: "settings" }));
+    case "help-feedback":
+      return transition(clearPending({ ...model, message: null, screen: model.helpReturnScreen }));
     default:
       return assertNever(model.screen);
   }
@@ -542,6 +564,8 @@ function goHome(model: Model): Model {
     ...model,
     creationMode: null,
     gateOrigin: "creation",
+    helpOrigin: "main-menu",
+    helpReturnScreen: "home",
     message: null,
     pending: null,
     progress: null,

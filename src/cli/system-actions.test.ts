@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { copyText, openPath, revealPath, spawnCommand, SystemActionError, type SpawnCommand } from "./system-actions";
+import {
+  copyText,
+  openExternalUrl,
+  openPath,
+  revealPath,
+  spawnCommand,
+  SystemActionError,
+  type SpawnCommand,
+} from "./system-actions";
 
 function recordingSpawn(exitCode = 0, stderr = ""): { calls: Array<{ command: string[]; stdin?: string }>; spawn: SpawnCommand } {
   const calls: Array<{ command: string[]; stdin?: string }> = [];
@@ -7,7 +15,7 @@ function recordingSpawn(exitCode = 0, stderr = ""): { calls: Array<{ command: st
     calls,
     spawn: async (command, options = {}) => {
       calls.push({ command: [...command], stdin: options.stdin });
-      return { exitCode, stderr };
+      return { exitCode, stderr, stdout: "" };
     },
   };
 }
@@ -61,10 +69,50 @@ describe("macOS system actions", () => {
     ]);
   });
 
+  test("opens only approved feedback URL shapes as separate process arguments", async () => {
+    const commands: string[][] = [];
+    const spawn: SpawnCommand = async (command) => {
+      commands.push([...command]);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+
+    await openExternalUrl("mailto:miguel.garglez@gmail.com?subject=Video%20Digest", spawn);
+    await openExternalUrl(
+      "https://github.com/miguelgarglez/video-digest/issues/new?title=%5BBug%5D",
+      spawn,
+    );
+
+    expect(commands).toEqual([
+      ["/usr/bin/open", "mailto:miguel.garglez@gmail.com?subject=Video%20Digest"],
+      ["/usr/bin/open", "https://github.com/miguelgarglez/video-digest/issues/new?title=%5BBug%5D"],
+    ]);
+  });
+
+  test("rejects shells, files, foreign hosts, and misleading GitHub paths before spawning", async () => {
+    let calls = 0;
+    const spawn: SpawnCommand = async () => {
+      calls += 1;
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+
+    for (const url of [
+      "file:///Users/test/private",
+      "javascript:alert(1)",
+      "https://example.com/miguelgarglez/video-digest/issues/new",
+      "https://github.com/another/repository/issues/new",
+      "https://github.com/miguelgarglez/video-digest/issues/new?redirect=https://example.com",
+      "mailto:another@example.com",
+      "mailto:miguel.garglez@gmail.com?bcc=another@example.com",
+    ]) {
+      await expect(openExternalUrl(url, spawn)).rejects.toMatchObject({ code: "open-failed" });
+    }
+    expect(calls).toBe(0);
+  });
+
   test("returns a stable safe error when a system command fails", async () => {
     const fake = recordingSpawn(1, "private system detail");
     await expect(copyText("secret", fake.spawn)).rejects.toEqual(
-      new SystemActionError("copy-failed", "Could not copy the transcript. Ensure pbcopy is available and try again."),
+      new SystemActionError("copy-failed", "Could not copy the text. Copy it manually and try again."),
     );
   });
 

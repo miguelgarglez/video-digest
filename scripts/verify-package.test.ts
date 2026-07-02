@@ -123,6 +123,7 @@ const validPackedFiles = [
   "package/src/transcript/transcript-source.ts",
   "package/src/tui/controller.ts",
   "package/src/tui/default-ports.ts",
+  "package/src/tui/feedback.ts",
   "package/src/tui/model.ts",
   "package/src/tui/ports.ts",
   "package/src/tui/renderer.ts",

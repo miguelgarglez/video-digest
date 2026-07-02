@@ -172,6 +172,18 @@ export function createTuiController(
         await runCreateOperation(effect, operation);
         return;
       }
+      case "open-external":
+        try {
+          await ports.system.openExternal(effect.url);
+          await emit({ requestId: effect.requestId, type: "system-action-completed" });
+        } catch {
+          await emit({
+            message: "Could not open the feedback destination. Copy the link instead.",
+            requestId: effect.requestId,
+            type: "system-action-failed",
+          });
+        }
+        return;
       case "copy":
       case "print":
         await runTextAction(effect);

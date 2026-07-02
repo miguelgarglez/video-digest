@@ -50,6 +50,7 @@ describe("buildScreenView", () => {
         "Browse Library",
         "Setup & Settings",
         "Diagnostics",
+        "Help & Feedback",
       ],
       preview: null,
       title: "Video Digest",
@@ -294,6 +295,36 @@ describe("buildScreenView", () => {
       title: "Terminal too small",
     });
     expect(view.body[0]).toContain(`${MIN_TERMINAL_SIZE.width}×${MIN_TERMINAL_SIZE.height}`);
+  });
+
+  test("Help & Feedback exposes reviewable destinations and copy fallbacks", () => {
+    const view = buildScreenView(readyModel({
+      helpOrigin: "failed-workflow",
+      screen: "help-feedback",
+      supportContext: { appVersion: "1.0.0", architecture: "arm64", macOSVersion: "26.5.1" },
+    }));
+
+    expect(view).toMatchObject({
+      focus: "options",
+      options: [
+        "Send Feedback by Email",
+        "Report an Issue on GitHub",
+        "Copy Email Address",
+        "Copy GitHub Issue Link",
+      ],
+      title: "Help & Feedback",
+    });
+    expect(view.body.join(" ")).toContain("Video Digest 1.0.0");
+    expect(view.body.join(" ")).toContain("macOS 26.5.1 · arm64");
+    expect(JSON.stringify(view)).not.toContain("/Users/");
+  });
+
+  test("a settled failure advertises F1 help without replacing input focus", () => {
+    const view = buildScreenView(readyModel({ message: "Creation failed.", screen: "enter-url" }));
+
+    expect(view.focus).toBe("input");
+    expect(view.helpAvailable).toBe(true);
+    expect(view.footer).toContain("F1 Get Help");
   });
 
   test("shows a pending state and prevents duplicate input or selection", () => {

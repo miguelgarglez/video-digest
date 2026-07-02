@@ -790,3 +790,60 @@ describe("event payload snapshots", () => {
     expect(failed.runtimeReadiness).toEqual({ remediation: "Run setup.", status: "missing" });
   });
 });
+
+describe("Help & Feedback", () => {
+  test("opens from Home with allowlisted context and returns Home", () => {
+    const home = readyModel({
+      supportContext: { appVersion: "1.0.0", architecture: "arm64", macOSVersion: "26.5.1" },
+    });
+
+    const help = update(home, { type: "open-help" }).model;
+
+    expect(help).toMatchObject({
+      helpOrigin: "main-menu",
+      helpReturnScreen: "home",
+      screen: "help-feedback",
+    });
+    expect(update(help, { type: "back" }).model.screen).toBe("home");
+  });
+
+  test("opens from a failed workflow without carrying its error into feedback", () => {
+    const failed = readyModel({
+      creationMode: "transcript",
+      message: "Private failure at /Users/test and https://youtu.be/abc123_DEF4",
+      screen: "enter-url",
+    });
+
+    const help = update(failed, { type: "open-help" }).model;
+
+    expect(help).toMatchObject({
+      helpOrigin: "failed-workflow",
+      helpReturnScreen: "enter-url",
+      message: null,
+      screen: "help-feedback",
+    });
+    expect(JSON.stringify(help)).not.toContain("Private failure");
+  });
+
+  test("starts external opening and fences stale completion", () => {
+    const help = readyModel({ screen: "help-feedback" });
+    const opening = update(help, {
+      type: "open-external-url",
+      url: "mailto:miguel.garglez@gmail.com",
+    });
+
+    expect(opening.effects).toEqual([{
+      requestId: 1,
+      type: "open-external",
+      url: "mailto:miguel.garglez@gmail.com",
+    }]);
+    expect(opening.model.pending).toEqual({ kind: "open-external", requestId: 1 });
+
+    const dismissed = update(opening.model, { type: "back" }).model;
+    expect(update(dismissed, {
+      message: "late",
+      requestId: 1,
+      type: "system-action-failed",
+    }).model).toBe(dismissed);
+  });
+});

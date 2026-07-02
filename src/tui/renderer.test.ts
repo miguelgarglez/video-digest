@@ -7,6 +7,7 @@ import {
   type RendererKey,
 } from "./renderer";
 import { createTheme } from "./theme";
+import { FEEDBACK_EMAIL, buildFeedbackLinks } from "./feedback";
 
 function readyModel(overrides: Partial<Model> = {}): Model {
   return {
@@ -118,6 +119,35 @@ describe("createTuiRenderer", () => {
     renderer.render(model);
     await facade.frame?.onKey(key("q"));
     expect(events).toHaveLength(3);
+  });
+
+  test("dispatches F1 help and every feedback action", async () => {
+    const facade = fakeFacade();
+    const events: Event[] = [];
+    let model = readyModel({ message: "Creation failed.", screen: "enter-url" });
+    const renderer = createTuiRenderer({
+      dispatch: async (event) => { events.push(event); },
+      facade,
+      getModel: () => model,
+    });
+
+    renderer.render(model);
+    expect(facade.frame?.onKey(key("f1"))).toBe(true);
+    await Promise.resolve();
+    expect(events).toEqual([{ type: "open-help" }]);
+
+    const supportContext = { appVersion: "1.0.0", architecture: "arm64", macOSVersion: "26.5.1" };
+    const links = buildFeedbackLinks(supportContext, "failed-workflow");
+    model = readyModel({ helpOrigin: "failed-workflow", screen: "help-feedback", supportContext });
+    renderer.render(model);
+    for (let index = 0; index < 4; index += 1) await facade.frame?.onSelect(index);
+
+    expect(events.slice(1)).toEqual([
+      { type: "open-external-url", url: links.email },
+      { type: "open-external-url", url: links.githubIssue },
+      { type: "copy-text", text: FEEDBACK_EMAIL },
+      { type: "copy-text", text: links.githubIssue },
+    ]);
   });
 
   test("does not duplicate submissions while a request is pending", async () => {

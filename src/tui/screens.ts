@@ -1,6 +1,7 @@
 import type { DoctorCheck } from "../cli/doctor";
 import type { LibraryEntrySnapshot, Model, Screen } from "./model";
 import { getProviderProfile, listProviderProfiles, type DigestProviderId } from "../summarizer/providers";
+import { FEEDBACK_EMAIL, GITHUB_ISSUES_URL, buildFeedbackLinks } from "./feedback";
 
 export const MIN_TERMINAL_SIZE = Object.freeze({ height: 18, width: 60 });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -58,6 +59,8 @@ export type ScreenAction =
   | { type: "open-model-settings" }
   | { type: "select-provider"; provider: DigestProviderId }
   | { type: "open-agent-skill" }
+  | { type: "open-help" }
+  | { type: "open-external-url"; url: string }
   | { type: "copy-text"; text: string };
 
 export type ScreenBodyLink = Readonly<{
@@ -72,6 +75,7 @@ export type ScreenView = Readonly<{
   bodyKind: ScreenBodyKind;
   focus: ScreenFocus;
   footer: string;
+  helpAvailable: boolean;
   input: ScreenInput | null;
   keys: readonly AccessibilityKey[];
   kind: Screen | "small-terminal";
@@ -117,6 +121,9 @@ export function buildScreenView(model: Model, dimensions?: ScreenDimensions): Sc
       : messageStatus ?? source.status;
   const input = source.input ? { ...source.input, disabled: pending } : null;
   const focus = pending ? "none" : source.focus ?? inferFocus(source, input);
+  const helpAvailable = !pending && model.message !== null && model.screen !== "help-feedback";
+  const footer = source.footer ?? defaultFooter(focus);
+  const keys = source.keys ?? defaultKeys(focus);
 
   return Object.freeze({
     actions: Object.freeze(source.actions ?? []),
@@ -126,9 +133,10 @@ export function buildScreenView(model: Model, dimensions?: ScreenDimensions): Sc
     bodyLinks: Object.freeze(source.bodyLinks ?? []),
     bodyKind: source.bodyKind ?? "summary",
     focus,
-    footer: source.footer ?? defaultFooter(focus),
+    footer: helpAvailable ? `${footer}  F1 Get Help` : footer,
+    helpAvailable,
     input,
-    keys: Object.freeze(source.keys ?? defaultKeys(focus)),
+    keys: Object.freeze(helpAvailable ? [...keys, { key: "F1", label: "Get Help" }] : keys),
     kind: model.screen,
     options: Object.freeze((source.options ?? []).map((text) => boundLine(sanitizeLine(text), lineLimit))),
     preview: null,
@@ -160,8 +168,9 @@ function viewForScreen(model: Model): MutableView {
           { type: "browse-library" },
           { type: "open-settings" },
           { type: "open-doctor" },
+          { type: "open-help" },
         ],
-        options: ["Create Digest", "Get Transcript", "Browse Library", "Setup & Settings", "Diagnostics"],
+        options: ["Create Digest", "Get Transcript", "Browse Library", "Setup & Settings", "Diagnostics", "Help & Feedback"],
         subtitle: "Turn a YouTube video into useful, durable artifacts.",
         title: "Video Digest",
       };
@@ -277,6 +286,34 @@ function viewForScreen(model: Model): MutableView {
         options: ["Copy Preview Command", "Copy Install Command"],
         title: "Agent Skill",
       };
+    case "help-feedback": {
+      const links = buildFeedbackLinks(model.supportContext, model.helpOrigin);
+      return {
+        actions: [
+          { type: "open-external-url", url: links.email },
+          { type: "open-external-url", url: links.githubIssue },
+          { type: "copy-text", text: FEEDBACK_EMAIL },
+          { type: "copy-text", text: links.githubIssue },
+        ],
+        body: [
+          `Video Digest ${model.supportContext.appVersion}`,
+          `macOS ${model.supportContext.macOSVersion} · ${model.supportContext.architecture}`,
+          "The draft includes only the technical context shown above. Review it before sending.",
+          "Video Digest never sends feedback automatically.",
+        ],
+        bodyLinks: [
+          { text: FEEDBACK_EMAIL, url: links.email },
+          { text: GITHUB_ISSUES_URL, url: GITHUB_ISSUES_URL },
+        ],
+        options: [
+          "Send Feedback by Email",
+          "Report an Issue on GitHub",
+          "Copy Email Address",
+          "Copy GitHub Issue Link",
+        ],
+        title: "Help & Feedback",
+      };
+    }
     default:
       return assertNever(model.screen);
   }
@@ -388,6 +425,7 @@ function smallTerminalView(): ScreenView {
     bodyKind: "summary",
     focus: "none",
     footer: TUI_COPY.footer.quit,
+    helpAvailable: false,
     input: null,
     keys: Object.freeze([{ key: "Ctrl-C", label: "Quit" }]),
     kind: "small-terminal",

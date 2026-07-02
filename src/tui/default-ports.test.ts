@@ -55,6 +55,35 @@ function entry(root: string): LibraryEntry {
 }
 
 describe("default TUI ports", () => {
+  test("resolves support context once and delegates external feedback opening", async () => {
+    const opened: string[] = [];
+    let resolutions = 0;
+    const supportContext = { appVersion: "test", architecture: "arm64", macOSVersion: "26.5.1" };
+    const session = await createDefaultTuiSession({ print: async () => undefined, quit: () => undefined }, {
+      appPaths: { configPath: "/app/config.json", defaultArtifactLibrary: "/default", runtimeDir: "/runtime" },
+      configStore: { load: async () => null, save: async () => undefined },
+      credentialStore: {
+        deleteApiKey: async () => undefined,
+        getApiKey: async () => null,
+        setApiKey: async () => undefined,
+      },
+      env: {},
+      runtimeManager: { inspect: async () => ({ status: "ready" }), prepare: async () => undefined },
+      supportContextResolver: async () => { resolutions += 1; return supportContext; },
+      systemActions: {
+        copy: async () => undefined,
+        open: async () => undefined,
+        openExternal: async (url) => { opened.push(url); },
+        reveal: async () => undefined,
+      },
+    });
+
+    expect(session.model.supportContext).toEqual(supportContext);
+    expect(resolutions).toBe(1);
+    await session.ports.system.openExternal("mailto:miguel.garglez@gmail.com");
+    expect(opened).toEqual(["mailto:miguel.garglez@gmail.com"]);
+  });
+
   test("normalizes only exact home shorthands and absolute paths without consulting cwd", () => {
     const home = "/Users/isolated";
     expect(normalizeArtifactLibraryPath("~", home)).toBe(home);
@@ -217,7 +246,7 @@ describe("default TUI ports", () => {
     await writeTranscriptOnlyOutputs({ outputDir: root, transcript, transcriptQuality: quality, video });
     const port = createArtifactLibraryPort({
       getOutputDir: () => root,
-      systemActions: { copy: async () => undefined, open: async () => undefined, reveal: async () => undefined },
+      systemActions: { copy: async () => undefined, openExternal: async () => undefined, open: async () => undefined, reveal: async () => undefined },
     });
 
     const result = await port.read({ preference: "transcript", videoId: video.videoId });
@@ -239,6 +268,7 @@ describe("default TUI ports", () => {
       getOutputDir: () => root,
       systemActions: {
         copy: async () => undefined,
+        openExternal: async () => undefined,
         open: (path) => verifyLock("open", path),
         reveal: (path) => verifyLock("reveal", path),
       },
@@ -274,7 +304,7 @@ describe("default TUI ports", () => {
     const port = createArtifactLibraryPort({
       fileOperations: operations,
       getOutputDir: () => root,
-      systemActions: { copy: async () => undefined, open: async () => undefined, reveal: async () => undefined },
+      systemActions: { copy: async () => undefined, openExternal: async () => undefined, open: async () => undefined, reveal: async () => undefined },
     });
 
     await expect(port.read({ preference: "transcript", videoId: video.videoId })).rejects.toThrow();
@@ -303,6 +333,7 @@ describe("default TUI ports", () => {
       getOutputDir: () => root,
       systemActions: {
         copy: async () => undefined,
+        openExternal: async () => undefined,
         open: async () => { opens += 1; },
         reveal: async () => undefined,
       },

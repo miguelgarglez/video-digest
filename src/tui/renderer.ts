@@ -109,6 +109,10 @@ function handleKey(
     void dispatch({ type: "quit" }).catch(() => undefined);
     return true;
   }
+  if (!key.ctrl && !key.meta && !key.shift && name === "f1" && view.helpAvailable) {
+    void dispatch({ type: "open-help" }).catch(() => undefined);
+    return true;
+  }
   if (!key.ctrl && !key.meta && (name === "escape" || name === "esc")) {
     void dispatch({ type: "back" }).catch(() => undefined);
     return true;

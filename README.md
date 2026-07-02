@@ -57,6 +57,9 @@ Video Digest manages its own Python 3.12 runtime. It does not modify system Pyth
 
 ## Install
 
+> **Supported platform:** macOS on Apple Silicon only. The current package does not
+> support macOS Intel, Windows, or Linux.
+
 Install the published package globally:
 
 ```sh
@@ -316,6 +319,11 @@ Common remediations:
 
 Machine error payloads and numeric meanings are documented in the
 [exit-code reference](docs/cli/exit-codes.md).
+
+## Future possibilities
+
+A web interface and support for Windows and Linux are possible future directions.
+They are not part of the current compatibility contract or a committed roadmap.
 
 ## Development
 
