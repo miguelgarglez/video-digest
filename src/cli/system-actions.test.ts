@@ -100,7 +100,9 @@ describe("macOS system actions", () => {
       "javascript:alert(1)",
       "https://example.com/miguelgarglez/video-digest/issues/new",
       "https://github.com/another/repository/issues/new",
+      "https://github.com/miguelgarglez/video-digest/issues/new?redirect=https://example.com",
       "mailto:another@example.com",
+      "mailto:miguel.garglez@gmail.com?bcc=another@example.com",
     ]) {
       await expect(openExternalUrl(url, spawn)).rejects.toMatchObject({ code: "open-failed" });
     }

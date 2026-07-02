@@ -70,13 +70,22 @@ export function createMacOSSystemActions(spawn: SpawnCommand = spawnCommand): Sy
 function isApprovedFeedbackUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    if (url.protocol === "mailto:") return url.pathname === "miguel.garglez@gmail.com";
+    if (url.hash || url.username || url.password) return false;
+    if (url.protocol === "mailto:") {
+      return url.pathname === "miguel.garglez@gmail.com" &&
+        hasOnlySearchParams(url, new Set(["body", "subject"]));
+    }
     return url.protocol === "https:" &&
       url.hostname === "github.com" &&
-      url.pathname === "/miguelgarglez/video-digest/issues/new";
+      url.pathname === "/miguelgarglez/video-digest/issues/new" &&
+      hasOnlySearchParams(url, new Set(["body", "title"]));
   } catch {
     return false;
   }
+}
+
+function hasOnlySearchParams(url: URL, allowed: ReadonlySet<string>): boolean {
+  return [...url.searchParams.keys()].every((key) => allowed.has(key));
 }
 
 async function execute(
