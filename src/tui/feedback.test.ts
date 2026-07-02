@@ -29,6 +29,14 @@ describe("buildFeedbackLinks", () => {
     expect(issue.searchParams.get("body")).toContain("Architecture: arm64/test");
   });
 
+  test("percent-encodes mailto spaces instead of exposing form-style plus signs", () => {
+    const { email } = buildFeedbackLinks(context, "main-menu");
+
+    expect(email).toContain("subject=Video%20Digest%20feedback");
+    expect(email).toContain("body=What%20were%20you%20trying%20to%20do%3F");
+    expect(email).not.toContain("+");
+  });
+
   test("does not introduce non-allowlisted application data", () => {
     const serialized = JSON.stringify(buildFeedbackLinks(context, "main-menu"));
 

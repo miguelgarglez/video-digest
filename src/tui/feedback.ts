@@ -41,15 +41,14 @@ export async function resolveSupportContext(input: ContextInput): Promise<Suppor
 
 export function buildFeedbackLinks(context: SupportContext, origin: FeedbackOrigin): FeedbackLinks {
   const body = feedbackBody(context, origin);
-  const email = new URL(`mailto:${FEEDBACK_EMAIL}`);
-  email.searchParams.set("subject", "Video Digest feedback");
-  email.searchParams.set("body", body);
+  const email = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent("Video Digest feedback")}` +
+    `&body=${encodeURIComponent(body)}`;
 
   const githubIssue = new URL(`${GITHUB_ISSUES_URL}/new`);
   githubIssue.searchParams.set("title", "[Bug] ");
   githubIssue.searchParams.set("body", body);
 
-  return { email: email.toString(), githubIssue: githubIssue.toString() };
+  return { email, githubIssue: githubIssue.toString() };
 }
 
 function feedbackBody(context: SupportContext, origin: FeedbackOrigin): string {
