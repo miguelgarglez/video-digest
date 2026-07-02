@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0](https://github.com/miguelgarglez/video-digest/compare/v1.0.0...v1.1.0) (2026-07-02)
+
+
+### Features
+
+* **cli:** Open safe feedback links ([e52d7bb](https://github.com/miguelgarglez/video-digest/commit/e52d7bbb2f03416ea70b0872c63b4c6e41215fd4))
+* **tui:** Build feedback drafts ([e0309f8](https://github.com/miguelgarglez/video-digest/commit/e0309f8d03d7a152686f02ab5674f07a01af2c52))
+* **tui:** Open feedback destinations ([36db8b3](https://github.com/miguelgarglez/video-digest/commit/36db8b31be8cb68f929dca805710ed03966cf254))
+
+
+### Bug Fixes
+
+* **cli:** Restrict feedback URL parameters ([679fdec](https://github.com/miguelgarglez/video-digest/commit/679fdec186d190c9e9ca9da8b97801fad35731c3))
+* **package:** Include feedback runtime ([cb58878](https://github.com/miguelgarglez/video-digest/commit/cb58878ebf58c7948ed1ee7a082a506e687a816b))
+* **release:** Prevent version drift ([57796cb](https://github.com/miguelgarglez/video-digest/commit/57796cb65abd79bf8034c0eabe02c471c1b40a3b))
+* **tui:** Encode mailto spaces correctly ([6c6d3a5](https://github.com/miguelgarglez/video-digest/commit/6c6d3a5a5b00b5f80aac4331dd4d708643cc8711))
+
 ## [1.0.0](https://github.com/miguelgarglez/video-digest/compare/v0.2.0...v1.0.0) (2026-06-30)
 
 
