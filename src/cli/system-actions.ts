@@ -3,6 +3,7 @@ import type { PublicCliErrorCode } from "./public-contract";
 export type SpawnResult = {
   exitCode: number;
   stderr: string;
+  stdout: string;
 };
 
 export type SpawnCommand = (
@@ -75,13 +76,14 @@ export async function spawnCommand(command: readonly string[], options: { stdin?
     // A buffered Blob makes Bun own the complete delivery lifecycle. There are no
     // FileSink write/end promises that can reject after this function returns.
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
-    stdout: "ignore",
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [exitCode, stderr] = await Promise.all([
+  const [exitCode, stderr, stdout] = await Promise.all([
     child.exited,
     new Response(child.stderr).text(),
+    new Response(child.stdout).text(),
   ]);
-  return { exitCode, stderr };
+  return { exitCode, stderr, stdout };
 }

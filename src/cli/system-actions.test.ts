@@ -7,7 +7,7 @@ function recordingSpawn(exitCode = 0, stderr = ""): { calls: Array<{ command: st
     calls,
     spawn: async (command, options = {}) => {
       calls.push({ command: [...command], stdin: options.stdin });
-      return { exitCode, stderr };
+      return { exitCode, stderr, stdout: "" };
     },
   };
 }
