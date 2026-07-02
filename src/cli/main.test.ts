@@ -62,6 +62,7 @@ describe("runCli", () => {
         fetchTranscriptOnly: async () => { calls.push("write"); return completedTranscriptOnly(); },
         systemActions: {
           copy: async (text) => { calls.push(`copy:${text}`); },
+          openExternal: async () => {},
           open: async (path) => { calls.push(`open:${path}`); },
           reveal: async () => {},
         },
@@ -93,6 +94,7 @@ describe("runCli", () => {
         fetchTranscriptOnly: async () => ({ cleanText: "Useful content.\n", exitCode: 0, paths, status: "completed", transcriptQuality: qualityFixture() }),
         systemActions: {
           copy: async () => {},
+          openExternal: async () => {},
           open: async (path) => {
             expect(path).toBe(paths.transcriptMarkdownPath);
             await expect(writeTranscriptOnlyOutputs({
@@ -131,7 +133,7 @@ describe("runCli", () => {
       { error: (message) => errors.push(message), log: () => {} },
       {
         fetchTranscriptOnly: async () => ({ cleanText: "Useful content.\n", exitCode: 0, paths, status: "completed", transcriptQuality: qualityFixture() }),
-        systemActions: { copy: async () => {}, open: async () => { openCalls += 1; }, reveal: async () => {} },
+        systemActions: { copy: async () => {}, openExternal: async () => {}, open: async () => { openCalls += 1; }, reveal: async () => {} },
       },
     );
     expect(exitCode).toBe(1);
@@ -156,6 +158,7 @@ describe("runCli", () => {
         openGeneratedTranscript: async ({ open, path }) => open(path),
         systemActions: {
           copy: async () => { throw failure; },
+          openExternal: async () => { throw failure; },
           open: async () => { throw failure; },
           reveal: async () => {},
         },
@@ -177,6 +180,7 @@ describe("runCli", () => {
         fetchTranscriptOnly: async () => completedTranscriptOnly(),
         systemActions: {
           copy: async () => { actions += 1; },
+          openExternal: async () => { actions += 1; },
           open: async () => { actions += 1; },
           reveal: async () => { actions += 1; },
         },

@@ -217,7 +217,7 @@ describe("default TUI ports", () => {
     await writeTranscriptOnlyOutputs({ outputDir: root, transcript, transcriptQuality: quality, video });
     const port = createArtifactLibraryPort({
       getOutputDir: () => root,
-      systemActions: { copy: async () => undefined, open: async () => undefined, reveal: async () => undefined },
+      systemActions: { copy: async () => undefined, openExternal: async () => undefined, open: async () => undefined, reveal: async () => undefined },
     });
 
     const result = await port.read({ preference: "transcript", videoId: video.videoId });
@@ -239,6 +239,7 @@ describe("default TUI ports", () => {
       getOutputDir: () => root,
       systemActions: {
         copy: async () => undefined,
+        openExternal: async () => undefined,
         open: (path) => verifyLock("open", path),
         reveal: (path) => verifyLock("reveal", path),
       },
@@ -274,7 +275,7 @@ describe("default TUI ports", () => {
     const port = createArtifactLibraryPort({
       fileOperations: operations,
       getOutputDir: () => root,
-      systemActions: { copy: async () => undefined, open: async () => undefined, reveal: async () => undefined },
+      systemActions: { copy: async () => undefined, openExternal: async () => undefined, open: async () => undefined, reveal: async () => undefined },
     });
 
     await expect(port.read({ preference: "transcript", videoId: video.videoId })).rejects.toThrow();
@@ -303,6 +304,7 @@ describe("default TUI ports", () => {
       getOutputDir: () => root,
       systemActions: {
         copy: async () => undefined,
+        openExternal: async () => undefined,
         open: async () => { opens += 1; },
         reveal: async () => undefined,
       },
