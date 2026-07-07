@@ -1,6 +1,6 @@
 {
   "name": "video-digest",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Turn YouTube videos into local transcripts and structured digests.",
   "license": "MIT",
   "author": "Miguel García González",
